@@ -742,14 +742,20 @@ Auto-loaded by Copilot CLI (no flags needed):
 
 ### Model Routing Strategy
 
-| Process                           | Model           | Rationale                          |
-| --------------------------------- | --------------- | ---------------------------------- |
-| Phase implementation (heaviest)   | `claude-opus-4` | Most complex phase gets best model |
-| Phase implementation (all others) | rotation pool   | Round-robin across providers       |
-| Post-merge review                 | rotation pool   | Code review, moderate complexity   |
-| Quality gate remediation          | rotation pool   | Fix-and-retry, lightweight         |
+| Process                           | Model             | Rationale                          |
+| --------------------------------- | ----------------- | ---------------------------------- |
+| Phase implementation (heaviest)   | `claude-opus-4.6` | Most complex phase gets best model |
+| Phase implementation (all others) | rotation pool     | Round-robin across providers       |
+| Conflict resolution               | rotation pool     | Architecture-aware merge           |
+| Post-merge review                 | rotation pool     | Code review, moderate complexity   |
+| Documentation sync                | rotation pool     | Doc updates, lightweight           |
+| Quality gate remediation          | rotation pool     | Fix-and-retry, lightweight         |
+| Integration verification          | rotation pool     | Fix-and-retry, lightweight         |
 
-**Rotation pool** (round-robin): `claude-sonnet-4` → `gpt-4.1` → `claude-sonnet-4`
+**Rotation pool** (round-robin): `claude-sonnet-4.6` → `claude-sonnet-4.5` → `gpt-5.3-codex` → `gpt-5.4`
+
+Model assignments are persisted in `.parallel-dev/phase-status.json` and displayed
+by the `status` command for full visibility.
 
 ---
 
@@ -893,6 +899,98 @@ Total: ~35 min, 2 agent sessions, ~30K context tokens
 | Integration Verification | 8-check verification + remediation running |
 | PR Created / Complete    | Push + PR done, ready for human review     |
 
+### Phase Status Tracking
+
+All phase, group, and post-merge process status is tracked in a single JSON file:
+
+```
+.parallel-dev/phase-status.json
+```
+
+Every process (phase build, conflict resolution, post-merge review, docs sync,
+quality gate, integration verification, remediation) writes its state, model, and
+timestamps to this file via `update_phase_status()`. The `status` command reads
+this file as the **authoritative source** for completion tracking.
+
+**Tracked fields per entry:**
+
+| Field        | Type   | Description                                                        |
+| ------------ | ------ | ------------------------------------------------------------------ |
+| `phase`      | string | Key identifier (e.g., `phase-2`, `group-0-1`, `post-merge-review`) |
+| `state`      | string | `running`, `complete`, or `failed`                                 |
+| `model`      | string | Model used (e.g., `claude-opus-4.6`)                               |
+| `exit_code`  | int    | Process exit code (`0` = success)                                  |
+| `started_at` | string | ISO 8601 timestamp                                                 |
+| `updated_at` | string | ISO 8601 timestamp (auto-set)                                      |
+
+**Tracked processes:**
+
+| Key Pattern                   | Process                         |
+| ----------------------------- | ------------------------------- |
+| `<phase_number>` or `phase-N` | Phase agent pipeline (Mode 1)   |
+| `group-N-M-K`                 | Group agent pipeline (Mode 2/3) |
+| `merge`                       | Branch merge step               |
+| `conflict-resolve-N`          | Conflict resolution for phase   |
+| `post-merge-review`           | Post-merge review agent         |
+| `docs-sync`                   | Documentation sync agent        |
+| `quality-gate`                | Quality gate check loop         |
+| `integration-verify`          | Integration verification loop   |
+| `remediation-N`               | Quality gate remediation agent  |
+| `int-remediation-N`           | Integration remediation agent   |
+
+**Important:** The `.phase-complete` sentinel file is **not used**. All completion
+tracking goes through `phase-status.json`. The `_detect_pipeline_stage()` function
+and `cmd_status()` both read from this JSON file.
+
+### Status Command Output
+
+The `./run_parallel.sh status` command displays a comprehensive view:
+
+```text
+═══ Parallel Development Status ═══
+
+  Mode:               1 (Full Parallel)
+  Phases:             2 3 4
+  Integration branch: integration/parallel-20260324-100000
+  Status:             running
+  Started:            2026-03-24T10:00:00Z
+  Branches:           track/phase-2, track/phase-3, track/phase-4
+
+  Model (heavy):      claude-opus-4.6
+  Rotation pool:      claude-sonnet-4.6 → claude-sonnet-4.5 → gpt-5.3-codex → gpt-5.4
+
+-----------------------------------------------------------
+  Phase 2 (transcription-face-detection): [COMPLETE] 5 commits — feat(phase-2): implement transcription-face-detection
+  Phase 3 (scoring): [IN PROGRESS] 2 commits — wip: scoring engine
+  Phase 4 (clip-builder): [IN PROGRESS] 0 commits
+
+  Post-Merge Review: [COMPLETE] 1234 bytes
+  Documentation Sync: [COMPLETE] 567 bytes
+  Quality Gate (remediation-attempt-1): [COMPLETE] 890 bytes
+-----------------------------------------------------------
+
+  Agent Status:
+    Phase/Group            State        Model                        Exit   Updated
+    ────────────────────── ──────────── ──────────────────────────── ────── ────────────────────
+    2                      complete     claude-opus-4.6              0      2026-03-24T10:30:00Z
+    3                      running      claude-sonnet-4.5            —      2026-03-24T10:15:00Z
+    4                      running      gpt-5.3-codex               —      2026-03-24T10:02:00Z
+    post-merge-review      complete     claude-sonnet-4.6            0      2026-03-24T10:35:00Z
+    docs-sync              complete     claude-sonnet-4.5            0      2026-03-24T10:40:00Z
+    quality-gate           complete     —                            0      2026-03-24T10:42:00Z
+    integration-verify     complete     —                            0      2026-03-24T10:45:00Z
+
+  Log files:
+    phase-2-phase-builder-1.log → .parallel-dev/logs/phase-2-phase-builder-1.log (12345 bytes)
+    phase-3-phase-builder-1.log → .parallel-dev/logs/phase-3-phase-builder-1.log (8901 bytes)
+    merge-review.log → .parallel-dev/logs/merge-review.log (1234 bytes)
+    docs-sync.log → .parallel-dev/logs/docs-sync.log (567 bytes)
+```
+
+The **Agent Status** table shows every process that has been tracked in
+`phase-status.json`, including post-merge pipeline processes. This gives full
+visibility into which model was used for each step and its outcome.
+
 ### Checkpoint Tags
 
 ```bash
@@ -929,7 +1027,7 @@ Phase Agents Complete
 │        ├─ Step 0: Rename duplicate migration files       │
 │        │  (preserve BOTH .sql files with new sequence #) │
 │        ├─ Step 1: Remove per-phase files                 │
-│        │  (PHASE_TASK.md, .phase-complete)               │
+│        │  (PHASE_TASK.md, .phase-complete if present)    │
 │        ├─ Step 2: Copilot conflict-resolver agent        │
 │        │  (10min timeout, --model rotate pool)           │
 │        └─ Step 3: --theirs tiebreaker fallback           │
@@ -995,7 +1093,7 @@ cascade**. Each step incrementally handles more cases:
 | Step | Handler                         | What It Resolves                                                                                              |
 | ---- | ------------------------------- | ------------------------------------------------------------------------------------------------------------- |
 | 0    | Migration rename                | Duplicate `.sql` files in `database/migrations/` — renames incoming with offset sequence number, keeps both   |
-| 1    | Per-phase file removal          | `PHASE_TASK.md`, `.phase-complete` — build artifacts, not integration code                                    |
+| 1    | Per-phase file removal          | `PHASE_TASK.md`, `.phase-complete` (if present) — build artifacts, not integration code                       |
 | 2    | Copilot conflict-resolver agent | All remaining conflicts — reads `.github/skills/conflict-resolver/SKILL.md` decision tree. 10-minute timeout. |
 | 3    | `--theirs` tiebreaker           | Last resort for anything the agent missed or timed out on                                                     |
 
