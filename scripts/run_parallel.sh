@@ -33,9 +33,14 @@ INTEGRATION_BRANCH="integration/parallel-$(date +%Y%m%d-%H%M%S)"
 # Default mode
 MODE=3
 
-# Models
-HEAVY_MODEL="claude-opus-4"
-ROTATION_POOL=("claude-sonnet-4" "gpt-4.1" "claude-sonnet-4")
+# MODEL ROUTING STRATEGY:
+#   Heavy model  : claude-opus-4.6          — assigned to the single most complex phase
+#   Rotate models: sonnet-4.6 → sonnet-4.5 → gpt-5.3-codex → gpt-5.4 (round-robin)
+#                  Used for: all other phases, conflict-resolver, post-merge review,
+#                            docs sync, quality gate remediation, integration remediation
+#
+MODEL_HEAVY="claude-opus-4.6"
+MODEL_ROTATE_POOL=("claude-sonnet-4.6" "claude-sonnet-4.5" "gpt-5.3-codex" "gpt-5.4")
 ROTATION_INDEX=0
 
 # ── Per-stage retry limits (bounded — no infinite loops) ──────────────────
@@ -136,8 +141,8 @@ ensure_dirs() {
 }
 
 next_model() {
-    local model="${ROTATION_POOL[${ROTATION_INDEX}]}"
-    ROTATION_INDEX=$(( (ROTATION_INDEX + 1) % ${#ROTATION_POOL[@]} ))
+    local model="${MODEL_ROTATE_POOL[${ROTATION_INDEX}]}"
+    ROTATION_INDEX=$(( (ROTATION_INDEX + 1) % ${#MODEL_ROTATE_POOL[@]} ))
     echo "${model}"
 }
 
@@ -339,13 +344,11 @@ phase_builder_validate() {
     fi
     # No syntax errors
     if [[ -d "modules" ]]; then
-        if ! python -m py_compile modules/ 2>/dev/null; then
-            local syntax_errors
-            syntax_errors=$(find modules/ -name '*.py' -exec python -m py_compile {} \; 2>&1 | head -10)
-            if [[ -n "${syntax_errors}" ]]; then
-                log_error "[phase-builder-validate] Syntax errors found"
-                ((failures++))
-            fi
+        local syntax_errors
+        syntax_errors=$(find modules/ -name '*.py' -exec python -m py_compile {} \; 2>&1 | head -10)
+        if [[ -n "${syntax_errors}" ]]; then
+            log_error "[phase-builder-validate] Syntax errors found"
+            ((failures++))
         fi
     fi
     # Imports valid
@@ -1019,7 +1022,7 @@ run_mode_1() {
 
     log_header "Mode 1 — Full Parallel"
     log_info "Phases: ${phases[*]}"
-    log_info "Heaviest phase: ${heaviest} (gets ${HEAVY_MODEL})"
+    log_info "Heaviest phase: ${heaviest} (gets ${MODEL_HEAVY})"
     log_info "Max parallel agents: ${MAX_PARALLEL_AGENTS}"
 
     check_clean_worktree
@@ -1060,7 +1063,7 @@ run_mode_1() {
         local model
 
         if [[ "${phase}" == "${heaviest}" ]]; then
-            model="${HEAVY_MODEL}"
+            model="${MODEL_HEAVY}"
         else
             model=$(next_model)
         fi
@@ -1157,7 +1160,7 @@ run_mode_2() {
     heaviest=$(heaviest_phase "${phases[@]}")
     local model
     if (( ${#phases[@]} >= 3 )); then
-        model="${HEAVY_MODEL}"
+        model="${MODEL_HEAVY}"
     else
         model=$(next_model)
     fi
@@ -1265,7 +1268,7 @@ run_mode_3() {
             fi
         done
         if $use_heavy; then
-            model="${HEAVY_MODEL}"
+            model="${MODEL_HEAVY}"
         else
             model=$(next_model)
         fi
