@@ -626,30 +626,30 @@ CREATE INDEX IF NOT EXISTS idx_runs_status ON pipeline_runs(status);
 
 ### Exit Criteria
 
-- [ ] Configuration loads from `config.yaml` with all fields validated
-- [ ] Environment variable overrides work for all configuration keys
-- [ ] Structured JSON logging writes to stdout
-- [ ] Per-run log file writes to `output/{video_id}/pipeline.log`
-- [ ] SQLite database created with all four tables and indexes
-- [ ] FFmpeg and FFprobe availability verified at startup
-- [ ] Python version check passes (≥ 3.10)
-- [ ] Repeated startup produces identical state (idempotent)
-- [ ] `run_pipeline.py` accepts a video file path argument and validates it exists
+- [x] Configuration loads from `config.yaml` with all fields validated
+- [x] Environment variable overrides work for all configuration keys
+- [x] Structured JSON logging writes to stdout
+- [x] Per-run log file writes to `output/{video_id}/pipeline.log`
+- [x] SQLite database created with all four tables and indexes
+- [x] FFmpeg and FFprobe availability verified at startup
+- [x] Python version check passes (≥ 3.10)
+- [x] Repeated startup produces identical state (idempotent)
+- [x] `run_pipeline.py` accepts a video file path argument and validates it exists
 
 ### Tasks
 
-- [ ] Create `core/config.py` with YAML loader, validation, and environment override logic
-- [ ] Create `core/logging.py` with structured JSON formatter and dual-output (stdout + file)
-- [ ] Create `core/dependencies.py` with FFmpeg/FFprobe/Python version checks
-- [ ] Write all four migration SQL scripts
-- [ ] Create `db/connection.py` with SQLite WAL mode and migration runner
-- [ ] Create `config.yaml` with all default values documented
-- [ ] Create `run_pipeline.py` skeleton (arg parsing, config load, dependency check, exit)
-- [ ] Create `core/orchestrator.py` skeleton (stage list, no implementation)
-- [ ] Initialize `contracts/` package with `__init__.py`
-- [ ] Write unit tests for config validation (valid config, missing fields, invalid types)
-- [ ] Write unit tests for migration idempotency
-- [ ] Write integration test: startup → config load → DB init → dependency check → clean exit
+- [x] Create `core/config.py` with YAML loader, validation, and environment override logic
+- [x] Create `core/logging.py` with structured JSON formatter and dual-output (stdout + file)
+- [x] Create `core/dependencies.py` with FFmpeg/FFprobe/Python version checks
+- [x] Write all four migration SQL scripts
+- [x] Create `database/connection.py` with SQLite WAL mode and migration runner
+- [x] Create `config/config.yaml` with all default values documented
+- [x] Create `run_pipeline.py` skeleton (arg parsing, config load, dependency check, exit)
+- [x] Create `core/orchestrator.py` skeleton (stage list, no implementation)
+- [x] Initialize `contracts/` package with `__init__.py`
+- [x] Write unit tests for config validation (valid config, missing fields, invalid types)
+- [x] Write unit tests for migration idempotency
+- [x] Write integration test: startup → config load → DB init → dependency check → clean exit
 
 ---
 
@@ -729,31 +729,31 @@ shorts_factory/
 
 ### Exit Criteria
 
-- [ ] `IngestionResult` DTO defined with all fields from architecture spec
-- [ ] `SceneList` and `SceneSegment` DTOs defined with all fields
-- [ ] Ingestion validates MP4/MKV/AVI formats, rejects unsupported
-- [ ] Ingestion rejects videos without audio stream
-- [ ] Ingestion rejects videos outside 30–120 minute range
-- [ ] `video_id` is deterministic (same file → same ID on every run)
-- [ ] Scene splitter produces identical boundaries on repeated runs
-- [ ] No scene shorter than 3 seconds in output
-- [ ] No scene longer than 20 seconds in output
-- [ ] Scenes inserted into SQLite with deterministic `scene_id`
-- [ ] Rerun skips already-processed video and scenes
-- [ ] Integration test: real MP4 → ingestion → scene split → valid SceneList
+- [x] `IngestionResult` DTO defined with all fields from architecture spec
+- [x] `SceneList` and `SceneSegment` DTOs defined with all fields
+- [x] Ingestion validates MP4/MKV/AVI formats, rejects unsupported
+- [x] Ingestion rejects videos without audio stream
+- [x] Ingestion rejects videos outside 30–120 minute range
+- [x] `video_id` is deterministic (same file → same ID on every run)
+- [x] Scene splitter produces identical boundaries on repeated runs
+- [x] No scene shorter than 3 seconds in output
+- [x] No scene longer than 20 seconds in output
+- [x] Scenes inserted into SQLite with deterministic `scene_id`
+- [x] Rerun skips already-processed video and scenes
+- [x] Integration test: real MP4 → ingestion → scene split → valid SceneList
 
 ### Tasks
 
-- [ ] Define `IngestionResult` DTO in `contracts/ingestion.py`
-- [ ] Define `SceneList` and `SceneSegment` DTOs in `contracts/scene.py`
-- [ ] Implement `modules/ingestion/ingest.py` with FFprobe validation and SHA-256 fingerprinting
-- [ ] Implement `modules/scene_splitter/split.py` with PySceneDetect integration
-- [ ] Implement scene post-processing (merge micro-scenes, split long scenes)
-- [ ] Update `core/orchestrator.py` to wire ingestion → scene_splitter
-- [ ] Write unit tests for ingestion (valid file, missing file, unsupported format, no audio, out of range)
-- [ ] Write unit tests for scene splitter (normal video, static video, flickering video)
-- [ ] Write unit test for `video_id` determinism
-- [ ] Write integration test: `run_pipeline.py test_video.mp4` → SceneList output
+- [x] Define `IngestionResult` DTO in `contracts/ingestion.py`
+- [x] Define `SceneList` and `SceneSegment` DTOs in `contracts/scene.py`
+- [x] Implement `modules/ingestion/ingest.py` with FFprobe validation and SHA-256 fingerprinting
+- [x] Implement `modules/scene_splitter/split.py` with PySceneDetect integration
+- [x] Implement scene post-processing (merge micro-scenes, split long scenes)
+- [x] Update `core/orchestrator.py` to wire ingestion → scene_splitter
+- [x] Write unit tests for ingestion (valid file, missing file, unsupported format, no audio, out of range)
+- [x] Write unit tests for scene splitter (normal video, static video, flickering video)
+- [x] Write unit test for `video_id` determinism
+- [x] Write integration test: `run_pipeline.py test_video.mp4` → SceneList output
 
 ---
 
