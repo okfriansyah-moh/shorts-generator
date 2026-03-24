@@ -10,6 +10,7 @@ tools:
     execute/runInTerminal,
     read/problems,
     todo,
+    agent,
     agent/runSubagent,
   ]
 agents: [dto-guardian, module-builder]
