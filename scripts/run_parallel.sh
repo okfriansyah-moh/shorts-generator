@@ -184,6 +184,145 @@ check_copilot_cli() {
     fi
 }
 
+check_copilot_auth() {
+    # Copilot CLI auth precedence: COPILOT_GITHUB_TOKEN > GH_TOKEN > GITHUB_TOKEN
+    if [[ -n "${COPILOT_GITHUB_TOKEN:-}" ]]; then
+        log_success "Copilot auth: COPILOT_GITHUB_TOKEN is set"
+        return 0
+    fi
+    if [[ -n "${GH_TOKEN:-}" ]]; then
+        log_success "Copilot auth: GH_TOKEN is set"
+        return 0
+    fi
+    if [[ -n "${GITHUB_TOKEN:-}" ]]; then
+        log_success "Copilot auth: GITHUB_TOKEN is set"
+        return 0
+    fi
+    log_warn "No Copilot auth token found. Set COPILOT_GITHUB_TOKEN, GH_TOKEN, or GITHUB_TOKEN"
+    log_warn "Or run 'copilot' interactively and use /login to authenticate."
+    log_info "Proceeding anyway — agents may fail if unauthenticated."
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Portable timeout wrapper (from edge-polymarket battle-tested pattern)
+# ─────────────────────────────────────────────────────────────────────────────
+# run_with_timeout SECONDS COMMAND [ARGS...]
+# Returns the command's exit code, or 124 if killed due to timeout.
+# Prefers native timeout(1), then gtimeout (Homebrew coreutils on macOS),
+# then a shell watchdog with SIGTERM → 5s grace → SIGKILL escalation.
+# ─────────────────────────────────────────────────────────────────────────────
+
+run_with_timeout() {
+    local _timeout_s="$1"
+    shift
+    if command -v timeout >/dev/null 2>&1; then
+        timeout "$_timeout_s" "$@"
+        return $?
+    elif command -v gtimeout >/dev/null 2>&1; then
+        gtimeout "$_timeout_s" "$@"
+        return $?
+    fi
+    # Shell watchdog fallback (macOS compatible)
+    "$@" &
+    local _cmd_pid=$!
+    local _elapsed=0
+    while kill -0 "$_cmd_pid" 2>/dev/null; do
+        sleep 1
+        _elapsed=$(( _elapsed + 1 ))
+        if [[ "$_elapsed" -ge "$_timeout_s" ]]; then
+            kill -TERM "$_cmd_pid" 2>/dev/null || true
+            local _kw=0
+            while kill -0 "$_cmd_pid" 2>/dev/null && [[ "$_kw" -lt 5 ]]; do
+                sleep 1
+                _kw=$(( _kw + 1 ))
+            done
+            kill -KILL "$_cmd_pid" 2>/dev/null || true
+            wait "$_cmd_pid" 2>/dev/null || true
+            return 124
+        fi
+    done
+    wait "$_cmd_pid"
+    return $?
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Python environment for validation / quality gates
+# ─────────────────────────────────────────────────────────────────────────────
+# Creates a repo-local .venv so pytest/ruff/python3 are available and validation
+# functions work reliably. Adapted from edge-polymarket's ensure_python_env().
+# ─────────────────────────────────────────────────────────────────────────────
+
+ensure_python_env() {
+    local target_dir="${1:-${PROJECT_ROOT}}"
+    local venv_dir="${target_dir}/.venv"
+
+    if [[ ! -d "${venv_dir}" ]]; then
+        log_info "Creating Python venv at ${venv_dir}..."
+        python3 -m venv "${venv_dir}" || {
+            log_warn "Failed to create venv — validation will use system python3"
+            return 1
+        }
+    fi
+
+    # Activate venv (makes `python` available even on macOS)
+    # shellcheck disable=SC1091
+    source "${venv_dir}/bin/activate"
+
+    # Install test/lint tools if missing
+    if ! command -v pytest &>/dev/null || ! command -v ruff &>/dev/null; then
+        log_info "Installing pytest and ruff in venv..."
+        pip install --quiet --upgrade pip 2>/dev/null
+        pip install --quiet pytest ruff 2>/dev/null || {
+            log_warn "pip install failed — some quality checks may fail"
+        }
+    fi
+
+    log_success "Python environment ready (venv: ${venv_dir})"
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Per-phase status tracking (atomic JSON writes)
+# ─────────────────────────────────────────────────────────────────────────────
+# Writes/updates fields in .parallel-dev/phase-status.json for the given phase.
+# Adapted from edge-polymarket's update_phase_status().
+# ─────────────────────────────────────────────────────────────────────────────
+
+update_phase_status() {
+    local _phase="$1"; shift
+    local _status_file="${PROJECT_ROOT}/.parallel-dev/phase-status.json"
+    python3 - "$_phase" "$_status_file" "$@" <<'PYEOF'
+import sys, json, os, time
+phase = sys.argv[1]
+path  = sys.argv[2]
+kvs   = sys.argv[3:]
+data  = {}
+os.makedirs(os.path.dirname(path), exist_ok=True)
+if os.path.exists(path):
+    with open(path) as f:
+        try: data = json.load(f)
+        except: data = {}
+if "phases" not in data:
+    data["phases"] = {}
+if phase not in data["phases"]:
+    data["phases"][phase] = {"phase": phase}
+entry = data["phases"][phase]
+it = iter(kvs)
+for k in it:
+    v = next(it)
+    if v == "null":
+        entry[k] = None
+    elif v.lstrip("-").isdigit():
+        entry[k] = int(v)
+    else:
+        entry[k] = v
+entry["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+tmp = path + ".tmp"
+with open(tmp, "w") as f:
+    json.dump(data, f, indent=2)
+os.replace(tmp, path)
+PYEOF
+}
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Agent execution logging (with retry awareness)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -337,7 +476,7 @@ phase_builder_validate() {
     local failures=0
     # Module compiles
     if [[ -d "modules" ]]; then
-        if ! python -c "import sys; sys.path.insert(0, '.'); import importlib" 2>/dev/null; then
+        if ! python3 -c "import sys; sys.path.insert(0, '.'); import importlib" 2>/dev/null; then
             log_error "[phase-builder-validate] Module compilation failed"
             ((failures++))
         fi
@@ -345,7 +484,7 @@ phase_builder_validate() {
     # No syntax errors
     if [[ -d "modules" ]]; then
         local syntax_errors
-        syntax_errors=$(find modules/ -name '*.py' -exec python -m py_compile {} \; 2>&1 | head -10)
+        syntax_errors=$(find modules/ -name '*.py' -exec python3 -m py_compile {} \; 2>&1 | head -10)
         if [[ -n "${syntax_errors}" ]]; then
             log_error "[phase-builder-validate] Syntax errors found"
             ((failures++))
@@ -354,7 +493,7 @@ phase_builder_validate() {
     # Imports valid
     if [[ -d "contracts" ]]; then
         local import_errors
-        import_errors=$(find contracts/ -name '*.py' ! -name '__init__.py' -exec python -c "import importlib.util; spec = importlib.util.spec_from_file_location('m', '{}'); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)" \; 2>&1 | head -10)
+        import_errors=$(find contracts/ -name '*.py' ! -name '__init__.py' -exec python3 -c "import importlib.util; spec = importlib.util.spec_from_file_location('m', '{}'); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)" \; 2>&1 | head -10)
         if [[ -n "${import_errors}" ]]; then
             log_error "[phase-builder-validate] Contract import errors"
             ((failures++))
@@ -736,6 +875,17 @@ generate_phase_task() {
 5. Implement each phase below sequentially, committing after each one.
 6. Run tests after each phase: `pytest tests/ --tb=short -q`
 
+## Python Environment
+
+**A `.venv` is PRE-INSTALLED in this worktree.** Do NOT run `pip install` or create a new venv.
+Activate it and use immediately:
+
+\`\`\`bash
+source .venv/bin/activate
+python3 -m pytest tests/ --tb=short -q     # run tests
+python3 -m ruff check modules/ tests/      # lint
+\`\`\`
+
 ## Protected File Policy (STRICT)
 
 - `contracts/*` — **additive only**. You may ADD new DTOs. You MUST NOT modify existing DTO fields. Violation = pipeline rollback.
@@ -790,8 +940,8 @@ HEADER
 - Protected files: \`contracts/*\` (additive only), \`database/*\` (Phase 0 only), \`docs/*\` (read-only)
 
 **After implementation:**
-1. Run \`pytest tests/ --tb=short -q\` and fix all failures
-2. Run \`python -c "from modules import *"\` to verify imports
+1. Run \`python3 -m pytest tests/ --tb=short -q\` and fix all failures
+2. Run \`python3 -c "from modules import *"\` to verify imports
 3. Commit with message: \`feat(phase-${phase}): implement ${name}\`
 
 ---
@@ -812,9 +962,12 @@ run_quality_gates() {
 
     cd "${work_dir}"
 
+    # Ensure Python env is available for validation checks
+    ensure_python_env "${work_dir}" 2>/dev/null || true
+
     # 1. Import check
     log_info "Checking imports..."
-    if python -c "import sys; sys.path.insert(0, '.'); import importlib" 2>/dev/null; then
+    if python3 -c "import sys; sys.path.insert(0, '.'); import importlib" 2>/dev/null; then
         log_success "Import check passed"
     else
         log_warn "Import check skipped (no modules yet)"
@@ -1046,6 +1199,18 @@ run_mode_1() {
         fi
         git worktree add "${worktree_dir}" "${branch}"
 
+        # Pre-install Python venv in worktree (pytest/ruff available for agents)
+        log_info "  Installing venv in worktree (Phase ${phase})..."
+        if (
+            cd "${worktree_dir}" || exit 1
+            python3 -m venv .venv 2>/dev/null || true
+            .venv/bin/pip install --quiet pytest ruff 2>&1 | tail -3
+        ); then
+            log_success "  Worktree venv ready (Phase ${phase})"
+        else
+            log_warn "  Venv pre-install encountered issues for Phase ${phase} — agent will retry if needed"
+        fi
+
         branches+=("${branch}")
     done
 
@@ -1097,7 +1262,17 @@ run_mode_1() {
         log_info "Launching agent pipeline for Phase ${phase} (model: ${model})..."
 
         (
+            update_phase_status "${phase}" state "running" model "${model}" started_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            # Activate worktree venv so validation uses the right python
+            source "${worktree_dir}/.venv/bin/activate" 2>/dev/null || true
             run_agent_pipeline "${worktree_dir}" "${model}" "phase-${phase}" "${phase}"
+            local rc=$?
+            if (( rc == 0 )); then
+                update_phase_status "${phase}" state "complete" exit_code "0"
+            else
+                update_phase_status "${phase}" state "failed" exit_code "${rc}"
+            fi
+            exit ${rc}
         ) &
         active_pids+=($!)
         phase_for_pid+=("${phase}")
@@ -1171,6 +1346,8 @@ run_mode_2() {
     log_info "  Log: ${log_file}"
 
     local phase_label="group-$(IFS=-; echo "${phases[*]}")"
+    # Activate venv so validation uses the right python
+    source "${PROJECT_ROOT}/.venv/bin/activate" 2>/dev/null || true
     run_agent_pipeline "${PROJECT_ROOT}" "${model}" "${phase_label}" "${phases[@]}"
 
     # Clean up task file
@@ -1239,6 +1416,18 @@ run_mode_3() {
         fi
         git worktree add "${worktree_dir}" "${branch}"
 
+        # Pre-install Python venv in worktree
+        log_info "  Installing venv in worktree (Group ${group})..."
+        if (
+            cd "${worktree_dir}" || exit 1
+            python3 -m venv .venv 2>/dev/null || true
+            .venv/bin/pip install --quiet pytest ruff 2>&1 | tail -3
+        ); then
+            log_success "  Worktree venv ready (Group ${group})"
+        else
+            log_warn "  Venv pre-install encountered issues for Group ${group}"
+        fi
+
         branches+=("${branch}")
         group_labels+=("${group}")
     done
@@ -1301,7 +1490,17 @@ run_mode_3() {
         log_info "Launching Group ${group} agent pipeline (model: ${model}, phases: ${group_phases[*]})..."
 
         (
+            update_phase_status "group-${phase_list}" state "running" model "${model}" started_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            # Activate worktree venv so validation uses the right python
+            source "${worktree_dir}/.venv/bin/activate" 2>/dev/null || true
             run_agent_pipeline "${worktree_dir}" "${model}" "group-${phase_list}" "${group_phases[@]}"
+            local rc=$?
+            if (( rc == 0 )); then
+                update_phase_status "group-${phase_list}" state "complete" exit_code "0"
+            else
+                update_phase_status "group-${phase_list}" state "failed" exit_code "${rc}"
+            fi
+            exit ${rc}
         ) &
         active_pids+=($!)
         group_for_pid+=("${group}")
@@ -1475,7 +1674,7 @@ validate_merge() {
     # Code compiles (Python syntax check)
     if [[ -d "modules" ]]; then
         local syntax_errors
-        syntax_errors=$(find modules/ contracts/ -name '*.py' -exec python -m py_compile {} \; 2>&1 | head -10)
+        syntax_errors=$(find modules/ contracts/ -name '*.py' -exec python3 -m py_compile {} \; 2>&1 | head -10)
         if [[ -n "${syntax_errors}" ]]; then
             log_error "[merge-validate] Compilation failed after merge"
             ((failures++))
@@ -1788,6 +1987,8 @@ main() {
 
             validate_phases "${phases[@]}"
             check_copilot_cli
+            check_copilot_auth
+            ensure_python_env
 
             log_info "Mode: ${MODE} | Phases: ${phases[*]}"
 
@@ -1807,6 +2008,7 @@ main() {
             cmd_cleanup
             ;;
         gates)
+            ensure_python_env
             run_quality_gates "${PROJECT_ROOT}"
             ;;
         *)
