@@ -842,15 +842,20 @@ Total: ~35 min, 2 agent sessions, ~30K context tokens
 # Mode 3 — Hybrid (default, balanced)
 ./run_parallel.sh start 2 3 4 7 8
 
-# Check status
+# Check status (rich output with pipeline stage detection)
 ./run_parallel.sh status
 
-# Merge branches + global validation
+# Merge is AUTO-TRIGGERED after agents complete.
+# Manual merge if needed (e.g., resumed after partial failure):
 ./run_parallel.sh merge
 
-# Clean up worktrees and branches
+# Clean up worktrees, branches, and state files
 ./run_parallel.sh cleanup
 ```
+
+> **Note:** `start` runs the full pipeline autonomously: phase agents → merge →
+> review → docs sync → quality gate → integration verification → PR creation.
+> No manual `merge` command needed unless resuming from a partial failure.
 
 ### Retry Configuration
 
@@ -866,12 +871,27 @@ Total: ~35 min, 2 agent sessions, ~30K context tokens
 
 ### Terminal States
 
-| State                | Meaning                                      |
-| -------------------- | -------------------------------------------- |
-| `passed`             | All phases succeeded, all validations passed |
-| `partial_failure`    | Some phases succeeded, others rolled back    |
-| `merge_failed`       | Branch merge failed after all retries        |
-| `remediation_failed` | Global validation failed after all retries   |
+| State                | Meaning                                         |
+| -------------------- | ----------------------------------------------- |
+| `agents_complete`    | All phase agents finished, merge auto-triggered |
+| `passed`             | All phases succeeded, all validations passed    |
+| `partial_failure`    | Some phases succeeded, others rolled back       |
+| `merge_failed`       | Branch merge failed after all retries           |
+| `remediation_failed` | Quality gate or integration check failed (3x)   |
+
+### Pipeline Stages (shown in `status`)
+
+| Stage                    | Meaning                                    |
+| ------------------------ | ------------------------------------------ |
+| Setup                    | Session initialized, no agents started     |
+| Phase Build              | Phase agents running or partially complete |
+| Ready to Merge           | All phase agents complete                  |
+| Merging Phases           | Integration branch created, merging        |
+| Post-Merge Review        | merge-reviewer agent running               |
+| Documentation Sync       | docs-sync agent running                    |
+| Quality Gate             | Quality checks + remediation running       |
+| Integration Verification | 8-check verification + remediation running |
+| PR Created / Complete    | Push + PR done, ready for human review     |
 
 ### Checkpoint Tags
 
@@ -882,6 +902,126 @@ checkpoint-phase-N-pre
 # Cleaned up on success, preserved on failure for debugging
 git tag -l 'checkpoint-*'
 ```
+
+---
+
+## 11. Autonomous Merge Pipeline
+
+After all phase agents complete, the merge pipeline runs **automatically** — no manual
+`merge` command needed. The full sequence is:
+
+```text
+Phase Agents Complete
+        │
+        ▼
+┌──────────────────────────┐
+│  1. Load Phases State    │  .parallel-dev/phases.txt
+│  2. Sort Phases (asc)    │  Earliest → latest
+│  3. Create Integration   │  phaseN-M-K branch from main
+│     Branch               │
+└────────┬─────────────────┘
+         │
+         ▼  (for each phase, earliest first)
+┌──────────────────────────────────────────────────────────┐
+│  4. git merge --no-ff track/phase-N                      │
+│     ├─ Clean merge → continue                            │
+│     └─ Conflicts → auto_resolve_conflicts()              │
+│        ├─ Step 0: Rename duplicate migration files       │
+│        │  (preserve BOTH .sql files with new sequence #) │
+│        ├─ Step 1: Remove per-phase files                 │
+│        │  (PHASE_TASK.md, .phase-complete)               │
+│        ├─ Step 2: Copilot conflict-resolver agent        │
+│        │  (10min timeout, --model rotate pool)           │
+│        └─ Step 3: --theirs tiebreaker fallback           │
+│           (only for agent timeout/failure)               │
+└────────┬─────────────────────────────────────────────────┘
+         │
+         ▼
+┌──────────────────────────┐
+│  5. Post-Merge Review    │  Agent: merge-reviewer
+│     Agent                │  Skills: merge-reviewer, modularity, testing
+│     - Verify all phases  │  Runs pytest, ruff, fixes issues
+│       fully implemented  │  Commits fixes automatically
+└────────┬─────────────────┘
+         │
+         ▼
+┌──────────────────────────┐
+│  6. Documentation Sync   │  Agent: merge-reviewer
+│     Agent                │  Skills: docs-sync, architecture-reader
+│     - Update progress    │  Updates progress_report.md, roadmap,
+│       report + roadmap   │  README.md as needed
+└────────┬─────────────────┘
+         │
+         ▼
+┌──────────────────────────────────────────────────────────┐
+│  7. Quality Gate Loop (up to 3 attempts)                 │
+│     run_quality_gates() → pass? → continue               │
+│     └─ fail? → spawn_remediation_agent()                 │
+│        ├─ Identifies specific failure types              │
+│        │  (tests, linter, imports, cross-module, etc.)   │
+│        ├─ Spawns code-fixer agent with failure details   │
+│        └─ Re-runs quality gates after fix                │
+└────────┬─────────────────────────────────────────────────┘
+         │
+         ▼
+┌──────────────────────────────────────────────────────────┐
+│  8. Integration Verification Loop (up to 3 attempts)     │
+│     run_integration_verification() — 8 checks:           │
+│     ✓ Test coverage for all modules                      │
+│     ✓ No cross-module imports                            │
+│     ✓ No raw SQL/DB imports in modules                   │
+│     ✓ DTO compliance (frozen dataclasses)                │
+│     ✓ Migration files present                            │
+│     ✓ Orchestrator authority preserved                   │
+│     ✓ Progress report updated                            │
+│     ✓ No print() statements in modules                   │
+│     └─ fail? → spawn_integration_remediation_agent()     │
+└────────┬─────────────────────────────────────────────────┘
+         │
+         ▼
+┌──────────────────────────┐
+│  9. Push + PR Creation   │  git push -u origin phaseN-M-K
+│     via gh CLI           │  gh pr create --base main
+│     - Structured PR body │  Includes quality gate + integration
+│     - Merge checklist    │  verification results
+└──────────────────────────┘
+```
+
+### Conflict Resolution Cascade
+
+The `auto_resolve_conflicts()` function resolves merge conflicts using a **4-step
+cascade**. Each step incrementally handles more cases:
+
+| Step | Handler                         | What It Resolves                                                                                              |
+| ---- | ------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| 0    | Migration rename                | Duplicate `.sql` files in `database/migrations/` — renames incoming with offset sequence number, keeps both   |
+| 1    | Per-phase file removal          | `PHASE_TASK.md`, `.phase-complete` — build artifacts, not integration code                                    |
+| 2    | Copilot conflict-resolver agent | All remaining conflicts — reads `.github/skills/conflict-resolver/SKILL.md` decision tree. 10-minute timeout. |
+| 3    | `--theirs` tiebreaker           | Last resort for anything the agent missed or timed out on                                                     |
+
+**Conflict resolution philosophy:** COMBINE, not pick a winner. All phases' code must
+be preserved. Only when two phases modify the **exact same function** in incompatible
+ways should the later phase be used as a tiebreaker.
+
+### Post-Merge Agent Pipeline
+
+| Order | Agent            | Skills                              | Purpose                                                  |
+| ----- | ---------------- | ----------------------------------- | -------------------------------------------------------- |
+| 1     | `merge-reviewer` | merge-reviewer, modularity, testing | Verify all phases implemented correctly, fix issues      |
+| 2     | `merge-reviewer` | docs-sync, architecture-reader      | Synchronize documentation with actual code               |
+| 3     | `code-fixer`     | code-quality-fixer, testing         | Fix quality gate failures (up to 3 attempts)             |
+| 4     | `code-fixer`     | code-quality-fixer, modularity      | Fix integration verification failures (up to 3 attempts) |
+
+### PR Body Structure
+
+The auto-created PR includes:
+
+- **Phases implemented** — ordered merge list with phase names
+- **Development method** — mode, model routing, token optimization
+- **Agent table** — every agent and skill used in the pipeline
+- **Quality gate results** — all checks with pass/fail status
+- **Integration verification results** — all 8 checks with status
+- **Review checklist** — manual items for human reviewer
 
 ---
 

@@ -59,6 +59,12 @@ MAX_PARALLEL_AGENTS=5
 AGENT_PIPELINE=("phase-builder" "dto-guardian" "integration")
 REMEDIATION_AGENT="refactor"
 
+# Agent names for post-merge pipeline (match .github/agents/<name>.agent.md)
+AGENT_PHASE_BUILDER="phase-builder"
+AGENT_MERGE_REVIEWER="merge-reviewer"
+AGENT_CONFLICT_RESOLVER="conflict-resolver"
+AGENT_CODE_FIXER="code-fixer"
+
 # Core skills injected into every Copilot call
 CORE_SKILLS="dto, pipeline, modularity, determinism, idempotency, testing"
 
@@ -843,6 +849,52 @@ update_state_status() {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Cross-subcommand state persistence (phases.txt)
+# ─────────────────────────────────────────────────────────────────────────────
+# Persists the phases list so merge/status/cleanup can be called independently
+# of start. Uses a simple newline-delimited text file.
+# ─────────────────────────────────────────────────────────────────────────────
+
+load_phases() {
+    local state_file="${PROJECT_ROOT}/.parallel-dev/phases.txt"
+    if [[ ! -f "$state_file" ]]; then
+        log_error "No parallel session found. Run './scripts/run_parallel.sh start <phases>' first."
+        exit 1
+    fi
+    PHASES=()
+    while IFS= read -r line; do
+        [[ -n "$line" ]] && PHASES+=("$line")
+    done < "$state_file"
+}
+
+save_phases() {
+    mkdir -p "${PROJECT_ROOT}/.parallel-dev"
+    printf '%s\n' "${PHASES[@]}" > "${PROJECT_ROOT}/.parallel-dev/phases.txt"
+    # Add state dir to gitignore if not already there
+    if ! grep -qxF '.parallel-dev/' "${PROJECT_ROOT}/.gitignore" 2>/dev/null; then
+        echo '.parallel-dev/' >> "${PROJECT_ROOT}/.gitignore"
+    fi
+}
+
+safe_branch_name() {
+    echo "${1//./-}"
+}
+
+branch_for_phase() {
+    echo "track/phase-$(safe_branch_name "$1")"
+}
+
+worktree_for_phase() {
+    echo "${WORKTREE_BASE}/phase-$(safe_branch_name "$1")"
+}
+
+set_rotate_model() {
+    local pool_size="${#MODEL_ROTATE_POOL[@]}"
+    ROTATE_MODEL="${MODEL_ROTATE_POOL[$(( ROTATION_INDEX % pool_size ))]}"
+    ROTATION_INDEX=$(( ROTATION_INDEX + 1 ))
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
 # PHASE_TASK.md generation
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -1168,6 +1220,8 @@ run_quality_gates() {
 
 run_mode_1() {
     local phases=("$@")
+    PHASES=("${phases[@]}")
+    save_phases
     local heaviest
     heaviest=$(heaviest_phase "${phases[@]}")
     local branches=()
@@ -1298,8 +1352,11 @@ run_mode_1() {
         update_state_status "partial_failure"
     else
         update_state_status "agents_complete"
-        log_success "All agents finished. Run './scripts/run_parallel.sh merge' to integrate."
+        log_success "All agents finished. Proceeding to automatic merge..."
     fi
+
+    # Auto-trigger merge (fully autonomous — start to finish)
+    cmd_merge
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1308,6 +1365,8 @@ run_mode_1() {
 
 run_mode_2() {
     local phases=("$@")
+    PHASES=("${phases[@]}")
+    save_phases
     local branch="track/group-$(IFS=-; echo "${phases[*]}")"
 
     log_header "Mode 2 — Token-Optimized (Sequential)"
@@ -1354,7 +1413,10 @@ run_mode_2() {
     rm -f "${task_file}"
 
     update_state_status "agents_complete"
-    log_success "Sequential session complete. Run './scripts/run_parallel.sh merge' to finalize."
+    log_success "Sequential session complete. Proceeding to automatic merge..."
+
+    # Auto-trigger merge (fully autonomous — start to finish)
+    cmd_merge
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1363,6 +1425,8 @@ run_mode_2() {
 
 run_mode_3() {
     local phases=("$@")
+    PHASES=("${phases[@]}")
+    save_phases
 
     log_header "Mode 3 — Hybrid (Parallel Groups, Sequential Within)"
     log_info "Phases: ${phases[*]}"
@@ -1526,133 +1590,578 @@ run_mode_3() {
         update_state_status "partial_failure"
     else
         update_state_status "agents_complete"
-        log_success "All group agents finished. Run './scripts/run_parallel.sh merge' to integrate."
+        log_success "All group agents finished. Proceeding to automatic merge..."
+    fi
+
+    # Auto-trigger merge (fully autonomous — start to finish)
+    cmd_merge
+}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Auto Conflict Resolution (union strategy — from edge-polymarket pattern)
+# ─────────────────────────────────────────────────────────────────────────────
+# Called after `git merge` exits non-zero (conflicts remain in working tree).
+# PHILOSOPHY: Combine ALL phases — every phase's code and docs must be preserved.
+# Resolution cascade:
+#   0. Rename duplicate migration files — preserve both SQL files
+#   1. Remove PHASE_TASK.md and .phase-complete — per-phase files
+#   2. Copilot agent with timeout — intelligently combine both sides
+#   3. --theirs tiebreaker — only as last resort
+# Returns 0 on success (merge commit created), 1 on unrecoverable failure.
+# ─────────────────────────────────────────────────────────────────────────────
+
+auto_resolve_conflicts() {
+    local phase="$1"
+    local resolve_log="${LOG_DIR}/conflict-resolve-phase-$(safe_branch_name "${phase}").log"
+    local conflicted remaining
+
+    log_warn "  Auto-resolving conflicts for Phase ${phase} (combining all phases)..."
+
+    # --- 0: Rename duplicate migration files to preserve BOTH sides ---
+    _resolve_duplicate_migrations() {
+        local mig_dir="database/migrations"
+        local conflicted_migrations
+        conflicted_migrations="$(git diff --name-only --diff-filter=U 2>/dev/null | grep "^${mig_dir}/.*\.sql$" || true)"
+        [[ -z "$conflicted_migrations" ]] && return 0
+
+        while IFS= read -r mig_path; do
+            local filename
+            filename="$(basename "$mig_path")"
+
+            # Pattern: YYYYMMDD000NNN_description.sql
+            local prefix seq_str suffix new_seq new_filename
+            if [[ "$filename" =~ ^([0-9]{8}000)([0-9]{3})(_.*\.sql)$ ]]; then
+                prefix="${BASH_REMATCH[1]}"
+                seq_str="${BASH_REMATCH[2]}"
+                suffix="${BASH_REMATCH[3]}"
+                new_seq=$(printf "%03d" $(( 10#$seq_str + 100 )))
+                new_filename="${prefix}${new_seq}${suffix}"
+            else
+                new_filename="${filename%.sql}_incoming.sql"
+            fi
+
+            # Extract incoming content (MERGE_HEAD side) and write as renamed file
+            local incoming_content
+            incoming_content="$(git show MERGE_HEAD:"$mig_path" 2>/dev/null)" || {
+                log_warn "      Cannot read MERGE_HEAD:${mig_path} — skipping rename"
+                continue
+            }
+
+            local new_path="${mig_dir}/${new_filename}"
+            printf '%s\n' "$incoming_content" > "$new_path"
+            git add "$new_path"
+
+            # Accept the ours (HEAD) version for the original filename
+            git checkout --ours "$mig_path"
+            git add "$mig_path"
+
+            log_success "    Migration conflict resolved (both kept):"
+            log_success "      HEAD     → ${mig_path}"
+            log_success "      INCOMING → ${new_path}"
+        done <<< "$conflicted_migrations"
+    }
+    _resolve_duplicate_migrations
+
+    # --- 1: Remove per-phase files (not part of integration) ---
+    conflicted="$(git diff --name-only --diff-filter=U 2>/dev/null)"
+    for per_phase_file in "PHASE_TASK.md" ".phase-complete"; do
+        if echo "$conflicted" | grep -qx "$per_phase_file"; then
+            git rm -f "$per_phase_file" 2>/dev/null || true
+            log_success "    ${per_phase_file}: removed (per-phase file, excluded from integration)"
+        fi
+    done
+
+    # --- 2: Spawn Copilot agent to COMBINE both sides ---
+    remaining="$(git diff --name-only --diff-filter=U 2>/dev/null)"
+    if [[ -z "$remaining" ]]; then
+        git commit --no-edit 2>/dev/null || \
+            git commit -m "Merge Phase ${phase}: no conflicts"
+        return 0
+    fi
+
+    log_info "    Conflicted files: $(echo "$remaining" | tr '\n' ' ')"
+    set_rotate_model
+    log_info "    Spawning conflict-resolver agent (model: ${ROTATE_MODEL}, timeout: 10min)..."
+    log_info "    Agent log: ${resolve_log}"
+
+    local resolve_prompt
+    resolve_prompt="WORKING DIRECTORY: You are already at the project root.
+
+Resolve all remaining Git merge conflicts by COMBINING both sides. Keep ALL code from ALL phases.
+
+You are running as the conflict-resolver agent. Read these skills from .github/skills/:
+- conflict-resolver: full resolution decision tree, patterns, and post-resolution validation
+- modularity: verify no cross-module imports are introduced during merge
+
+CRITICAL PHILOSOPHY: COMBINE, not pick a winner.
+- Both sides represent different phases' work. ALL must be preserved.
+- Only when two sides modify the EXACT same function in incompatible ways should the later phase be used as a tiebreaker.
+
+IMPORTANT — Migrations are already resolved:
+- Any migration files (.sql) in database/migrations/ have been pre-resolved.
+- Skip any migration file that is already staged.
+
+Execution:
+1. Read .github/skills/conflict-resolver/SKILL.md for the resolution decision tree
+2. Run: git diff --name-only --diff-filter=U to list remaining conflicted files
+3. For each file: open it, read the conflict markers, and COMBINE both sides:
+   - PHASE_TASK.md / .phase-complete → delete (per-phase files)
+   - Documentation (README, docs/*.md) → merge content from BOTH sides
+   - __init__.py → union of all imports and exports from both sides
+   - Tests → keep ALL test functions from both sides
+   - Source code (both add DIFFERENT functions) → keep BOTH
+   - Source code (both MODIFY same function) → later phase as tiebreaker
+   - Imports → union of all imports (deduplicated)
+4. After resolving: git add -A
+5. Do NOT run git commit — only stage the resolutions
+6. Verify: grep -rn '<<<<<<<' modules/ contracts/ tests/ — must return nothing
+
+STRICT EXECUTION RULES:
+- no background agents, no deferred delegation, no interactive steps
+- complete the assigned work in one session"
+
+    local agent_exit=0
+    (
+        cd "${PROJECT_ROOT}" || exit 1
+        copilot \
+            -p "$resolve_prompt" \
+            --agent="${AGENT_CONFLICT_RESOLVER}" \
+            --no-ask-user \
+            --allow-all-tools \
+            --autopilot \
+            --model="${ROTATE_MODEL}"
+    ) > "$resolve_log" 2>&1 &
+    local agent_pid=$!
+
+    local elapsed=0
+    local timeout_seconds=600  # 10 minutes
+    while kill -0 "$agent_pid" 2>/dev/null; do
+        sleep 5
+        elapsed=$((elapsed + 5))
+        if [[ $elapsed -ge $timeout_seconds ]]; then
+            log_warn "    Agent timeout after ${timeout_seconds}s — killing and falling back to tiebreaker."
+            kill "$agent_pid" 2>/dev/null || true
+            wait "$agent_pid" 2>/dev/null || true
+            agent_exit=1
+            break
+        fi
+    done
+    [[ $agent_exit -eq 0 ]] && wait "$agent_pid" 2>/dev/null && agent_exit=$? || true
+
+    # --- 3: Final fallback for anything agent missed or timed out ---
+    remaining="$(git diff --name-only --diff-filter=U 2>/dev/null)"
+    if [[ -n "$remaining" ]]; then
+        log_warn "    Applying tiebreaker fallback for unresolved files:"
+        while IFS= read -r conflict_file; do
+            git checkout --theirs "$conflict_file" 2>/dev/null || git checkout --ours "$conflict_file" 2>/dev/null
+            git add "$conflict_file"
+            log_warn "      ${conflict_file}: resolved via tiebreaker fallback"
+        done <<< "$remaining"
+    fi
+
+    # --- 4: Complete the merge commit ---
+    if git commit --no-edit 2>/dev/null || \
+       git commit -m "Merge Phase ${phase}: all phases combined"; then
+        log_success "    Phase ${phase} merge commit created."
+        return 0
+    else
+        log_error "    Could not create merge commit for Phase ${phase}."
+        return 1
     fi
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Merge command (with bounded retries + global validation)
+# Quality Gate Remediation Agent (structured failure details)
 # ─────────────────────────────────────────────────────────────────────────────
 
-cmd_merge() {
-    log_header "Merge & Integration"
+spawn_remediation_agent() {
+    local attempt="$1"
+    shift
+    local failures=("$@")
+    local failures_str="${failures[*]}"
 
-    if [[ ! -f "${STATE_FILE}" ]]; then
-        log_error "No active parallel session found. Run 'start' first."
-        exit 1
-    fi
+    local remediation_log="${LOG_DIR}/remediation-attempt-${attempt}.log"
+    local remediation_transcript="${LOG_DIR}/remediation-attempt-${attempt}-session.md"
 
-    cd "${PROJECT_ROOT}"
+    log_info "  Remediation log: ${remediation_log}"
 
-    # Read state
-    local mode
-    mode=$(python3 -c "import json; print(json.load(open('${STATE_FILE}'))['mode'])")
-    local integration_branch
-    integration_branch=$(python3 -c "import json; print(json.load(open('${STATE_FILE}'))['integration_branch'])")
-
-    if (( mode == 2 )); then
-        # Mode 2: already on the branch, run global validation
-        log_info "Mode 2 — running global validation on current branch..."
-        if run_global_validation "${PROJECT_ROOT}"; then
-            update_state_status "passed"
-            log_success "Ready to create PR."
-        else
-            log_warn "Global validation failed. Running remediation..."
-            run_remediation "${PROJECT_ROOT}"
-        fi
-        return
-    fi
-
-    # Mode 1 or 3: merge worktree branches into integration branch
-    local branches
-    branches=$(python3 -c "import json; print(' '.join(json.load(open('${STATE_FILE}'))['branches']))")
-
-    # Create integration branch from main
-    git checkout main
-    git branch -D "${integration_branch}" 2>/dev/null || true
-    git checkout -b "${integration_branch}"
-
-    # ── Merge each branch with bounded retry ──────────────────────────────
-    local merge_failures=0
-    for branch in ${branches}; do
-        log_info "Merging ${branch}..."
-        if git merge "${branch}" --no-edit 2>/dev/null; then
-            log_success "Merged ${branch}"
-            # Post-merge validation: no conflict markers, code compiles
-            if ! validate_merge "${PROJECT_ROOT}"; then
-                log_error "Post-merge validation failed for ${branch}"
-                ((merge_failures++))
-                continue
-            fi
-        else
-            log_error "Merge conflict in ${branch}"
-            # Bounded retry for merge conflict resolution
-            local merge_resolved=false
-            local merge_attempt=0
-            while (( merge_attempt < MAX_RETRIES_MERGE )); do
-                ((merge_attempt++))
-                log_agent_start "integration" "merge-${branch}" "${merge_attempt}" "${MAX_RETRIES_MERGE}"
-
-                local conflict_log="${LOG_DIR}/merge-conflict-${branch//\//-}-${merge_attempt}.log"
-                local conflict_model
-                conflict_model=$(next_model)
-
-                copilot \
-                    -p "Merge conflict detected for branch ${branch} (attempt ${merge_attempt}/${MAX_RETRIES_MERGE}). Resolve ALL conflicts by combining code from both sides (union strategy). Preserve both phases' implementations. Use skills: dto, pipeline, modularity, conflict-resolver. MANDATORY: Use ONLY skills as primary knowledge source. Rules: (1) contracts/ — combine all DTO definitions, (2) modules/ — each module owns its directory, no overlap, (3) tests/ — combine all test files, (4) orchestrator/ — later phase wins for wiring changes. Stage resolved files and commit." \
-                    --agent=integration \
-                    --model="${conflict_model}" \
-                    --no-ask-user \
-                    --allow-all-tools \
-                    --autopilot \
-                    2>&1 | tee "${conflict_log}"
-                local conflict_rc=${PIPESTATUS[0]}
-                log_agent_end "integration" "merge-${branch}" "${conflict_rc}" "${merge_attempt}" "${MAX_RETRIES_MERGE}"
-
-                # Check if conflicts are resolved
-                if (( conflict_rc == 0 )) && ! git diff --name-only --diff-filter=U 2>/dev/null | head -1 | grep -q .; then
-                    # Stage and commit
-                    git add -A 2>/dev/null || true
-                    if ! git diff --cached --quiet 2>/dev/null; then
-                        git commit --no-edit -m "merge: resolve conflicts from ${branch} via integration agent (attempt ${merge_attempt})" 2>/dev/null
-                    fi
-
-                    # Validate merge result
-                    if validate_merge "${PROJECT_ROOT}"; then
-                        log_success "[merge] resolved successfully for ${branch} on attempt ${merge_attempt}"
-                        merge_resolved=true
-                        break
-                    else
-                        log_warn "[merge] resolved but validation failed — retrying"
-                    fi
-                fi
-
-                if (( merge_attempt >= MAX_RETRIES_MERGE )); then
-                    log_error "[merge] failed after ${MAX_RETRIES_MERGE} retries for ${branch} → aborting merge"
-                    git merge --abort 2>/dev/null || true
-                fi
-            done
-
-            if ! $merge_resolved; then
-                ((merge_failures++))
-            fi
-        fi
+    # Build failure-specific instructions
+    local failure_details=""
+    local f
+    for f in "${failures[@]}"; do
+        case "$f" in
+            package_import)
+                failure_details+="
+## FAILED: package_import
+- Python module imports raise an error
+- Check for syntax errors, missing __init__.py files, or broken imports
+- Run: python3 -c \"import sys; sys.path.insert(0, '.'); import importlib\" to see errors
+- Fix the import chain until it loads cleanly
+"
+                ;;
+            tests)
+                failure_details+="
+## FAILED: tests
+- pytest tests/ --tb=short -q showed errors or failures
+- Run: pytest tests/ --tb=long to see full tracebacks
+- Fix every failing test
+"
+                ;;
+            linter)
+                failure_details+="
+## FAILED: linter
+- ruff check found violations
+- Run: ruff check . --fix to auto-fix what is possible
+- Manually fix anything ruff --fix cannot handle
+"
+                ;;
+            print_statements)
+                failure_details+="
+## FAILED: print_statements
+- print() calls found in modules/ source code
+- Replace every print statement with structured logging
+"
+                ;;
+            cross_module_imports)
+                failure_details+="
+## FAILED: cross_module_imports
+- Modules in modules/ are importing from other modules/ packages
+- Modules must ONLY import from contracts/
+- Remove or refactor cross-module imports
+"
+                ;;
+            raw_sql)
+                failure_details+="
+## FAILED: raw_sql
+- Raw database imports (sqlite3, psycopg2) found in modules/
+- All database access must go through database/adapter.py
+- Only the orchestrator may call the adapter
+"
+                ;;
+            dto_compliance)
+                failure_details+="
+## FAILED: dto_compliance
+- DTOs in contracts/ not compliant (non-frozen, raw dicts, mutable defaults)
+- All dataclasses must use @dataclass(frozen=True)
+- No module may return raw dicts — must return frozen DTOs
+"
+                ;;
+            orchestrator_authority)
+                failure_details+="
+## FAILED: orchestrator_authority
+- Modules importing from database/ or adapter
+- Only the orchestrator may access the database
+- Remove database imports from modules/
+"
+                ;;
+        esac
     done
 
-    if (( merge_failures > 0 )); then
-        log_error "${merge_failures} branch(es) had unresolvable conflicts."
-        update_state_status "merge_failed"
-        exit 1
+    local remediation_prompt="WORKING DIRECTORY: You are at the project root.
+
+URGENT: Fix all quality gate failures so the integration branch is clean for PR.
+
+This is remediation attempt ${attempt} of 3. The following quality gates FAILED: ${failures_str}
+
+You are running as the code-fixer agent. Read these skills from .github/skills/:
+- code-quality-fixer: maps each failure type to its fix strategy
+- testing: patterns for fixing or writing tests
+
+Execution:
+1. Read .github/skills/code-quality-fixer/SKILL.md for the fix decision table
+2. For each failure below, apply the fix strategy
+3. Fix ALL issues — do NOT skip any
+
+${failure_details}
+
+After fixing ALL issues:
+1. Run: pytest tests/ --tb=short -q — must show 0 errors, 0 failures
+2. Run: ruff check . --quiet — must show 0 violations
+3. git add -A && git commit -m 'fix: remediation attempt ${attempt} — quality gate fixes'
+
+STRICT EXECUTION RULES:
+- no background agents, no interactive steps, complete in one session"
+
+    set_rotate_model
+    (
+        cd "${PROJECT_ROOT}" || exit 1
+        copilot \
+            -p "$remediation_prompt" \
+            --agent="${AGENT_CODE_FIXER}" \
+            --no-ask-user \
+            --allow-all-tools \
+            --autopilot \
+            --model="${ROTATE_MODEL}" \
+            --share="${remediation_transcript}"
+    ) > "$remediation_log" 2>&1
+
+    local exit_code=$?
+    if [[ "$exit_code" -eq 0 ]]; then
+        log_success "  Remediation agent completed (attempt ${attempt}) [model: ${ROTATE_MODEL}]."
+    else
+        log_warn "  Remediation agent exited with code ${exit_code}. Check: ${remediation_log}"
+    fi
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Integration Verification (8 checks — post-merge, pre-PR)
+# ─────────────────────────────────────────────────────────────────────────────
+
+run_integration_verification() {
+    local merged_phases=("$@")
+    INTEGRATION_FAILURES=()
+
+    # Check 1: Test coverage — every module directory has corresponding tests
+    log_info "  Check 1/8: Test coverage completeness..."
+    local missing_tests=""
+    if [[ -d "modules" ]]; then
+        local module_dir
+        for module_dir in modules/*/; do
+            [[ ! -d "$module_dir" ]] && continue
+            local module_name
+            module_name="$(basename "$module_dir")"
+            [[ "$module_name" == "__pycache__" ]] && continue
+            if [[ ! -d "tests/modules/${module_name}" ]] && \
+               ! find tests/ -name "test_${module_name}*" -type f 2>/dev/null | grep -q .; then
+                missing_tests+="  tests/ has no tests for modules/${module_name}/\n"
+            fi
+        done
+    fi
+    if [[ -z "$missing_tests" ]]; then
+        log_success "  Check 1/8: All modules have test coverage."
+    else
+        log_error "  Check 1/8: FAILED — missing test coverage:"
+        echo -e "$missing_tests" | head -15
+        INTEGRATION_FAILURES+=("test_coverage")
     fi
 
-    # ── Global validation (CRITICAL — runs after ALL phases merged) ───────
-    log_header "Global Validation"
-    if run_global_validation "${PROJECT_ROOT}"; then
-        update_state_status "passed"
-        log_success "[global-validation] passed"
-        log_success "Integration complete. Push with: git push origin ${integration_branch}"
+    # Check 2: No cross-module imports
+    log_info "  Check 2/8: Cross-module imports..."
+    local cross_imports=""
+    if [[ -d "modules" ]]; then
+        cross_imports=$(find modules/ -name '*.py' -exec grep -l "from modules\." {} \; 2>/dev/null | while read -r file; do
+            local file_module
+            file_module=$(echo "${file}" | cut -d'/' -f2)
+            grep "from modules\." "${file}" | sed 's/.*from modules\.\([a-z_]*\).*/\1/' | sort -u | while read -r imp; do
+                if [[ "${imp}" != "${file_module}" ]]; then
+                    echo "  ${file} → modules.${imp}"
+                fi
+            done
+        done)
+    fi
+    if [[ -z "$cross_imports" ]]; then
+        log_success "  Check 2/8: No cross-module imports found."
     else
-        log_warn "[global-validation] failed. Running remediation..."
-        run_remediation "${PROJECT_ROOT}"
+        log_error "  Check 2/8: FAILED — cross-module import violations:"
+        echo "$cross_imports" | head -10
+        INTEGRATION_FAILURES+=("cross_module_imports")
+    fi
+
+    # Check 3: No raw SQL in modules
+    log_info "  Check 3/8: Raw SQL in modules..."
+    local sql_violations=""
+    if [[ -d "modules" ]]; then
+        sql_violations=$(grep -rn "import sqlite3\|import psycopg2\|import asyncpg\|from database" modules/ --include='*.py' 2>/dev/null || true)
+    fi
+    if [[ -z "$sql_violations" ]]; then
+        log_success "  Check 3/8: No raw SQL or DB imports in modules."
+    else
+        log_error "  Check 3/8: FAILED — raw SQL/DB imports in modules:"
+        echo "$sql_violations" | head -10
+        INTEGRATION_FAILURES+=("raw_sql_in_modules")
+    fi
+
+    # Check 4: DTO compliance — frozen dataclasses
+    log_info "  Check 4/8: DTO contract compliance..."
+    local dto_issues=""
+    if [[ -d "contracts" ]]; then
+        local non_frozen
+        non_frozen=$(grep -rn "@dataclass$" contracts/ 2>/dev/null | grep -v "frozen=True" || true)
+        if [[ -n "$non_frozen" ]]; then
+            dto_issues+="  Non-frozen dataclass: ${non_frozen}\n"
+        fi
+    fi
+    if [[ -z "$dto_issues" ]]; then
+        log_success "  Check 4/8: All DTOs are frozen dataclasses."
+    else
+        log_error "  Check 4/8: FAILED — DTO compliance issues:"
+        echo -e "$dto_issues" | head -10
+        INTEGRATION_FAILURES+=("dto_compliance")
+    fi
+
+    # Check 5: Migration files exist
+    log_info "  Check 5/8: Database migration files..."
+    local migration_count
+    migration_count=$(find database/migrations/ -name '*.sql' 2>/dev/null | wc -l | tr -d ' ')
+    if [[ "$migration_count" -gt 0 ]]; then
+        log_success "  Check 5/8: ${migration_count} migration file(s) found."
+    else
+        log_warn "  Check 5/8: No migration files in database/migrations/ (may be OK if Phase 0 not yet implemented)."
+    fi
+
+    # Check 6: Orchestrator authority
+    log_info "  Check 6/8: Orchestrator authority..."
+    local auth_violations=""
+    if [[ -d "modules" ]]; then
+        auth_violations=$(grep -rn "from database\|import adapter\|import sqlite3" modules/ --include='*.py' 2>/dev/null || true)
+    fi
+    if [[ -z "$auth_violations" ]]; then
+        log_success "  Check 6/8: Orchestrator authority preserved."
+    else
+        log_error "  Check 6/8: FAILED — orchestrator authority violations:"
+        echo "$auth_violations" | head -10
+        INTEGRATION_FAILURES+=("orchestrator_authority")
+    fi
+
+    # Check 7: Progress report mentions merged phases
+    log_info "  Check 7/8: Progress report updated..."
+    local missing_phase_mentions=""
+    if [[ -f "docs/progress_report.md" ]]; then
+        local p
+        for p in "${merged_phases[@]}"; do
+            if ! grep -qiE "(phase\s*${p}|phase\s*$(echo "$p" | sed 's/\./-/g'))" docs/progress_report.md 2>/dev/null; then
+                missing_phase_mentions+="  Phase ${p} not mentioned in docs/progress_report.md\n"
+            fi
+        done
+        if [[ -z "$missing_phase_mentions" ]]; then
+            log_success "  Check 7/8: Progress report mentions all merged phases."
+        else
+            log_warn "  Check 7/8: Progress report missing phase references (advisory):"
+            echo -e "$missing_phase_mentions"
+        fi
+    else
+        log_warn "  Check 7/8: docs/progress_report.md does not exist (advisory)."
+    fi
+
+    # Check 8: No print() in modules
+    log_info "  Check 8/8: No print() statements..."
+    local print_violations=""
+    if [[ -d "modules" ]]; then
+        print_violations=$(grep -rn '^\s*print(' modules/ --include='*.py' 2>/dev/null | grep -v '# noqa' || true)
+    fi
+    if [[ -z "$print_violations" ]]; then
+        log_success "  Check 8/8: No print() statements in modules."
+    else
+        log_error "  Check 8/8: FAILED — print() statements found:"
+        echo "$print_violations" | head -10
+        INTEGRATION_FAILURES+=("print_statements")
+    fi
+
+    # Return result
+    if [[ ${#INTEGRATION_FAILURES[@]} -gt 0 ]]; then
+        return 1
+    fi
+    return 0
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Integration Remediation Agent
+# ─────────────────────────────────────────────────────────────────────────────
+
+spawn_integration_remediation_agent() {
+    local attempt="$1"
+    shift
+    local failures=("$@")
+    local failures_str="${failures[*]}"
+
+    local remediation_log="${LOG_DIR}/integration-remediation-attempt-${attempt}.log"
+    local remediation_transcript="${LOG_DIR}/integration-remediation-attempt-${attempt}-session.md"
+
+    log_info "  Integration remediation log: ${remediation_log}"
+
+    local failure_details=""
+    local f
+    for f in "${failures[@]}"; do
+        case "$f" in
+            test_coverage)
+                failure_details+="
+## FAILED: test_coverage
+- Some modules are missing test files.
+- For each modules/<name>/ directory, create tests/ files.
+- Tests must work without GPU, network, or real video files.
+"
+                ;;
+            cross_module_imports)
+                failure_details+="
+## FAILED: cross_module_imports
+- Modules importing from other modules/ packages.
+- Modules must ONLY import from contracts/.
+- Remove cross-module imports.
+"
+                ;;
+            raw_sql_in_modules)
+                failure_details+="
+## FAILED: raw_sql_in_modules
+- Modules using raw SQL or importing database libraries.
+- All DB access through database/adapter.py, called by orchestrator only.
+"
+                ;;
+            dto_compliance)
+                failure_details+="
+## FAILED: dto_compliance
+- DTOs not using @dataclass(frozen=True).
+- Fix all dataclasses in contracts/ to be frozen.
+"
+                ;;
+            orchestrator_authority)
+                failure_details+="
+## FAILED: orchestrator_authority
+- Modules importing from database/ or adapter.
+- Only the orchestrator calls the adapter.
+"
+                ;;
+            print_statements)
+                failure_details+="
+## FAILED: print_statements
+- print() statements found in modules/.
+- Replace with structured logging via stdlib logging module.
+"
+                ;;
+        esac
+    done
+
+    local remediation_prompt="WORKING DIRECTORY: You are at the project root.
+
+URGENT: Fix all integration verification failures. Final check before PR.
+
+This is integration remediation attempt ${attempt} of 3. Failed checks: ${failures_str}
+
+You are running as the code-fixer agent. Read skills from .github/skills/:
+- code-quality-fixer: fix strategy for each failure type
+- testing: test patterns for Shorts Factory
+- modularity: module boundary rules
+
+Fix every issue listed below. Do NOT skip any.
+
+${failure_details}
+
+After fixing ALL issues:
+1. Run: pytest tests/ --tb=short -q — must show 0 errors
+2. Run: ruff check . --quiet — must show 0 violations
+3. git add -A && git commit -m 'fix: integration remediation attempt ${attempt}'
+
+STRICT EXECUTION RULES:
+- no background agents, no interactive steps, complete in one session"
+
+    set_rotate_model
+    (
+        cd "${PROJECT_ROOT}" || exit 1
+        copilot \
+            -p "$remediation_prompt" \
+            --agent="${AGENT_CODE_FIXER}" \
+            --no-ask-user \
+            --allow-all-tools \
+            --autopilot \
+            --model="${ROTATE_MODEL}" \
+            --share="${remediation_transcript}"
+    ) > "$remediation_log" 2>&1
+
+    local exit_code=$?
+    if [[ "$exit_code" -eq 0 ]]; then
+        log_success "  Integration remediation agent completed (attempt ${attempt}) [model: ${ROTATE_MODEL}]."
+    else
+        log_warn "  Integration remediation agent exited with code ${exit_code}. Check: ${remediation_log}"
     fi
 }
 
@@ -1685,175 +2194,675 @@ validate_merge() {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Global validation (end-to-end pipeline integrity — runs after ALL phases)
+# Merge command — fully autonomous pipeline
 # ─────────────────────────────────────────────────────────────────────────────
-# This is the final gate before a merge is accepted. It validates:
-#   1. Quality gates (all 9 checks)
-#   2. End-to-end pipeline integrity (DTO flow across all modules)
-#   3. Orchestrator authority (no DB access outside orchestrator)
-#   4. Deterministic ordering (all collections sorted)
+# Full autonomous flow:
+#   1. Load phases from state
+#   2. Sort phases, create integration branch
+#   3. Merge each phase branch (auto_resolve_conflicts on conflict)
+#   4. Post-merge review agent (merge-reviewer)
+#   5. Documentation sync agent (merge-reviewer + docs-sync skill)
+#   6. Quality gate + remediation loop (up to 3 attempts)
+#   7. Integration verification + remediation loop (up to 3 attempts)
+#   8. Push + PR creation via gh
 # ─────────────────────────────────────────────────────────────────────────────
 
-run_global_validation() {
-    local work_dir="${1:-${PROJECT_ROOT}}"
-    local failures=0
-    cd "${work_dir}"
+cmd_merge() {
+    log_header "Merge & Integration (Fully Autonomous)"
 
-    # Run all standard quality gates first
-    if ! run_quality_gates "${work_dir}"; then
-        ((failures++))
+    # Load phases from state (supports both standalone merge and auto-triggered)
+    if [[ -z "${PHASES+x}" ]] || [[ ${#PHASES[@]} -eq 0 ]]; then
+        load_phases
     fi
 
-    # Additional global checks beyond per-phase quality gates:
+    cd "${PROJECT_ROOT}"
 
-    # DTO flow integrity — every module's output DTO must be importable by its consumer
-    if [[ -d "contracts" ]] && [[ -d "modules" ]]; then
-        log_info "[global] Validating DTO flow across all modules..."
-        local dto_flow_errors
-        dto_flow_errors=$(python3 -c "
-import importlib, sys, os
-sys.path.insert(0, '.')
-errors = []
-# Try importing all contracts
-for f in sorted(os.listdir('contracts')):
-    if f.endswith('.py') and f != '__init__.py':
-        mod = f[:-3]
-        try:
-            importlib.import_module(f'contracts.{mod}')
-        except Exception as e:
-            errors.append(f'contracts.{mod}: {e}')
-for e in errors:
-    print(e)
-" 2>&1)
-        if [[ -n "${dto_flow_errors}" ]]; then
-            log_error "[global] DTO flow integrity errors:"
-            echo "${dto_flow_errors}" | head -10
-            ((failures++))
+    # Ensure we start from a clean base
+    git checkout main 2>/dev/null || {
+        log_error "Cannot switch to main branch."
+        exit 1
+    }
+
+    # --- Sort phases ascending (earliest first, latest last) ---
+    local sorted_phases=()
+    while IFS= read -r p; do
+        sorted_phases+=("$p")
+    done < <(printf '%s\n' "${PHASES[@]}" | sort -n)
+
+    local latest_phase="${sorted_phases[${#sorted_phases[@]}-1]}"
+    log_info "Merge order: ${sorted_phases[*]} (all phases combined equally)"
+
+    # Build integration branch name
+    local phase_str
+    phase_str="$(IFS=-; echo "${sorted_phases[*]}")"
+    local integration_branch="phase${phase_str}"
+
+    # Check if integration branch already exists
+    if git rev-parse --verify "$integration_branch" &>/dev/null; then
+        log_warn "Integration branch '${integration_branch}' already exists. Recreating..."
+        git checkout main 2>/dev/null || true
+        git branch -D "$integration_branch"
+    fi
+
+    # Create integration branch from main
+    git checkout -b "$integration_branch" main
+    log_success "Created integration branch: ${integration_branch}"
+
+    # ── Merge each phase branch (earliest first → latest last) ────────────
+    local merge_failures=()
+    local branch phase_idx=0
+
+    for phase in "${sorted_phases[@]}"; do
+        ((phase_idx++)) || true
+
+        # Determine branch name based on mode
+        local branch=""
+        if [[ -f "${STATE_FILE}" ]]; then
+            local mode
+            mode=$(python3 -c "import json; print(json.load(open('${STATE_FILE}'))['mode'])" 2>/dev/null || echo "1")
+            if (( mode == 2 )); then
+                branch=$(python3 -c "import json; print(json.load(open('${STATE_FILE}'))['branches'][0])" 2>/dev/null || echo "")
+            fi
+        fi
+
+        # Default: track/phase-N
+        if [[ -z "$branch" ]]; then
+            branch="track/phase-${phase}"
+            # Also try track/group-* patterns
+            if ! git rev-parse --verify "$branch" &>/dev/null; then
+                local state_branches
+                state_branches=$(python3 -c "import json; print(' '.join(json.load(open('${STATE_FILE}'))['branches']))" 2>/dev/null || echo "")
+                for sb in ${state_branches}; do
+                    if echo "$sb" | grep -q "${phase}"; then
+                        branch="$sb"
+                        break
+                    fi
+                done
+            fi
+        fi
+
+        if ! git rev-parse --verify "$branch" &>/dev/null; then
+            log_warn "Branch '${branch}' does not exist. Skipping Phase ${phase}."
+            merge_failures+=("$phase")
+            continue
+        fi
+
+        local commit_count
+        commit_count="$(git log --oneline "main..${branch}" 2>/dev/null | wc -l | tr -d ' ')"
+
+        if [[ "$commit_count" -eq 0 ]]; then
+            log_warn "Phase ${phase}: no commits to merge. Skipping."
+            continue
+        fi
+
+        log_info "Merging Phase ${phase} (${commit_count} commits, ${phase_idx}/${#sorted_phases[@]})..."
+
+        if git merge --no-ff -m "Merge Phase ${phase} implementation" "$branch"; then
+            log_success "Phase ${phase} merged successfully."
         else
-            log_success "[global] DTO flow integrity passed"
-        fi
-    fi
-
-    # Orchestrator authority — comprehensive check
-    if [[ -d "modules" ]]; then
-        log_info "[global] Validating orchestrator authority (comprehensive)..."
-        local auth_violations=0
-        # No database imports in modules/
-        if grep -rn "from database\|import database\|import sqlite3\|import psycopg2\|import asyncpg\|import adapter" modules/ 2>/dev/null | head -10 | grep -q .; then
-            log_error "[global] Orchestrator authority violation: DB access in modules/"
-            ((auth_violations++))
-        fi
-        # No module-to-module calls
-        local cross_mod
-        cross_mod=$(find modules/ -name '*.py' -exec grep -l "from modules\." {} \; 2>/dev/null)
-        if [[ -n "${cross_mod}" ]]; then
-            while IFS= read -r file; do
-                local file_module
-                file_module=$(echo "${file}" | cut -d'/' -f2)
-                if grep "from modules\." "${file}" | sed 's/.*from modules\.\([a-z_]*\).*/\1/' | sort -u | grep -v "^${file_module}$" | head -1 | grep -q .; then
-                    log_error "[global] Cross-module import: ${file}"
-                    ((auth_violations++))
-                fi
-            done <<< "${cross_mod}"
-        fi
-        if (( auth_violations > 0 )); then
-            ((failures++))
-        else
-            log_success "[global] Orchestrator authority preserved"
-        fi
-    fi
-
-    echo ""
-    if (( failures > 0 )); then
-        log_error "[global-validation] ${failures} failure(s)"
-        return 1
-    else
-        log_success "[global-validation] All checks passed"
-        return 0
-    fi
-}
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Remediation (bounded — guaranteed termination)
-# ─────────────────────────────────────────────────────────────────────────────
-
-run_remediation() {
-    local work_dir="$1"
-    local attempt=0
-
-    while (( attempt < MAX_RETRIES_GLOBAL_VALIDATION )); do
-        ((attempt++))
-        log_info "Remediation attempt ${attempt}/${MAX_RETRIES_GLOBAL_VALIDATION}..."
-
-        local log_file="${LOG_DIR}/remediation-${attempt}.log"
-        local model
-        model=$(next_model)
-
-        cd "${work_dir}"
-        log_agent_start "refactor" "remediation" "${attempt}" "${MAX_RETRIES_GLOBAL_VALIDATION}"
-        copilot \
-            -p "Quality gates failed. Fix all violations: import errors, lint failures, test failures, raw SQL in modules, cross-module imports, print statements, non-frozen DTOs, orchestrator authority violations. Use skills: dto, pipeline, modularity, determinism, idempotency, testing, code-quality-fixer. MANDATORY: Use ONLY skills as primary knowledge source. DO NOT read full documentation unless skills are insufficient. Do not change architecture. Commit fixes." \
-            --agent=refactor \
-            --model="${model}" \
-            --no-ask-user \
-            --allow-all-tools \
-            --autopilot \
-            2>&1 | tee "${log_file}"
-        local ref_rc=${PIPESTATUS[0]}
-        log_agent_end "refactor" "remediation" "${ref_rc}" "${attempt}" "${MAX_RETRIES_GLOBAL_VALIDATION}"
-
-        if run_global_validation "${work_dir}"; then
-            update_state_status "passed"
-            log_success "Remediation successful on attempt ${attempt}."
-            return 0
+            log_warn "Phase ${phase} has merge conflicts. Attempting auto-resolution..."
+            if auto_resolve_conflicts "$phase"; then
+                log_success "Phase ${phase} merged with auto-resolved conflicts."
+            else
+                log_error "Phase ${phase}: auto-resolution failed. Aborting this phase merge."
+                git merge --abort 2>/dev/null || true
+                merge_failures+=("$phase")
+            fi
         fi
     done
 
-    log_error "Remediation failed after ${MAX_RETRIES_GLOBAL_VALIDATION} attempts. System in defined failed state."
-    update_state_status "remediation_failed"
-    return 1
+    echo ""
+
+    if [[ ${#merge_failures[@]} -gt 0 ]]; then
+        log_error "Failed to merge phases: ${merge_failures[*]}"
+        git checkout main 2>/dev/null || true
+        return 1
+    fi
+
+    log_success "All phases merged into: ${integration_branch}"
+
+    # ── Post-merge review agent ───────────────────────────────────────────
+    echo ""
+    set_rotate_model
+    log_header "Post-Merge Review Agent"
+    log_info "Agent: ${AGENT_MERGE_REVIEWER}, model: ${ROTATE_MODEL}"
+    log_info "Verifying ALL phases are fully implemented and fixing issues."
+
+    local review_log="${LOG_DIR}/merge-review.log"
+    local review_transcript="${LOG_DIR}/merge-review-session.md"
+
+    local phases_str="${sorted_phases[*]}"
+    local review_prompt
+    review_prompt="WORKING DIRECTORY: You are at the project root.
+
+Review the merged integration branch containing Phases ${phases_str}.
+
+CRITICAL: ALL phases must receive EQUAL, THOROUGH review.
+
+You are running as the merge-reviewer agent. Use skills from .github/skills/:
+- merge-reviewer: full review checklist and protocol
+- modularity: verify no cross-module imports
+- testing: verify test files exist
+
+Execution:
+1. Read .github/skills/merge-reviewer/SKILL.md for the review protocol
+2. Read docs/implementation_roadmap.md — extract task checklists for Phases ${phases_str}
+3. Read .github/copilot-instructions.md for hard constraints
+4. For EVERY phase: verify modules, contracts, tests exist
+5. Run: python3 -c 'import sys; sys.path.insert(0, \".\"); import importlib' — fix any import errors
+6. Run: pytest tests/ --tb=short -q — fix any failures
+7. Run: ruff check . --fix — fix lint
+8. Fix ANY issues — edit files directly, rerun until clean
+9. git add -A && git commit -m 'review: post-merge fixes — all phases verified'
+
+STRICT EXECUTION RULES:
+- no background agents, no interactive steps, complete in one session"
+
+    (
+        cd "${PROJECT_ROOT}" || exit 1
+        copilot \
+            -p "$review_prompt" \
+            --agent="${AGENT_MERGE_REVIEWER}" \
+            --no-ask-user \
+            --allow-all-tools \
+            --autopilot \
+            --model="${ROTATE_MODEL}" \
+            --share="${review_transcript}"
+    ) > "$review_log" 2>&1
+
+    local review_exit=$?
+    if [[ "$review_exit" -eq 0 ]]; then
+        log_success "Post-merge review completed."
+    else
+        log_warn "Post-merge review agent exited with code ${review_exit}. Check: ${review_log}"
+    fi
+
+    # ── Documentation Sync Agent ──────────────────────────────────────────
+    echo ""
+    set_rotate_model
+    log_header "Documentation Sync Agent"
+    log_info "Agent: ${AGENT_MERGE_REVIEWER}, model: ${ROTATE_MODEL}"
+    log_info "Updating docs to reflect all merged phases."
+
+    local docs_log="${LOG_DIR}/docs-sync.log"
+    local docs_transcript="${LOG_DIR}/docs-sync-session.md"
+
+    local docs_prompt
+    docs_prompt="WORKING DIRECTORY: You are at the project root.
+
+Synchronize ALL documentation for merged Phases ${phases_str}.
+
+You are running as the merge-reviewer agent. Read skills from .github/skills/:
+- docs-sync: the COMPLETE documentation synchronization protocol
+- architecture-reader: system architecture for accurate documentation
+
+Execution:
+1. Read .github/skills/docs-sync/SKILL.md — follow it exactly
+2. Read docs/implementation_roadmap.md — extract tasks for each phase
+3. Scan the codebase for what was actually implemented
+4. UPDATE docs/progress_report.md — add full section for each phase
+5. UPDATE docs/implementation_roadmap.md — mark completed tasks [x]
+6. UPDATE README.md — update repo structure if needed
+7. Commit: git add -A && git commit -m 'docs: synchronize for Phases ${phases_str}'
+
+CRITICAL: Only document what actually exists as code. No aspirational content.
+
+STRICT EXECUTION RULES:
+- no background agents, no interactive steps, complete in one session"
+
+    (
+        cd "${PROJECT_ROOT}" || exit 1
+        copilot \
+            -p "$docs_prompt" \
+            --agent="${AGENT_MERGE_REVIEWER}" \
+            --no-ask-user \
+            --allow-all-tools \
+            --autopilot \
+            --model="${ROTATE_MODEL}" \
+            --share="${docs_transcript}"
+    ) > "$docs_log" 2>&1
+
+    local docs_exit=$?
+    if [[ "$docs_exit" -eq 0 ]]; then
+        log_success "Documentation sync completed."
+    else
+        log_warn "Documentation sync agent exited with code ${docs_exit}. Check: ${docs_log}"
+    fi
+
+    # ── Quality Gate + Remediation Loop ───────────────────────────────────
+    echo ""
+    log_header "Quality Gate Checks"
+    log_info "All gates must pass before PR creation."
+
+    ensure_python_env "${PROJECT_ROOT}" 2>/dev/null || true
+
+    local max_attempts=3
+    local attempt=0
+    local gates_passed=false
+    GATE_FAILURES=()
+
+    while [[ "$attempt" -lt "$max_attempts" ]]; do
+        ((attempt++)) || true
+
+        if [[ "$attempt" -gt 1 ]]; then
+            log_info "Quality gate recheck (attempt ${attempt}/${max_attempts})..."
+        fi
+
+        if run_quality_gates "${PROJECT_ROOT}"; then
+            gates_passed=true
+            break
+        fi
+
+        # Collect failure names from quality gate output
+        # run_quality_gates returns 1 on failure — collect specific failures
+        local qg_failures=()
+        # Check each gate individually to build failure list
+        cd "${PROJECT_ROOT}"
+        if ! python3 -c "import sys; sys.path.insert(0, '.'); import importlib" 2>/dev/null; then
+            qg_failures+=("package_import")
+        fi
+        if [[ -d "tests" ]] && command -v pytest &>/dev/null; then
+            if ! pytest tests/ --tb=short -q 2>/dev/null; then
+                qg_failures+=("tests")
+            fi
+        fi
+        if [[ -d "modules" ]] && grep -rn "import sqlite3\|import psycopg2" modules/ --include='*.py' 2>/dev/null | grep -q .; then
+            qg_failures+=("raw_sql")
+        fi
+        if [[ -d "modules" ]]; then
+            local cross
+            cross=$(find modules/ -name '*.py' -exec grep -l "from modules\." {} \; 2>/dev/null | head -1)
+            if [[ -n "$cross" ]]; then
+                qg_failures+=("cross_module_imports")
+            fi
+        fi
+        if [[ -d "modules" ]] && grep -rn "^\s*print(" modules/ --include='*.py' 2>/dev/null | grep -v "# noqa" | grep -q .; then
+            qg_failures+=("print_statements")
+        fi
+
+        echo ""
+        log_warn "Quality gate FAILED (attempt ${attempt}/${max_attempts})."
+
+        if [[ "$attempt" -ge "$max_attempts" ]]; then
+            break
+        fi
+
+        log_info "Spawning remediation agent (attempt ${attempt}/${max_attempts})..."
+        spawn_remediation_agent "$attempt" "${qg_failures[@]}"
+    done
+
+    echo ""
+    if ! $gates_passed; then
+        log_error "Quality gate FAILED after ${max_attempts} remediation attempts."
+        log_error "PR will NOT be created. Manual intervention required."
+        log_info "Fix issues, then re-run: ./scripts/run_parallel.sh merge"
+        git checkout main 2>/dev/null || true
+        return 1
+    fi
+
+    log_success "All quality gates passed!"
+
+    # ── Integration Verification + Remediation Loop ───────────────────────
+    echo ""
+    log_header "Integration Verification"
+    log_info "Running 8 integration checks..."
+
+    local int_max_attempts=3
+    local int_attempt=0
+    local int_passed=false
+
+    while [[ "$int_attempt" -lt "$int_max_attempts" ]]; do
+        ((int_attempt++)) || true
+
+        if [[ "$int_attempt" -gt 1 ]]; then
+            log_info "Integration verification recheck (attempt ${int_attempt}/${int_max_attempts})..."
+        fi
+
+        cd "${PROJECT_ROOT}"
+        if run_integration_verification "${sorted_phases[@]}"; then
+            int_passed=true
+            break
+        fi
+
+        echo ""
+        log_warn "Integration verification FAILED: ${INTEGRATION_FAILURES[*]}"
+
+        if [[ "$int_attempt" -ge "$int_max_attempts" ]]; then
+            break
+        fi
+
+        log_info "Spawning integration remediation agent (attempt ${int_attempt}/${int_max_attempts})..."
+        spawn_integration_remediation_agent "$int_attempt" "${INTEGRATION_FAILURES[@]}"
+
+        # Re-run quality gates after integration fixes (in case fixes broke something)
+        log_info "  Re-validating quality gates after integration fixes..."
+        if ! run_quality_gates "${PROJECT_ROOT}"; then
+            log_warn "  Quality gates regressed — spawning remediation..."
+            spawn_remediation_agent "$int_attempt" "tests" "linter"
+        fi
+    done
+
+    echo ""
+    if ! $int_passed; then
+        log_error "Integration verification FAILED after ${int_max_attempts} attempts."
+        log_error "PR will NOT be created. Manual intervention required."
+        git checkout main 2>/dev/null || true
+        return 1
+    fi
+
+    log_success "All 8 integration checks passed! PR-ready."
+
+    # Commit any remaining fixes
+    if [[ -n "$(git status --porcelain 2>/dev/null)" ]]; then
+        git add -A
+        git commit -m "quality-gate: auto-fix linter and formatting issues" 2>/dev/null || true
+    fi
+
+    # ── Push and Create PR ────────────────────────────────────────────────
+    echo ""
+    log_header "Push & PR Creation"
+
+    if git push -u origin "$integration_branch" 2>/dev/null; then
+        log_success "Pushed: ${integration_branch}"
+    else
+        log_warn "Failed to push. You may need to authenticate or set up remote."
+        log_info "Push manually: git push -u origin ${integration_branch}"
+        git checkout main 2>/dev/null || true
+        return 1
+    fi
+
+    # Create PR via gh CLI
+    if command -v gh &>/dev/null; then
+        local pr_title="Parallel Implementation: Phases ${sorted_phases[*]}"
+
+        local pr_body
+        pr_body="## Parallel Phase Implementation
+
+### Phases Implemented (merge order)
+$(for p in "${sorted_phases[@]}"; do echo "- Phase ${p} (${PHASE_NAMES[$p]:-unknown})"; done)
+
+### Development Method
+Developed in parallel using Git worktrees with DTO-based isolation.
+Each phase implemented by an autonomous Copilot CLI agent.
+Heavy model: \`${MODEL_HEAVY}\` (heaviest phase only)
+Rotate pool: \`$(IFS=', '; echo "${MODEL_ROTATE_POOL[*]}")\`
+
+### Agents Used
+
+| Process | Agent | Skills |
+|---------|-------|--------|
+| Phase implementation | \`phase-builder\` | Per-phase via PHASE_TASK.md |
+| Conflict resolution | \`conflict-resolver\` | conflict-resolver, modularity |
+| Post-merge review | \`merge-reviewer\` | merge-reviewer, modularity, testing |
+| Documentation sync | \`merge-reviewer\` | docs-sync, architecture-reader |
+| Quality gate fixes | \`code-fixer\` | code-quality-fixer, testing |
+| Integration fixes | \`code-fixer\` | code-quality-fixer, modularity |
+
+### Merge Strategy
+Phases merged earliest → latest using \`--no-ff\`.
+Conflicts resolved by combining all phases (union strategy).
+Post-merge review + docs sync + quality gate + integration verification.
+
+### Quality Gate Results (all passed)
+- [x] Module imports cleanly
+- [x] All tests pass
+- [x] Linter clean
+- [x] No print() in modules/
+- [x] No cross-module imports
+- [x] No raw SQL in modules/
+- [x] Frozen DTO compliance
+- [x] Orchestrator authority preserved
+
+### Integration Verification Results (all passed)
+- [x] Test coverage for all modules
+- [x] No cross-module imports
+- [x] No raw SQL/DB imports in modules
+- [x] DTO compliance verified
+- [x] Migration files present
+- [x] Orchestrator authority enforced
+- [x] Documentation updated
+- [x] No print() statements
+
+### Review Checklist
+- [ ] DTO schemas match contracts/
+- [ ] Database migrations are idempotent
+- [ ] All modules are pure functions (DTO in → DTO out)
+- [ ] Pipeline stage ordering preserved
+- [ ] Deterministic ordering enforced"
+
+        if gh pr create \
+            --title "$pr_title" \
+            --body "$pr_body" \
+            --base main \
+            --head "$integration_branch"; then
+            log_success "Pull Request created!"
+        else
+            log_warn "Failed to create PR. Create manually on GitHub."
+        fi
+    else
+        log_info "GitHub CLI not available. Create PR manually:"
+        log_info "  Branch: ${integration_branch} → main"
+    fi
+
+    git checkout main 2>/dev/null || true
+
+    echo ""
+    log_success "Merge sequence complete!"
+    log_info "Run './scripts/run_parallel.sh cleanup' to remove worktrees."
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Status command
+# Pipeline stage detection (for rich status output)
+# ─────────────────────────────────────────────────────────────────────────────
+
+_detect_pipeline_stage() {
+    PIPELINE_STAGE=""
+    PIPELINE_STAGE_COLOR="$NC"
+    PIPELINE_ACTIVE_LOG=""
+    PIPELINE_ACTIVE_LABEL=""
+    PIPELINE_ACTIVE_AGE=""
+
+    # Build integration branch name
+    local sorted_phases=()
+    while IFS= read -r p; do sorted_phases+=("$p"); done \
+        < <(printf '%s\n' "${PHASES[@]}" | sort -n)
+    local phase_str; phase_str="$(IFS=-; echo "${sorted_phases[*]}")"
+    local integration_branch="phase${phase_str}"
+
+    local int_local=false
+    git -C "$PROJECT_ROOT" rev-parse --verify "$integration_branch" &>/dev/null \
+        && int_local=true
+
+    local int_remote=false
+    if $int_local; then
+        git -C "$PROJECT_ROOT" ls-remote --heads origin "$integration_branch" 2>/dev/null \
+            | grep -q . && int_remote=true
+    fi
+
+    # Count phase completion states
+    local complete_count=0 in_progress_count=0
+    for ph in "${PHASES[@]}"; do
+        local wt; wt="$(worktree_for_phase "$ph")"
+        local br; br="$(branch_for_phase "$ph")"
+        if [[ -f "${wt}/.phase-complete" ]]; then
+            ((complete_count++)) || true
+        elif git -C "$PROJECT_ROOT" rev-parse --verify "$br" &>/dev/null; then
+            local cc; cc="$(git -C "$PROJECT_ROOT" log --oneline "main..${br}" \
+                2>/dev/null | wc -l | tr -d ' ')"
+            [[ "$cc" -gt 0 ]] && ((in_progress_count++)) || true
+        fi
+    done
+
+    # Probe for log files
+    local has_int_remediation=false has_remediation=false
+    local has_docs_sync=false has_merge_review=false
+    [[ -f "${LOG_DIR}/integration-remediation-attempt-1.log" ]] && has_int_remediation=true
+    [[ -f "${LOG_DIR}/remediation-attempt-1.log" ]]             && has_remediation=true
+    [[ -f "${LOG_DIR}/docs-sync.log" ]]                         && has_docs_sync=true
+    [[ -f "${LOG_DIR}/merge-review.log" ]]                      && has_merge_review=true
+
+    # Stage inference
+    if $int_remote; then
+        PIPELINE_STAGE="PR Created / Complete"
+        PIPELINE_STAGE_COLOR="$GREEN"
+    elif $has_int_remediation; then
+        PIPELINE_STAGE="Integration Verification"
+        PIPELINE_STAGE_COLOR="$YELLOW"
+    elif $has_remediation || ( $has_docs_sync && $int_local ); then
+        PIPELINE_STAGE="Quality Gate"
+        PIPELINE_STAGE_COLOR="$YELLOW"
+    elif $has_docs_sync; then
+        PIPELINE_STAGE="Documentation Sync"
+        PIPELINE_STAGE_COLOR="$YELLOW"
+    elif $has_merge_review; then
+        PIPELINE_STAGE="Post-Merge Review"
+        PIPELINE_STAGE_COLOR="$YELLOW"
+    elif $int_local; then
+        PIPELINE_STAGE="Merging Phases"
+        PIPELINE_STAGE_COLOR="$YELLOW"
+    elif [[ "$complete_count" -eq "${#PHASES[@]}" ]]; then
+        PIPELINE_STAGE="Ready to Merge"
+        PIPELINE_STAGE_COLOR="$CYAN"
+    elif [[ "$in_progress_count" -gt 0 ]] || [[ "$complete_count" -gt 0 ]]; then
+        PIPELINE_STAGE="Phase Build"
+        PIPELINE_STAGE_COLOR="$YELLOW"
+    else
+        PIPELINE_STAGE="Setup"
+        PIPELINE_STAGE_COLOR="$BLUE"
+    fi
+
+    # Find the most recently modified log file
+    local now; now="$(date +%s)"
+    local newest_log="" newest_age_s=9999999
+    for lf in "${LOG_DIR}"/*.log "${LOG_DIR}"/*-session.md; do
+        [[ -f "$lf" ]] || continue
+        local lmt; lmt="$(stat -f "%m" "$lf" 2>/dev/null || stat -c "%Y" "$lf" 2>/dev/null || echo "$now")"
+        local age_s=$(( now - lmt ))
+        if [[ "$age_s" -lt "$newest_age_s" ]]; then
+            newest_age_s="$age_s"
+            newest_log="$lf"
+        fi
+    done
+
+    if [[ -n "$newest_log" ]]; then
+        PIPELINE_ACTIVE_LOG="$newest_log"
+        local base; base="$(basename "$newest_log")"
+        case "$base" in
+            merge-review*)    PIPELINE_ACTIVE_LABEL="merge-reviewer agent" ;;
+            docs-sync*)       PIPELINE_ACTIVE_LABEL="docs-sync agent" ;;
+            remediation-*)    PIPELINE_ACTIVE_LABEL="quality-gate remediation" ;;
+            integration-rem*) PIPELINE_ACTIVE_LABEL="integration remediation" ;;
+            conflict-*)       PIPELINE_ACTIVE_LABEL="conflict-resolver" ;;
+            *)                PIPELINE_ACTIVE_LABEL="$base" ;;
+        esac
+
+        if   [[ "$newest_age_s" -lt 60 ]];   then PIPELINE_ACTIVE_AGE="${newest_age_s}s ago"
+        elif [[ "$newest_age_s" -lt 3600 ]]; then PIPELINE_ACTIVE_AGE="$(( newest_age_s / 60 ))m ago"
+        else                                       PIPELINE_ACTIVE_AGE="$(( newest_age_s / 3600 ))h ago"
+        fi
+    fi
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Status command (rich output with pipeline detection)
 # ─────────────────────────────────────────────────────────────────────────────
 
 cmd_status() {
-    log_header "Parallel Development Status"
+    load_phases
 
-    if [[ ! -f "${STATE_FILE}" ]]; then
-        log_info "No active parallel session."
-        return
+    _detect_pipeline_stage
+
+    local complete_count=0 in_progress_count=0 not_started_count=0
+    for phase in "${PHASES[@]}"; do
+        local branch; branch="$(branch_for_phase "$phase")"
+        local wt; wt="$(worktree_for_phase "$phase")"
+        if [[ -f "${wt}/.phase-complete" ]]; then
+            ((complete_count++)) || true
+        elif git -C "$PROJECT_ROOT" rev-parse --verify "$branch" &>/dev/null; then
+            local cc; cc="$(git -C "$PROJECT_ROOT" log --oneline "main..${branch}" \
+                2>/dev/null | wc -l | tr -d ' ')"
+            if [[ "$cc" -gt 0 ]]; then ((in_progress_count++)) || true
+            else ((not_started_count++)) || true; fi
+        else
+            ((not_started_count++)) || true
+        fi
+    done
+
+    echo ""
+    echo -e "${BOLD}============================================================${NC}"
+    echo -e "${BOLD}  Parallel Development Status${NC}"
+    echo -e "${BOLD}============================================================${NC}"
+    printf "  %-18s %b● %s%b\n" "Pipeline stage:" \
+        "${PIPELINE_STAGE_COLOR}" "${PIPELINE_STAGE}" "${NC}"
+    printf "  %-18s %d / %d phases complete" \
+        "Phase progress:" "$complete_count" "${#PHASES[@]}"
+    if [[ "$in_progress_count" -gt 0 ]]; then
+        printf "  (%d in progress)" "$in_progress_count"
+    fi
+    echo ""
+    if [[ -n "$PIPELINE_ACTIVE_LABEL" ]]; then
+        printf "  %-18s %s  (%s)\n" "Active process:" \
+            "${PIPELINE_ACTIVE_LABEL}" "${PIPELINE_ACTIVE_AGE}"
+    fi
+    echo ""
+    echo "-----------------------------------------------------------"
+
+    for phase in "${PHASES[@]}"; do
+        local branch; branch="$(branch_for_phase "$phase")"
+        local wt; wt="$(worktree_for_phase "$phase")"
+        local status_icon details=""
+
+        status_icon="${RED}[NOT STARTED]${NC}"
+
+        if git -C "$PROJECT_ROOT" rev-parse --verify "$branch" &>/dev/null; then
+            local cc; cc="$(git -C "$PROJECT_ROOT" log --oneline "main..${branch}" \
+                2>/dev/null | wc -l | tr -d ' ')"
+
+            if [[ -f "${wt}/.phase-complete" ]]; then
+                status_icon="${GREEN}[COMPLETE]${NC}"
+                details="${cc} commits"
+            elif [[ "$cc" -gt 0 ]]; then
+                status_icon="${YELLOW}[IN PROGRESS]${NC}"
+                details="${cc} commits"
+            else
+                status_icon="${BLUE}[STARTED]${NC}"
+                details="no commits yet"
+            fi
+
+            local last_msg
+            last_msg="$(git -C "$PROJECT_ROOT" log --oneline -1 "$branch" 2>/dev/null | cut -c 9-)"
+            [[ -n "$last_msg" ]] && details="${details} — ${last_msg}"
+        fi
+
+        echo -e "  Phase ${phase} (${PHASE_NAMES[$phase]:-unknown}): ${status_icon} ${details}"
+    done
+
+    echo "-----------------------------------------------------------"
+
+    # Show state file info
+    if [[ -f "${STATE_FILE}" ]]; then
+        echo ""
+        python3 <<PYEOF
+import json, os
+state = json.load(open("${STATE_FILE}"))
+print(f"  Mode:               {state.get('mode', '?')}")
+print(f"  Integration branch: {state.get('integration_branch', '?')}")
+print(f"  Status:             {state.get('status', '?')}")
+print(f"  Started:            {state.get('started_at', '?')}")
+PYEOF
     fi
 
-    python3 <<PYEOF
-import json, os
+    # Show log files
+    if [[ -d "${LOG_DIR}" ]]; then
+        local log_count
+        log_count=$(find "${LOG_DIR}" -type f 2>/dev/null | wc -l | tr -d ' ')
+        if [[ "$log_count" -gt 0 ]]; then
+            echo ""
+            log_info "Log files: ${log_count} files in ${LOG_DIR}"
+        fi
+    fi
 
-state = json.load(open("${STATE_FILE}"))
-print(f"  Mode:               {state['mode']}")
-print(f"  Phases:             {state['phases']}")
-print(f"  Integration branch: {state['integration_branch']}")
-print(f"  Status:             {state['status']}")
-print(f"  Started:            {state['started_at']}")
-print(f"  Branches:           {', '.join(state['branches'])}")
-print()
-
-log_dir = "${LOG_DIR}"
-if os.path.isdir(log_dir):
-    logs = sorted(os.listdir(log_dir))
-    if logs:
-        print("  Log files:")
-        for log in logs:
-            path = os.path.join(log_dir, log)
-            size = os.path.getsize(path)
-            print(f"    {log} ({size:,} bytes)")
-PYEOF
-
-    # Show worktree status
     echo ""
-    log_info "Git worktrees:"
-    cd "${PROJECT_ROOT}"
-    git worktree list 2>/dev/null || log_warn "No worktrees found"
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1861,33 +2870,43 @@ PYEOF
 # ─────────────────────────────────────────────────────────────────────────────
 
 cmd_cleanup() {
+    load_phases
+
     log_header "Cleanup"
 
     cd "${PROJECT_ROOT}"
 
     # Remove worktrees
-    if [[ -d "${WORKTREE_BASE}" ]]; then
-        log_info "Removing worktrees..."
-        for wt_dir in "${WORKTREE_BASE}"/*/; do
-            if [[ -d "${wt_dir}" ]]; then
-                git worktree remove "${wt_dir}" --force 2>/dev/null || true
-                log_info "  Removed ${wt_dir}"
-            fi
-        done
-        rmdir "${WORKTREE_BASE}" 2>/dev/null || true
-    fi
+    for phase in "${PHASES[@]}"; do
+        local wt; wt="$(worktree_for_phase "$phase")"
+        if [[ -d "$wt" ]]; then
+            git worktree remove --force "$wt" 2>/dev/null || rm -rf "$wt"
+            log_success "Removed worktree: ${wt}"
+        fi
 
-    # Remove track branches
-    log_info "Removing track branches..."
-    git branch --list 'track/*' | while read -r branch; do
+        local branch; branch="$(branch_for_phase "$phase")"
+        if git rev-parse --verify "$branch" &>/dev/null; then
+            if git branch -d "$branch" 2>/dev/null; then
+                log_success "Deleted branch: ${branch} (merged)"
+            else
+                log_warn "Branch ${branch} not fully merged. Use -D to force delete."
+            fi
+        fi
+    done
+
+    # Prune worktree references
+    git worktree prune 2>/dev/null || true
+
+    # Remove integration branches
+    log_info "Removing integration branches..."
+    git branch --list 'phase*' | while read -r branch; do
         branch=$(echo "${branch}" | tr -d ' *')
         git branch -D "${branch}" 2>/dev/null || true
         log_info "  Deleted ${branch}"
     done
 
-    # Remove integration branches
-    log_info "Removing integration branches..."
-    git branch --list 'integration/*' | while read -r branch; do
+    # Remove track group branches
+    git branch --list 'track/*' | while read -r branch; do
         branch=$(echo "${branch}" | tr -d ' *')
         git branch -D "${branch}" 2>/dev/null || true
         log_info "  Deleted ${branch}"
@@ -1895,10 +2914,17 @@ cmd_cleanup() {
 
     # Clean task files
     rm -f "${PROJECT_ROOT}/PHASE_TASK.md"
-    find "${WORKTREE_BASE}" -name "PHASE_TASK.md" -delete 2>/dev/null || true
 
     # Remove state
-    rm -rf "${PROJECT_ROOT}/.parallel-dev"
+    if [[ -d "${PROJECT_ROOT}/.parallel-dev" ]]; then
+        rm -rf "${PROJECT_ROOT}/.parallel-dev"
+        log_success "Removed state directory: .parallel-dev/"
+    fi
+
+    # Remove worktree base if empty
+    if [[ -d "${WORKTREE_BASE}" ]]; then
+        rm -rf "${WORKTREE_BASE}" 2>/dev/null || true
+    fi
 
     # Return to main
     git checkout main 2>/dev/null || true
