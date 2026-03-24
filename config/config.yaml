@@ -1,0 +1,129 @@
+# Shorts Factory — Default Configuration
+# All thresholds, paths, and tunable parameters live here.
+# No hardcoded values in module code.
+
+paths:
+  output_dir: "output"
+  temp_dir: "output/temp"
+  database: "output/shorts_factory.db"
+
+pipeline:
+  min_clip_duration: 30
+  max_clip_duration: 60
+  max_clips_per_run: 20
+  min_clips_per_run: 5
+  output_resolution: [1080, 1920]
+  output_framerate: 30
+  output_codec: "h264"
+  ffmpeg_timeout: 300
+  clip_failure_threshold: 0.5
+  disk_min_free_mb: 500
+
+ingestion:
+  min_duration_seconds: 1800
+  max_duration_seconds: 7200
+  supported_formats: ["mp4", "mkv", "avi", "mov", "webm"]
+
+scene_splitter:
+  threshold: 27.0
+  min_scene_duration: 3.0
+  max_scene_duration: 20.0
+
+transcription:
+  model_size: "small"
+  language: "en"
+  beam_size: 5
+
+face_detection:
+  sample_fps: 2
+  min_confidence: 0.7
+  min_face_size: 0.05
+  ema_alpha: 0.3
+
+scoring:
+  weights:
+    keyword: 3
+    audio_energy: 2
+    face_presence: 2
+    scene_activity: 1
+    sentence_density: 1
+  min_composite_score: 0.2
+
+clip_builder:
+  target_duration_min: 30
+  target_duration_max: 60
+  max_clips_per_video: 15
+  min_clips_per_video: 1
+  max_overlap_ratio: 0.5
+
+hook_generator:
+  max_hook_words: 15
+  max_story_words: 40
+  templates_per_style: 5
+
+tts:
+  engine: "edge-tts"
+  voice: "en-US-AriaNeural"
+  rate: "+0%"
+  volume: "+0%"
+  output_format: "mp3"
+  sample_rate: 44100
+  volume_normalization_lufs: -14
+
+subtitle:
+  font_size: 48
+  font_name: "Arial"
+  outline_width: 3
+  margin_bottom: 150
+
+compositor:
+  gameplay_ratio: 0.65
+  facecam_ratio: 0.35
+  output_width: 1080
+  output_height: 1920
+
+renderer:
+  codec: "libx264"
+  crf: 20
+  preset: "medium"
+  fps: 30
+  max_file_size_mb: 100
+  audio_mix_gameplay: 0.7
+  audio_mix_narration: 0.3
+
+thumbnail:
+  width: 1280
+  height: 720
+  format: "jpeg"
+  quality: 90
+  max_text_words: 3
+  font_size: 72
+  saturation_boost: 1.15
+  contrast_boost: 1.10
+
+metadata:
+  title_min_chars: 40
+  title_max_chars: 60
+  description_min_chars: 150
+  description_max_chars: 300
+  tag_count_min: 10
+  tag_count_max: 15
+
+scheduler:
+  max_daily_uploads: 3
+  min_gap_hours: 4
+  preferred_hours: [9, 13, 18]
+  posts_per_day: 1
+  publish_time_utc: "10:00"
+
+publisher:
+  platform: "youtube"
+  max_retries: 3
+  retry_delays: [60, 300, 900]
+  initial_visibility: "unlisted"
+  public_delay_minutes: 30
+
+channel:
+  name: ""
+  hashtags: []
+  static_tags: []
