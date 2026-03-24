@@ -117,6 +117,14 @@ A modular monolith provides the organizational benefits of service-oriented arch
 - No direct imports between module internals (only public contracts)
 - A central orchestrator that wires modules together
 
+**Database ownership rule:**
+
+- The orchestrator is the **only** component that writes to the database (via `database/adapter.py`)
+- Modules are **pure computation** — they accept DTOs, return DTOs, and perform no I/O on shared state
+- Modules MUST NOT import `sqlite3`, `psycopg2`, or any database driver
+- Modules MUST NOT contain SQL strings or execute queries
+- All dependencies between modules are **explicit in their DTO contracts** — no hidden coupling through filesystem, database, or global state
+
 ### 3.2 Why NOT Microservices
 
 Microservices solve problems this system does not have:
@@ -785,7 +793,7 @@ For a content production system targeting a children's audience:
 - File storage: organized directory structure (`/output/{video_id}/{clip_id}/`)
 - Clip lifecycle: `generated → queued → scheduled → published | failed`
 - All file paths stored as relative paths (portable across machines)
-- Idempotency: clip_id is primary key, INSERT OR IGNORE semantics
+- Idempotency: clip_id is primary key, `INSERT ... ON CONFLICT DO NOTHING` semantics
 
 ---
 
@@ -1288,7 +1296,7 @@ Watch {channel_name} {action} in this adorable gameplay video!
 
 - **clip_id** is derived deterministically: `SHA256(video_id + start_ms + end_ms)[:16]`
 - Re-running the pipeline on the same video with the same configuration produces the same clip_ids
-- Database uses `INSERT OR IGNORE` — existing clips are never overwritten
+- Database uses `INSERT ... ON CONFLICT DO NOTHING` — existing clips are never overwritten
 - File writes check for existence before writing — existing files are skipped
 - Pipeline run status is tracked to detect and resume incomplete runs
 - A complete re-process requires explicit `--force` flag (safety against accidental overwrites)
