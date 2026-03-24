@@ -131,9 +131,9 @@ class Orchestrator:
     def run_ingestion(self) -> "IngestionResult":
         """Execute the ingestion stage.
 
-        Checks the database for a cached result. If a video with the same
-        content fingerprint already exists, returns the cached IngestionResult
-        without re-processing.
+        Always runs ffprobe + hashing to compute video_id. If the video
+        record already exists in the database, skips the INSERT. The
+        checkpoint is written by run() after the pipeline_run record exists.
 
         Returns:
             IngestionResult DTO.
@@ -153,6 +153,8 @@ class Orchestrator:
                 fps=result.fps,
                 has_audio=result.has_audio,
                 file_size_bytes=result.file_size_bytes,
+                codec_video=result.codec,
+                codec_audio=result.audio_codec,
             )
             logger.info(
                 "Ingestion stage complete",
@@ -164,7 +166,6 @@ class Orchestrator:
                 extra={"stage": "ingestion", "video_id": result.video_id},
             )
 
-        self._adapter.update_checkpoint(self._run_id, "ingestion")
         return result
 
     # ------------------------------------------------------------------
@@ -249,9 +250,9 @@ class Orchestrator:
     def run(self) -> "SceneList | None":
         """Execute the pipeline up to the end of currently implemented stages.
 
-        Runs ingestion first to obtain the video_id, then creates the pipeline
-        run record (FK constraint requires video to exist), then proceeds with
-        scene splitting. Supports resume from checkpoint.
+        Creates the pipeline run record after ingestion (FK constraint requires
+        video to exist), then checkpoints and proceeds with scene splitting.
+        Supports resume from checkpoint.
 
         Returns:
             SceneList from the scene_splitter stage, or None on fatal error.
@@ -272,21 +273,31 @@ class Orchestrator:
                 config_snapshot=config_snapshot,
             )
             self._adapter.update_pipeline_status(self._run_id, "analyzing")
+            self._adapter.update_checkpoint(self._run_id, "ingestion")
 
             scene_list = self.run_scene_splitter(ingestion_result)
             self._adapter.update_pipeline_status(
                 self._run_id,
-                "completed",
+                "partial",
                 clips_generated=0,
             )
             return scene_list
         except Exception as exc:
+            error_message = str(exc)
+            try:
+                self._adapter.update_pipeline_status(
+                    self._run_id,
+                    "failed",
+                    error_message=error_message,
+                )
+            except Exception:
+                pass
             logger.critical(
                 "Pipeline failed",
                 extra={
                     "stage": "orchestrator",
                     "video_id": "",
-                    "error": str(exc),
+                    "error": error_message,
                 },
             )
             return None

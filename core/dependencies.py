@@ -63,6 +63,12 @@ def check_ffmpeg() -> bool:
             text=True,
             timeout=10,
         )
+        if result.returncode != 0:
+            logger.critical(
+                "FFmpeg found but returned non-zero exit code",
+                extra={"stage": "startup", "video_id": "", "returncode": result.returncode},
+            )
+            sys.exit(1)
         version_line = result.stdout.split("\n")[0] if result.stdout else "unknown"
         logger.info(
             "FFmpeg found",
@@ -102,6 +108,12 @@ def check_ffprobe() -> bool:
             text=True,
             timeout=10,
         )
+        if result.returncode != 0:
+            logger.critical(
+                "FFprobe found but returned non-zero exit code",
+                extra={"stage": "startup", "video_id": "", "returncode": result.returncode},
+            )
+            sys.exit(1)
         version_line = result.stdout.split("\n")[0] if result.stdout else "unknown"
         logger.info(
             "FFprobe found",

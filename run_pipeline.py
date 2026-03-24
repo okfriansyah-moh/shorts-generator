@@ -19,7 +19,8 @@ import sys
 from core.config import load_config
 from core.dependencies import check_all_dependencies
 from core.logging import configure_logging
-from core.orchestrator import PIPELINE_STAGES
+from core.orchestrator import PIPELINE_STAGES, Orchestrator
+from database.adapter import DatabaseAdapter
 from database.connection import initialize_database
 
 logger = logging.getLogger(__name__)
@@ -125,13 +126,28 @@ def main(argv: list[str] | None = None) -> int:
         },
     )
 
-    # Pipeline execution will be implemented in later phases
-    logger.info(
-        "Pipeline skeleton complete — no stages implemented yet",
-        extra={"stage": "startup", "video_id": ""},
-    )
+    # Run pipeline through implemented stages
+    adapter = DatabaseAdapter(conn)
+    orchestrator = Orchestrator(config=config, adapter=adapter, video_path=video_path)
+    result = orchestrator.run()
 
     conn.close()
+
+    if result is None:
+        logger.critical(
+            "Pipeline execution failed",
+            extra={"stage": "startup", "video_id": ""},
+        )
+        return 1
+
+    logger.info(
+        "Pipeline finished",
+        extra={
+            "stage": "startup",
+            "video_id": result.video_id,
+            "scene_count": len(result.scenes),
+        },
+    )
     return 0
 
 

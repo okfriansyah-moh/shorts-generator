@@ -44,15 +44,18 @@ class DatabaseAdapter:
         fps: float,
         has_audio: bool,
         file_size_bytes: int,
+        codec_video: str | None = None,
+        codec_audio: str | None = None,
     ) -> None:
         """Insert a video record. Idempotent via ON CONFLICT DO NOTHING."""
         self._conn.execute(
             """INSERT INTO videos
                (video_id, file_path, duration_seconds, resolution_width,
-                resolution_height, file_size_bytes)
-               VALUES (?, ?, ?, ?, ?, ?)
+                resolution_height, file_size_bytes, codec_video, codec_audio)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT (video_id) DO NOTHING""",
-            (video_id, file_path, duration_seconds, width, height, file_size_bytes),
+            (video_id, file_path, duration_seconds, width, height,
+             file_size_bytes, codec_video, codec_audio),
         )
         self._conn.commit()
 
@@ -223,7 +226,7 @@ class DatabaseAdapter:
         """Get the most recent non-terminal pipeline run for a video."""
         row = self._conn.execute(
             """SELECT * FROM pipeline_runs
-               WHERE video_id = ? AND status NOT IN ('completed', 'failed')
+               WHERE video_id = ? AND status NOT IN ('completed', 'failed', 'partial')
                ORDER BY started_at DESC LIMIT 1""",
             (video_id,),
         ).fetchone()
@@ -233,7 +236,7 @@ class DatabaseAdapter:
         """Get last completed stage for resume."""
         row = self._conn.execute(
             """SELECT last_completed_stage FROM pipeline_runs
-               WHERE video_id = ? AND status NOT IN ('completed', 'failed')
+               WHERE video_id = ? AND status NOT IN ('completed', 'failed', 'partial')
                ORDER BY started_at DESC LIMIT 1""",
             (video_id,),
         ).fetchone()

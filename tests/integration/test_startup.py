@@ -60,8 +60,14 @@ class TestStartupIntegration:
         mock_ffmpeg.stdout = "ffmpeg version 6.0\n"
         mock_ffmpeg.returncode = 0
 
+        mock_scene_list = MagicMock()
+        mock_scene_list.video_id = "abc123"
+        mock_scene_list.scenes = ()
+
         with patch("shutil.which", return_value="/usr/bin/ffmpeg"), \
-             patch("subprocess.run", return_value=mock_ffmpeg):
+             patch("subprocess.run", return_value=mock_ffmpeg), \
+             patch("run_pipeline.Orchestrator") as MockOrch:
+            MockOrch.return_value.run.return_value = mock_scene_list
             result = main([
                 "--log-level", "CRITICAL",
                 "--config", "config/config.yaml",
