@@ -136,13 +136,13 @@ class DatabaseAdapter:
         if error_message is not None:
             cursor = self._conn.execute(
                 f"""UPDATE clips SET status = ?, error_message = ?,
-                    updated_at = datetime('now')
+                    updated_at = CURRENT_TIMESTAMP
                     WHERE clip_id = ? AND status IN ({placeholders})""",
                 (new_status, error_message, clip_id, *valid_from),
             )
         else:
             cursor = self._conn.execute(
-                f"""UPDATE clips SET status = ?, updated_at = datetime('now')
+                f"""UPDATE clips SET status = ?, updated_at = CURRENT_TIMESTAMP
                     WHERE clip_id = ? AND status IN ({placeholders})""",
                 params,
             )
@@ -209,7 +209,7 @@ class DatabaseAdapter:
             updates.append("error_log = ?")
             params.append(error_message)
         if status in ("completed", "partial", "failed"):
-            updates.append("completed_at = datetime('now')")
+            updates.append("completed_at = CURRENT_TIMESTAMP")
 
         params.append(run_id)
 
