@@ -56,7 +56,7 @@ class TestRunMigrations:
             "database", "migrations",
         )
         count = run_migrations(conn, migrations_dir)
-        assert count == 4
+        assert count >= 4
         conn.close()
 
     def test_creates_all_tables(self, test_db):

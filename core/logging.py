@@ -32,6 +32,18 @@ class JSONFormatter(logging.Formatter):
         "has_audio",
         "clip_index",
         "total_clips",
+        "error",
+        "version",
+        "returncode",
+        "config_path",
+        "database",
+        "video_path",
+        "stages",
+        "required",
+        "current",
+        "dir",
+        "migration",
+        "total_duration",
     )
 
     def format(self, record: logging.LogRecord) -> str:
@@ -64,8 +76,13 @@ def configure_logging(
     """
     root_logger = logging.getLogger()
 
-    # Clear existing handlers to avoid duplicates on reconfiguration
-    root_logger.handlers.clear()
+    # Remove and close existing handlers to avoid duplicates and file descriptor leaks
+    for handler in list(root_logger.handlers):
+        root_logger.removeHandler(handler)
+        try:
+            handler.close()
+        except Exception:
+            pass
 
     root_logger.setLevel(getattr(logging, level.upper(), logging.INFO))
 

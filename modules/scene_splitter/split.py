@@ -18,9 +18,6 @@ from contracts.scene import SceneList, SceneSegment
 
 logger = logging.getLogger(__name__)
 
-# Sentinel — PySceneDetect import deferred to function body for testability
-_SCENEDETECT_AVAILABLE: bool | None = None
-
 
 class SceneSplitterError(Exception):
     """Raised when scene splitting fails unrecoverably."""
@@ -204,8 +201,11 @@ def _post_process(
     Returns:
         Post-processed list of (start_sec, end_sec) pairs.
     """
+    # Ensure deterministic ordering by start and end time before processing
+    ordered = sorted(raw, key=lambda pair: (pair[0], pair[1]))
+
     # Merge micro-scenes first
-    merged = _merge_short_scenes(raw, min_dur)
+    merged = _merge_short_scenes(ordered, min_dur)
     # Then enforce maximum duration by splitting long scenes
     expanded = _split_long_scenes(merged, max_dur)
 
