@@ -496,12 +496,26 @@ phase_builder_validate() {
             ((failures++))
         fi
     fi
-    # Imports valid
+    # Imports valid — use proper Python imports (not isolated file loading)
     if [[ -d "contracts" ]]; then
         local import_errors
-        import_errors=$(find contracts/ -name '*.py' ! -name '__init__.py' -exec python3 -c "import importlib.util; spec = importlib.util.spec_from_file_location('m', '{}'); m = importlib.util.module_from_spec(spec); spec.loader.exec_module(m)" \; 2>&1 | head -10)
+        import_errors=$(python3 -c "
+import sys, os, importlib
+sys.path.insert(0, os.getcwd())
+errors = []
+for f in sorted(os.listdir('contracts')):
+    if f.endswith('.py') and f != '__init__.py':
+        mod_name = 'contracts.' + f[:-3]
+        try:
+            importlib.import_module(mod_name)
+        except Exception as e:
+            errors.append(f'{mod_name}: {e}')
+if errors:
+    print('\n'.join(errors))
+" 2>&1 | head -10)
         if [[ -n "${import_errors}" ]]; then
             log_error "[phase-builder-validate] Contract import errors"
+            echo "${import_errors}" | head -5
             ((failures++))
         fi
     fi
