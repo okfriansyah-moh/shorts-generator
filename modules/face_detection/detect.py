@@ -60,6 +60,7 @@ def detect_faces(
     sample_fps: int = int(face_cfg.get("sample_fps", _DEFAULT_SAMPLE_FPS))
     min_confidence: float = float(face_cfg.get("min_confidence", _DEFAULT_MIN_CONFIDENCE))
     ema_alpha: float = float(face_cfg.get("ema_alpha", _DEFAULT_EMA_ALPHA))
+    min_face_size: float = float(face_cfg.get("min_face_size", _DEFAULT_MIN_FACE_SIZE))
 
     video_id = ingestion_result.video_id
     video_path = ingestion_result.path
@@ -80,7 +81,7 @@ def detect_faces(
     for scene in scene_list.scenes:
         scene_data = _process_scene(
             scene, video_path, video_id, detector, sample_fps,
-            min_confidence, ema_alpha, config
+            min_confidence, ema_alpha, min_face_size, config
         )
         scene_results.append(scene_data)
 
@@ -150,6 +151,7 @@ def _process_scene(
     sample_fps: int,
     min_confidence: float,
     ema_alpha: float,
+    min_face_size: float,
     config: dict[str, Any],
 ) -> SceneFaceData:
     """Process a single scene: extract frames, detect faces, smooth bboxes.
@@ -162,6 +164,7 @@ def _process_scene(
         sample_fps: Frames per second to sample.
         min_confidence: Minimum detection confidence threshold.
         ema_alpha: EMA smoothing alpha coefficient.
+        min_face_size: Minimum normalized face size (width and height) to accept.
         config: Pipeline configuration dict.
 
     Returns:
@@ -176,18 +179,14 @@ def _process_scene(
         sample_fps, temp_dir, scene.scene_id, config
     )
 
-    min_face_size: float = float(
-        config.get("face_detection", {}).get("min_face_size", _DEFAULT_MIN_FACE_SIZE)
-    )
-
     bboxes: list[FaceBBox] = []
     try:
         for i, frame_path in enumerate(frame_paths):
             frame_ts_ms = scene.start_time + int(i * (1000 / sample_fps))
             bbox = _detect_face_in_frame(
-                frame_path, detector, frame_ts_ms, min_confidence
+                frame_path, detector, frame_ts_ms, min_confidence, min_face_size
             )
-            if bbox is not None and bbox.width >= min_face_size and bbox.height >= min_face_size:
+            if bbox is not None:
                 bboxes.append(bbox)
     finally:
         for fp in frame_paths:
@@ -306,14 +305,19 @@ def _detect_face_in_frame(
     detector: Any,
     timestamp_ms: int,
     min_confidence: float,
+    min_face_size: float = _DEFAULT_MIN_FACE_SIZE,
 ) -> FaceBBox | None:
     """Detect the highest-confidence face in a single frame.
+
+    Filters out detections below min_confidence and bounding boxes smaller
+    than min_face_size (normalized width/height).
 
     Args:
         frame_path: Path to the JPEG frame image.
         detector: MediaPipe FaceDetection instance.
         timestamp_ms: Frame timestamp in milliseconds.
         min_confidence: Minimum confidence threshold for filtering.
+        min_face_size: Minimum normalized face size (0–1) for width and height.
 
     Returns:
         FaceBBox for the highest-confidence detected face, or None if no face found.
@@ -352,6 +356,9 @@ def _detect_face_in_frame(
     height = min(float(bbox.height), 1.0 - y)
 
     if width <= 0.0 or height <= 0.0:
+        return None
+
+    if width < min_face_size or height < min_face_size:
         return None
 
     return FaceBBox(

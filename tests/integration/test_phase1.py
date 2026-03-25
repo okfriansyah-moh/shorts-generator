@@ -168,7 +168,9 @@ class TestPhase1Integration:
                 result = orchestrator.run()
 
         assert result is not None
-        assert len(result.scene_energies) == 0
+        assert result.audio_energy is not None
+        assert len(result.audio_energy.scene_energies) == 0
+        assert len(result.scene_list.scenes) > 0
 
         # Verify scenes were persisted to the database
         assert mock_t.call_args is not None
@@ -232,12 +234,11 @@ class TestPhase1Integration:
         assert r2 is not None
 
         # Both runs produced the same video_id (deterministic content-addressable hash)
-        video_id = o1._current_video_id
-        assert video_id == o2._current_video_id
-        assert video_id != ""
+        assert r1.video_id == r2.video_id
+        assert r1.video_id != ""
 
         # Verify idempotency: DB scene count remains stable after second run
-        db_scenes = adapter.get_scenes_for_video(video_id)
+        db_scenes = adapter.get_scenes_for_video(r1.video_id)
         assert len(db_scenes) > 0
 
         conn.close()
