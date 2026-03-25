@@ -1,7 +1,7 @@
 # Shorts Factory — Progress Report
 
 **Last Updated:** 2026-03-25
-**Active Phase:** Phase 1 — Core Pipeline Skeleton
+**Active Phase:** Phase 2 — Transcription & Signal Extraction
 **Phase Status:** ✅ COMPLETE (Verified & Audited)
 
 ---
@@ -12,7 +12,7 @@
 | -------- | ---------------------- | ----------- |
 | Phase 0  | Core Infrastructure    | ✅ COMPLETE |
 | Phase 1  | Core Pipeline Skeleton | ✅ COMPLETE |
-| Phase 2  | Signal Extraction      | ⏳ Pending  |
+| Phase 2  | Signal Extraction      | ✅ COMPLETE |
 | Phase 3  | Scoring Engine         | ⏳ Pending  |
 | Phase 4  | Clip Builder           | ⏳ Pending  |
 | Phase 5  | Hook Generator         | ⏳ Pending  |
@@ -171,3 +171,70 @@
 - ✅ Failure handling and retry behavior are deterministic and bounded
 - ✅ All public function signatures have type annotations
 - ✅ Tests pass without GPU, without network, without real video files
+
+---
+
+## Phase 2 — Transcription & Signal Extraction
+
+**Status:** ✅ COMPLETE
+
+### Completed Tasks
+
+- [x] Define `Transcript`, `TranscriptSegment`, `Word` DTOs in `contracts/transcript.py`
+- [x] Define `FaceDetectionResult`, `SceneFaceData`, `FaceBBox` DTOs in `contracts/face.py`
+- [x] Define `SceneAudioEnergy`, `AudioEnergyData` DTOs in `contracts/audio.py`
+- [x] Implement `modules/transcription/transcribe.py` with faster-whisper, word-level timestamps
+- [x] Implement `modules/face_detection/detect.py` with MediaPipe, 2fps sampling, EMA smoothing
+- [x] Implement `modules/audio_analysis/analyze.py` with FFmpeg RMS extraction
+- [x] Update `core/orchestrator.py` to wire scene_splitter → transcription → face_detection → audio_analysis
+- [x] Write unit tests for transcription (speech present, no speech, confidence scores)
+- [x] Write unit tests for face detection (face visible, no face, multiple faces, EMA smoothing correctness)
+- [x] Write unit tests for audio energy (varying energy, flat energy, normalization range)
+- [x] Write integration test: full signal extraction on a mocked video
+
+### Files Created
+
+| File Path                               | Purpose                                                                      |
+| --------------------------------------- | ---------------------------------------------------------------------------- |
+| `contracts/transcript.py`               | `Word`, `TranscriptSegment`, `Transcript` frozen DTOs                        |
+| `contracts/face.py`                     | `FaceBBox`, `SceneFaceData`, `FaceDetectionResult` frozen DTOs               |
+| `contracts/audio.py`                    | `SceneAudioEnergy`, `AudioEnergyData` frozen DTOs                            |
+| `modules/transcription/__init__.py`     | Package init, exports `transcribe`                                           |
+| `modules/transcription/transcribe.py`   | faster-whisper integration, FFmpeg audio extraction, word-level timestamps   |
+| `modules/face_detection/__init__.py`    | Package init, exports `detect_faces`                                         |
+| `modules/face_detection/detect.py`      | MediaPipe face detection, 2fps sampling via FFmpeg, EMA smoothing            |
+| `modules/audio_analysis/__init__.py`    | Package init, exports `analyze_audio`                                        |
+| `modules/audio_analysis/analyze.py`     | FFmpeg astats RMS extraction, per-scene normalization to [0, 1]              |
+| `tests/unit/test_transcription.py`      | Unit tests: word timestamps, empty speech, FFmpeg failure, frozen DTOs       |
+| `tests/unit/test_face_detection.py`     | Unit tests: EMA smoothing, no-face, multiple scenes, normalized coordinates  |
+| `tests/unit/test_audio_analysis.py`     | Unit tests: normalization, flat audio, RMS parsing, FFmpeg failure           |
+| `tests/integration/test_phase2.py`      | Integration tests: full signal extraction chain, empty signal graceful paths |
+
+### Exit Criteria
+
+- [x] `Transcript`, `TranscriptSegment`, `Word` DTOs defined with all fields
+- [x] `FaceDetectionResult`, `SceneFaceData`, `FaceBBox` DTOs defined with all fields
+- [x] Transcription produces word-level timestamps (not just segment-level)
+- [x] Transcription returns empty result for videos with no speech (not an error)
+- [x] Face detection samples at 2fps, not every frame
+- [x] Face detection applies EMA smoothing with configurable alpha
+- [x] Face detection returns normalized bounding boxes (0–1 range)
+- [x] Audio energy extraction returns per-scene normalized RMS values
+- [x] All three modules are independently testable with mock `IngestionResult` and `SceneList`
+- [x] Integration test: signal extraction with mocked dependencies → correct DTO shapes
+
+### Test Results
+
+- **212 tests passing** across Phase 0 + Phase 1 + Phase 2 modules
+- **0 lint errors** (ruff clean)
+
+### Architecture Compliance
+
+- ✅ No cross-module imports between `modules/*` packages
+- ✅ All DTOs are frozen dataclasses (`frozen=True`)
+- ✅ No `sqlite3`/`psycopg2` imports in `modules/`
+- ✅ All logs use `logging` module — no `print()`
+- ✅ Config values read from `config.yaml` — no hardcoded thresholds
+- ✅ All public function signatures have type annotations
+- ✅ Tests pass without GPU, without network, without real video files
+- ✅ FFmpeg used for all audio/frame extraction (no Python video libraries)
