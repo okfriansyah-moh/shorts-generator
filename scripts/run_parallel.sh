@@ -839,7 +839,7 @@ run_agent_pipeline() {
 
             local ref_log="${LOG_DIR}/${phase_label}-refactor-${qg_attempt}.log"
             copilot \
-                -p "Quality gates failed. Fix all violations: lint errors, test failures, cross-module imports, raw SQL in modules, print statements. CRITICAL: NEVER modify files in database/, docs/, or core/ — only touch contracts/ and modules/. Do not change architecture. Use skills: ${CORE_SKILLS}, code-quality-fixer. MANDATORY: Use ONLY skills as primary knowledge source. Commit fixes." \
+                -p "Quality gates failed. Fix all violations: lint errors, test failures, cross-module imports, raw SQL in modules, print statements. CRITICAL: NEVER modify files in database/, docs/, or core/ — only touch contracts/, modules/, and tests/. Do not change architecture. Use skills: ${CORE_SKILLS}, code-quality-fixer. MANDATORY: Use ONLY skills as primary knowledge source. Commit fixes." \
                 --agent=refactor \
                 --model="${model}" \
                 --no-ask-user \
@@ -1123,6 +1123,7 @@ run_quality_gates() {
             log_success "Lint check passed"
         else
             log_error "Lint check failed"
+            ruff check ${lint_targets} 2>/dev/null | head -30 || true
             ((failures++))
         fi
     elif command -v flake8 &>/dev/null; then
