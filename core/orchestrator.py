@@ -15,7 +15,7 @@ import time
 import uuid
 from typing import TYPE_CHECKING, Any
 
-from contracts.errors import ErrorType, PipelineError, classify_error
+from contracts.errors import classify_error
 
 if TYPE_CHECKING:
     from contracts.ingestion import IngestionResult

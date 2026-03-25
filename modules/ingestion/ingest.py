@@ -49,7 +49,8 @@ def ingest(file_path: str, config: dict[str, Any]) -> IngestionResult:
 
     _validate_format(abs_path, config)
 
-    probe = _ffprobe(abs_path)
+    ffprobe_timeout = int(config.get("pipeline", {}).get("ffmpeg_timeout", 300))
+    probe = _ffprobe(abs_path, timeout=ffprobe_timeout)
 
     duration = _extract_duration(probe, abs_path)
     _validate_duration(duration, config, abs_path)
@@ -117,8 +118,12 @@ def _validate_format(abs_path: str, config: dict[str, Any]) -> None:
         )
 
 
-def _ffprobe(abs_path: str) -> dict[str, Any]:
+def _ffprobe(abs_path: str, timeout: int = 300) -> dict[str, Any]:
     """Run FFprobe on the file and return parsed JSON output.
+
+    Args:
+        abs_path: Absolute path to the video file.
+        timeout: Maximum seconds to wait for FFprobe (from config pipeline.ffmpeg_timeout).
 
     Raises:
         IngestionError: If FFprobe fails or returns invalid output.
@@ -136,11 +141,11 @@ def _ffprobe(abs_path: str) -> dict[str, Any]:
             cmd,
             capture_output=True,
             text=True,
-            timeout=60,
+            timeout=timeout,
         )
     except subprocess.TimeoutExpired as exc:
         raise IngestionError(
-            f"FFprobe timed out after 60 seconds for: {abs_path}"
+            f"FFprobe timed out after {timeout} seconds for: {abs_path}"
         ) from exc
     except OSError as exc:
         raise IngestionError(
