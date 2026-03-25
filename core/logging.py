@@ -19,6 +19,7 @@ class JSONFormatter(logging.Formatter):
 
     EXTRA_KEYS = (
         "stage",
+        "status",
         "video_id",
         "run_id",
         "clip_id",
@@ -33,6 +34,7 @@ class JSONFormatter(logging.Formatter):
         "clip_index",
         "total_clips",
         "error",
+        "error_type",
         "version",
         "returncode",
         "config_path",
@@ -44,6 +46,9 @@ class JSONFormatter(logging.Formatter):
         "dir",
         "migration",
         "total_duration",
+        "retry_count",
+        "stage_attempt",
+        "stage_duration_ms",
     )
 
     def format(self, record: logging.LogRecord) -> str:

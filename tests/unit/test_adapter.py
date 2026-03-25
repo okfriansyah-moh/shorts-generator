@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-
+from contracts.scene import SceneSegment
 from database.adapter import DatabaseAdapter
 
 
@@ -71,15 +71,16 @@ class TestSceneOperations:
         )
 
         scenes = [
-            {"scene_id": "vid1_5000_10000", "video_id": "vid1", "start_time": 5000, "end_time": 10000, "duration": 5.0},
-            {"scene_id": "vid1_0_5000", "video_id": "vid1", "start_time": 0, "end_time": 5000, "duration": 5.0},
+            SceneSegment(scene_id="vid1_5000_10000", video_id="vid1", start_time=5000, end_time=10000, duration=5.0),
+            SceneSegment(scene_id="vid1_0_5000", video_id="vid1", start_time=0, end_time=5000, duration=5.0),
         ]
         adapter.insert_scenes(scenes)
 
         result = adapter.get_scenes_for_video("vid1")
         assert len(result) == 2
-        assert result[0]["start_time"] == 0  # Sorted by start_time
-        assert result[1]["start_time"] == 5000
+        assert isinstance(result[0], SceneSegment)
+        assert result[0].start_time == 0  # Sorted by start_time (ms)
+        assert result[1].start_time == 5000
 
     def test_insert_scenes_idempotent(self, test_db):
         """Inserting same scenes twice doesn't duplicate."""
@@ -91,7 +92,7 @@ class TestSceneOperations:
         )
 
         scenes = [
-            {"scene_id": "vid1_0_5000", "video_id": "vid1", "start_time": 0, "end_time": 5000, "duration": 5.0},
+            SceneSegment(scene_id="vid1_0_5000", video_id="vid1", start_time=0, end_time=5000, duration=5.0),
         ]
         adapter.insert_scenes(scenes)
         adapter.insert_scenes(scenes)  # Should not raise

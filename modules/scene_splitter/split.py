@@ -42,14 +42,20 @@ def split_scenes(
     threshold = float(scene_cfg["threshold"])
     min_dur = float(scene_cfg["min_scene_duration"])
     max_dur = float(scene_cfg["max_scene_duration"])
+    fallback_threshold = float(scene_cfg.get("fallback_threshold", 27.0))
+    fallback_target_dur = float(scene_cfg.get("fallback_target_duration", 10.0))
 
     video_path = ingestion_result.path
     video_id = ingestion_result.video_id
     total_secs = ingestion_result.duration_seconds
 
-    raw_scenes = _detect_scenes(video_path, threshold, total_secs)
+    raw_scenes = _detect_scenes(
+        video_path, threshold, total_secs, video_id,
+        fallback_threshold=fallback_threshold,
+        fallback_target_duration=fallback_target_dur,
+    )
 
-    processed = _post_process(raw_scenes, min_dur, max_dur, total_secs)
+    processed = _post_process(raw_scenes, min_dur, max_dur, total_secs, video_id)
 
     segments = _build_segments(processed, video_id)
 
@@ -83,6 +89,10 @@ def _detect_scenes(
     video_path: str,
     threshold: float,
     total_secs: float,
+    video_id: str = "",
+    *,
+    fallback_threshold: float = 27.0,
+    fallback_target_duration: float = 10.0,
 ) -> list[tuple[float, float]]:
     """Run PySceneDetect and return (start_sec, end_sec) pairs.
 
@@ -96,26 +106,26 @@ def _detect_scenes(
     except ImportError:
         logger.warning(
             "PySceneDetect not available; using uniform scene splitting",
-            extra={"stage": "scene_splitter", "video_id": ""},
+            extra={"stage": "scene_splitter", "video_id": video_id},
         )
-        return _uniform_split(total_secs, target_duration=10.0)
+        return _uniform_split(total_secs, target_duration=fallback_target_duration)
     except Exception as exc:
         logger.warning(
-            "PySceneDetect failed; retrying with default threshold",
-            extra={"stage": "scene_splitter", "video_id": "", "error": str(exc)},
+            "PySceneDetect failed; retrying with fallback threshold",
+            extra={"stage": "scene_splitter", "video_id": video_id, "error": str(exc)},
         )
         try:
-            return _detect_with_scenedetect(video_path, threshold=27.0)
+            return _detect_with_scenedetect(video_path, threshold=fallback_threshold)
         except Exception as exc2:
             logger.warning(
                 "PySceneDetect retry failed; using uniform scene splitting",
                 extra={
                     "stage": "scene_splitter",
-                    "video_id": "",
+                    "video_id": video_id,
                     "error": str(exc2),
                 },
             )
-            return _uniform_split(total_secs, target_duration=10.0)
+            return _uniform_split(total_secs, target_duration=fallback_target_duration)
 
 
 def _detect_with_scenedetect(
@@ -185,6 +195,7 @@ def _post_process(
     min_dur: float,
     max_dur: float,
     total_secs: float,
+    video_id: str = "",
 ) -> list[tuple[float, float]]:
     """Enforce min/max duration constraints on scene list.
 
@@ -197,6 +208,7 @@ def _post_process(
         min_dur: Minimum scene duration in seconds.
         max_dur: Maximum scene duration in seconds.
         total_secs: Total video duration in seconds.
+        video_id: Video identifier for structured logging.
 
     Returns:
         Post-processed list of (start_sec, end_sec) pairs.
@@ -214,7 +226,7 @@ def _post_process(
             "Excessive scene count detected; running additional merge pass",
             extra={
                 "stage": "scene_splitter",
-                "video_id": "",
+                "video_id": video_id,
                 "scene_count": len(expanded),
             },
         )

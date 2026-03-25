@@ -4,6 +4,11 @@ Single entry point for all database access. Modules under modules/
 MUST NOT import this — only the orchestrator calls the adapter.
 All operations accept and return frozen dataclass DTOs where applicable.
 All SQL uses portable syntax (ON CONFLICT DO NOTHING, not INSERT OR IGNORE).
+
+Type conversion note:
+  SceneSegment DTO uses milliseconds (int) for start_time/end_time.
+  The scenes table currently stores these as REAL (seconds).
+  This adapter performs the ms→sec and sec→ms conversion internally.
 """
 
 from __future__ import annotations
@@ -11,6 +16,8 @@ from __future__ import annotations
 import logging
 import sqlite3
 from typing import Any
+
+from contracts.scene import SceneSegment
 
 logger = logging.getLogger(__name__)
 
@@ -67,11 +74,15 @@ class DatabaseAdapter:
         return dict(row) if row else None
 
     # ------------------------------------------------------------------
-    # Scene operations
+    # Scene operations (DTO-based, with ms↔sec conversion)
     # ------------------------------------------------------------------
 
-    def insert_scenes(self, scenes: list[dict[str, Any]]) -> None:
-        """Batch insert scene records. Idempotent via ON CONFLICT DO NOTHING."""
+    def insert_scenes(self, scenes: tuple[SceneSegment, ...] | list[SceneSegment]) -> None:
+        """Batch insert scene records from SceneSegment DTOs.
+
+        Idempotent via ON CONFLICT DO NOTHING.
+        Converts DTO millisecond ints to REAL seconds for DB storage.
+        """
         if not scenes:
             return
         try:
@@ -82,8 +93,14 @@ class DatabaseAdapter:
                    VALUES (?, ?, ?, ?, ?)
                    ON CONFLICT (scene_id) DO NOTHING""",
                 [
-                    (s["scene_id"], s["video_id"], s["start_time"], s["end_time"], s["duration"])
-                    for s in sorted(scenes, key=lambda s: (s["video_id"], s["start_time"]))
+                    (
+                        s.scene_id,
+                        s.video_id,
+                        s.start_time / 1000.0,
+                        s.end_time / 1000.0,
+                        s.duration,
+                    )
+                    for s in sorted(scenes, key=lambda s: (s.video_id, s.start_time))
                 ],
             )
             self._conn.execute("COMMIT")
@@ -91,13 +108,25 @@ class DatabaseAdapter:
             self._conn.execute("ROLLBACK")
             raise
 
-    def get_scenes_for_video(self, video_id: str) -> list[dict[str, Any]]:
-        """Retrieve all scenes for a video, sorted by start_time."""
+    def get_scenes_for_video(self, video_id: str) -> list[SceneSegment]:
+        """Retrieve all scenes for a video as SceneSegment DTOs.
+
+        Converts DB REAL seconds back to DTO millisecond ints.
+        """
         rows = self._conn.execute(
             "SELECT * FROM scenes WHERE video_id = ? ORDER BY start_time ASC",
             (video_id,),
         ).fetchall()
-        return [dict(r) for r in rows]
+        return [
+            SceneSegment(
+                scene_id=row["scene_id"],
+                video_id=row["video_id"],
+                start_time=round(row["start_time"] * 1000),
+                end_time=round(row["end_time"] * 1000),
+                duration=float(row["duration"]),
+            )
+            for row in rows
+        ]
 
     # ------------------------------------------------------------------
     # Clip operations

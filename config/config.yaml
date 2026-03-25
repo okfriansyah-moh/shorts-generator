@@ -28,6 +28,8 @@ scene_splitter:
   threshold: 27.0
   min_scene_duration: 3.0
   max_scene_duration: 20.0
+  fallback_threshold: 27.0
+  fallback_target_duration: 10.0
 
 transcription:
   model_size: "small"
@@ -127,3 +129,7 @@ channel:
   name: ""
   hashtags: []
   static_tags: []
+
+retry:
+  max_attempts: 3
+  per_stage_max: 2
