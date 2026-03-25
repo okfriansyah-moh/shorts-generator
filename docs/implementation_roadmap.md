@@ -864,7 +864,7 @@ shorts_factory/
 - [x] Write unit tests for transcription (speech present, no speech, confidence scores)
 - [x] Write unit tests for face detection (face visible, no face, multiple faces, EMA smoothing correctness)
 - [x] Write unit tests for audio energy (varying energy, flat energy, normalization range)
-- [x] Write integration test: full signal extraction on a 30-second test video
+- [x] Write integration test: full signal extraction chain using mocked 30-second video input (no real video file)
 
 ---
 

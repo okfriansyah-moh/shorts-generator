@@ -416,12 +416,12 @@ class Orchestrator:
             )
             self._adapter.update_checkpoint(self._run_id, "face_detection")
 
-            # Stage 5: audio_analysis (with retry) — audio_analysis is not a named
-            # pipeline stage but feeds the scoring stage; checkpoint under scoring
+            # Stage 5: audio_analysis (with retry) — internal sub-step that feeds
+            # the scoring stage; we log it as audio_analysis but do not advance
+            # pipeline checkpoint beyond face_detection until real scoring exists.
             audio_data = self._run_stage_with_retry(
-                "scoring", self.run_audio_analysis, ingestion_result, scene_list,
+                "audio_analysis", self.run_audio_analysis, ingestion_result, scene_list,
             )
-            self._adapter.update_checkpoint(self._run_id, "scoring")
 
             # Mark partial — not all 16 stages implemented yet
             self._adapter.update_pipeline_status(

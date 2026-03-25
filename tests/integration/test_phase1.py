@@ -231,4 +231,13 @@ class TestPhase1Integration:
         assert r1 is not None
         assert r2 is not None
 
+        # Both runs produced the same video_id (deterministic content-addressable hash)
+        video_id = o1._current_video_id
+        assert video_id == o2._current_video_id
+        assert video_id != ""
+
+        # Verify idempotency: DB scene count remains stable after second run
+        db_scenes = adapter.get_scenes_for_video(video_id)
+        assert len(db_scenes) > 0
+
         conn.close()

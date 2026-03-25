@@ -145,7 +145,7 @@ def main(argv: list[str] | None = None) -> int:
         extra={
             "stage": "startup",
             "video_id": result.video_id,
-            "scene_count": len(result.scenes),
+            "scene_energies_count": len(result.scene_energies),
         },
     )
     return 0

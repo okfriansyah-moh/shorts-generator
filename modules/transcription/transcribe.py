@@ -245,7 +245,7 @@ def _run_faster_whisper(
 
 def _seconds_to_ms(seconds: float) -> int:
     """Convert seconds (float) to milliseconds (int), rounding to nearest ms."""
-    return math.floor(seconds * 1000)
+    return int(round(seconds * 1000))
 
 
 def _cleanup_temp_file(path: str) -> None:
