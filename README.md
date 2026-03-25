@@ -114,33 +114,42 @@ For a 1-hour input video on consumer hardware (8-core CPU, 16GB RAM, no GPU):
 ```
 shorts-generator/
 ├── run_pipeline.py              # Single entry point
-├── contracts/                   # Frozen dataclass DTO definitions (22 DTOs)
+├── contracts/                   # Frozen dataclass DTO definitions
+│   ├── ingestion.py             # IngestionResult (Phase 1)
+│   └── scene.py                 # SceneSegment, SceneList (Phase 1)
 ├── modules/
-│   ├── ingestion/               # Video validation + fingerprinting
-│   ├── scene_splitter/          # Scene boundary detection
-│   ├── transcription/           # Speech-to-text
-│   ├── face_detection/          # Face tracking (optional)
-│   ├── scoring/                 # Rule-based scene ranking
-│   ├── clip_builder/            # Scene → clip assembly
-│   ├── hook_generator/          # Narration script templates
-│   ├── tts/                     # Text-to-speech synthesis
-│   ├── subtitle/                # ASS subtitle generation
-│   ├── compositor/              # 9:16 layout composition
-│   ├── renderer/                # Final MP4 rendering
-│   ├── thumbnail/               # Thumbnail generation
-│   ├── metadata/                # Title/description/tags
-│   ├── storage/                 # Filesystem persistence
-│   ├── scheduler/               # Publish date assignment
-│   └── publisher/               # YouTube upload
-├── orchestrator/                # Pipeline orchestration + checkpointing
-├── database/                    # DB adapter + engines + migrations
+│   ├── ingestion/               # Video validation + SHA-256 fingerprinting [Phase 1]
+│   ├── scene_splitter/          # Scene boundary detection [Phase 1]
+│   ├── transcription/           # Speech-to-text [Phase 2+]
+│   ├── face_detection/          # Face tracking [Phase 2+]
+│   ├── scoring/                 # Rule-based scene ranking [Phase 3+]
+│   ├── clip_builder/            # Scene → clip assembly [Phase 4+]
+│   ├── hook_generator/          # Narration script templates [Phase 5+]
+│   ├── tts/                     # Text-to-speech synthesis [Phase 6+]
+│   ├── subtitle/                # ASS subtitle generation [Phase 6+]
+│   ├── compositor/              # 9:16 layout composition [Phase 7+]
+│   ├── renderer/                # Final MP4 rendering [Phase 7+]
+│   ├── thumbnail/               # Thumbnail generation [Phase 8+]
+│   ├── metadata/                # Title/description/tags [Phase 8+]
+│   ├── storage/                 # Filesystem persistence [Phase 9+]
+│   ├── scheduler/               # Publish date assignment [Phase 9+]
+│   └── publisher/               # YouTube upload [Phase 9+]
+├── core/
+│   ├── config.py                # YAML config loader + env overrides
+│   ├── logging.py               # Structured JSON logging
+│   ├── dependencies.py          # FFmpeg/FFprobe/Python checks
+│   └── orchestrator.py          # Pipeline orchestrator (ingestion + scene_splitter wired)
+├── database/                    # DB adapter + migrations
 │   ├── adapter.py               # Single entry point for all DB access
-│   ├── engines/                 # SQLite (+ future PostgreSQL)
-│   └── migrations/              # Timestamped SQL migrations
-├── config/                      # YAML configuration files
+│   ├── connection.py            # SQLite WAL mode + migration runner
+│   └── migrations/              # Timestamped SQL migrations (4 tables)
+├── config/
+│   └── config.yaml              # All default configuration values
 ├── scripts/
 │   └── run_parallel.sh          # Parallel development orchestrator
-├── tests/                       # Unit + integration tests
+├── tests/                       # Unit + integration tests (120 passing)
+│   ├── unit/                    # Module unit tests
+│   └── integration/             # Pipeline integration tests
 ├── output/                      # Generated clips (gitignored)
 ├── docs/                        # Architecture + specifications
 │   ├── architecture.md          # 18-section system architecture
@@ -148,6 +157,7 @@ shorts-generator/
 │   ├── orchestrator_spec.md     # Orchestrator execution model
 │   ├── dto_contracts.md         # 22 DTO definitions + validation rules
 │   ├── db_adapter_spec.md       # Database abstraction layer spec
+│   ├── progress_report.md       # Per-phase implementation status
 │   ├── PARALLEL_DEV.md          # Parallel development guide (3 modes)
 │   └── AGENTS_AND_SKILLS.md     # Agent/skill system documentation
 └── .github/
@@ -155,6 +165,15 @@ shorts-generator/
     ├── agents/                  # 9 AI agent definitions
     └── skills/                  # 26 domain skill definitions
 ```
+
+## Implementation Status
+
+| Phase | Name                    | Status       | Key Deliverables                                      |
+| ----- | ----------------------- | ------------ | ----------------------------------------------------- |
+| 0     | Core Infrastructure     | ✅ Complete  | Config, logging, DB migrations, FFmpeg checks         |
+| 1     | Core Pipeline Skeleton  | ✅ Complete  | Ingestion, scene splitting, orchestrator wiring       |
+| 2     | Signal Extraction       | ⏳ Pending   | Transcription, face detection, audio analysis         |
+| 3–10  | Scoring through Publish | ⏳ Pending   | Full pipeline stages                                  |
 
 ## Development System
 
