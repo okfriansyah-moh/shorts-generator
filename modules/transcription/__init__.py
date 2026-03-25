@@ -3,6 +3,6 @@
 Exposes transcribe() — the only entry point for transcription.
 """
 
-from modules.transcription.transcribe import transcribe
+from .transcribe import transcribe
 
 __all__ = ["transcribe"]
