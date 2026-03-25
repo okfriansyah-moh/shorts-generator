@@ -131,3 +131,25 @@ Phase 10 ──→ [analytics]                       ← can start after Phase 8
 | compositor     | ClipDefinition, FaceDetectionResult           | Phase 4, Phase 2   |
 | renderer       | CompositeStream, TTSResult, SubtitleResult    | Phase 5, Phase 6   |
 | storage        | RenderedClip, ThumbnailResult, MetadataResult | Phase 6, Phase 7   |
+
+## Phase-to-Directory Ownership (STRICT)
+
+Each phase owns specific directories. **NEVER modify files outside your phase's ownership.**
+
+| Phase   | Owned Directories                                                     | May Modify `database/` | May Modify `docs/` |
+| ------- | --------------------------------------------------------------------- | ---------------------- | ------------------- |
+| Phase 0 | `core/`, `database/`, `config/`, `run_pipeline.py`                    | **Yes**                | No                  |
+| Phase 1 | `modules/ingestion/`, `modules/scene_splitter/`, corresponding tests  | **No**                 | No                  |
+| Phase 2 | `modules/transcription/`, `modules/face_detection/`, `modules/audio_analysis/`, corresponding tests | **No** | No |
+| Phase 3 | `modules/scoring/`, `tests/unit/test_scoring.py`                      | **No**                 | No                  |
+| Phase 4 | `modules/clip_builder/`, `tests/unit/test_clip_builder.py`            | **No**                 | No                  |
+| Phase 5 | `modules/compositor/`, `tests/unit/test_compositor.py`                | **No**                 | No                  |
+| Phase 6 | `modules/hook_generator/`, `modules/tts/`, `modules/subtitle/`, `modules/renderer/`, corresponding tests | **No** | No |
+| Phase 7 | `modules/thumbnail/`, `modules/metadata/`, corresponding tests        | **No**                 | No                  |
+| Phase 8 | `modules/storage/`, `modules/scheduler/`, corresponding tests         | **No**                 | No                  |
+| Phase 9 | `modules/publisher/`, `tests/unit/test_publisher.py`                  | **No**                 | No                  |
+
+**Rules:**
+- `contracts/` — Any phase may ADD new DTO files. No phase may modify existing DTO fields.
+- Module `__init__.py` MUST use relative imports: `from .X import Y`, NOT `from modules.X.Y import Y`.
+- Violation of these rules triggers automatic pipeline rollback.

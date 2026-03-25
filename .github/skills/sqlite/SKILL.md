@@ -17,6 +17,14 @@ description: "SQLite3 patterns for Shorts Factory. Use when implementing databas
 >
 > See `docs/db_adapter_spec.md` for the full adapter interface and migration strategy.
 
+> **PHASE ISOLATION (STRICT):**
+>
+> - **Only Phase 0** may modify files in `database/`. All other phases treat `database/` as read-only.
+> - `docs/` is read-only for ALL phases.
+> - `core/` is modifiable only by Phase 0.
+> - Module `__init__.py` MUST use relative imports: `from .X import Y`, NOT `from modules.X.Y import Y`.
+> - Violation of these rules triggers automatic pipeline rollback.
+
 ## When to Use
 
 - Implementing the `database/adapter.py` or `database/engines/sqlite_engine.py`

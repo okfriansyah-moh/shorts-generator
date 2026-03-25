@@ -138,7 +138,40 @@ String-interpolated SQL
 Python video libraries (use FFmpeg subprocess instead)
 ```
 
-> **Database Engine Policy:** SQLite is the primary runtime database. PostgreSQL is allowed ONLY as a future alternative via `database/adapter.py`. Modules MUST remain database-agnostic.
+### PHASE ISOLATION GUARDRAILS (STRICT)
+
+**NEVER modify these protected directories (violation = automatic pipeline rollback):**
+
+| Directory      | Rule                                                                              |
+| -------------- | --------------------------------------------------------------------------------- |
+| `database/*`   | Phase 0 only. Do NOT create migrations, modify adapter.py, or change connection.py |
+| `docs/*`       | Read-only. Do NOT modify any documentation files                                  |
+| `core/*`       | Phase 0 only. Do NOT modify config.py, dependencies.py, or orchestrator.py        |
+| `contracts/*`  | Additive only. You may ADD new DTO files. Do NOT modify existing DTO fields       |
+
+**Phase-to-Directory Ownership (only touch YOUR phase's directories):**
+
+| Phase   | Owned Directories                                                                    |
+| ------- | ------------------------------------------------------------------------------------ |
+| Phase 0 | `core/`, `database/`, `config/`, `run_pipeline.py`                                   |
+| Phase 1 | `modules/ingestion/`, `modules/scene_splitter/`                                      |
+| Phase 2 | `modules/transcription/`, `modules/face_detection/`, `modules/audio_analysis/`       |
+| Phase 3 | `modules/scoring/`                                                                   |
+| Phase 4 | `modules/clip_builder/`                                                              |
+| Phase 5 | `modules/compositor/`                                                                |
+| Phase 6 | `modules/hook_generator/`, `modules/tts/`, `modules/subtitle/`, `modules/renderer/`  |
+| Phase 7 | `modules/thumbnail/`, `modules/metadata/`                                            |
+| Phase 8 | `modules/storage/`, `modules/scheduler/`                                             |
+| Phase 9 | `modules/publisher/`                                                                 |
+
+**Module `__init__.py` files MUST use relative imports:**
+```python
+# ✅ CORRECT
+from .score import score_scenes
+
+# ❌ FORBIDDEN — causes integration validation failure
+from modules.scoring.score import score_scenes
+```
 
 ---
 

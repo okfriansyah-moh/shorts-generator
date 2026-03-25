@@ -131,13 +131,25 @@ Load the `docs-sync` skill and update:
 ### Architecture Compliance
 
 - [ ] No cross-module imports
+- [ ] Module `__init__.py` uses relative imports (`from .X import Y`)
 - [ ] DTOs are frozen dataclasses
 - [ ] DB access through adapter only
 - [ ] Structured logging enforced
 - [ ] Determinism enforced
 - [ ] Content-addressable IDs
 - [ ] Config from YAML only
+- [ ] No modifications to `database/` outside Phase 0
+- [ ] No modifications to `docs/` (read-only for phases)
 ```
+
+## PHASE ISOLATION GUARDRAILS (STRICT)
+
+**When fixing issues found during review:**
+
+- ONLY fix files within `modules/` and `contracts/` (additive only for contracts)
+- NEVER modify `database/*`, `docs/*`, or `core/*` — these are protected directories
+- If you find issues in protected directories, report them but do NOT fix them
+- Module `__init__.py` files MUST use relative imports: `from .X import Y`
 
 ## PRIORITY RULES
 

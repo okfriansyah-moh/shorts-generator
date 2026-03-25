@@ -241,6 +241,14 @@ def load_test_config():
     return config
 ```
 
+## Phase Isolation (STRICT)
+
+- Each phase owns specific test files (e.g., Phase 3 owns `tests/unit/test_scoring.py`).
+- NEVER modify test files owned by another phase.
+- NEVER modify `database/`, `docs/`, or `core/` — these are protected directories.
+- Module `__init__.py` MUST use relative imports: `from .X import Y`, NOT `from modules.X.Y import Y`.
+- Violation of these rules triggers automatic pipeline rollback.
+
 ## Checklist
 
 Before committing tests:
@@ -254,3 +262,5 @@ Before committing tests:
 - [ ] Idempotency verified (run twice, same results)
 - [ ] Determinism verified (same input = same output)
 - [ ] DTO fixtures use factory functions, not raw dicts
+- [ ] Module `__init__.py` uses relative imports (from .X import Y)
+- [ ] No modifications to protected directories (database/, docs/, core/)

@@ -82,7 +82,21 @@ class MyDTO:
 # ❌ Cross-module type
 from modules.scoring.internal import ScoreResult  # Forbidden
 
+# ❌ Absolute import in __init__.py
+from modules.scoring.scorer import score_scenes  # Forbidden
+
 # ✅ Correct usage
 from contracts.scoring import ScoredSceneList
 result: ScoredSceneList = scoring.process(input_dto, config)
+
+# ✅ Relative import in module __init__.py
+from .scorer import score_scenes
 ```
+
+## Phase Isolation Rules
+
+- **Additive only**: Any phase may ADD new DTO files to `contracts/`. No phase may modify existing DTO fields.
+- **Never modify** `database/`, `docs/`, or `core/` — these are protected directories.
+- **Module `__init__.py`** MUST use relative imports: `from .X import Y`, NOT `from modules.X.Y import Y`.
+- New DTOs merge to `main` BEFORE module code that depends on them.
+- Violation of these rules triggers automatic pipeline rollback.

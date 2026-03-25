@@ -193,6 +193,37 @@ shorts-generator/
 7. **Tests** must be runnable without GPU, without network, and without real video files
 8. **Config** via YAML files — no hardcoded paths, thresholds, or magic numbers
 9. **Logging** via stdlib `logging` — structured, leveled, no print statements
+10. **Module `__init__.py` MUST use relative imports** — `from .X import Y`, NOT `from modules.X.Y import Y`
+
+---
+
+## Phase Isolation Rules (Parallel Development)
+
+During parallel development, each phase owns specific directories. **Agents MUST NOT modify files outside their phase's ownership.**
+
+### Phase-to-Directory Ownership Matrix
+
+| Phase   | Owned Directories                                                                    | May Add to `contracts/` | May Modify `database/` | May Modify `docs/` |
+| ------- | ------------------------------------------------------------------------------------ | ----------------------- | ---------------------- | ------------------- |
+| Phase 0 | `core/`, `database/`, `config/`, `run_pipeline.py`                                   | Yes (additive)          | **Yes**                | No                  |
+| Phase 1 | `modules/ingestion/`, `modules/scene_splitter/`, `tests/unit/test_ingestion.py`, `tests/unit/test_scene_splitter.py` | Yes (additive) | **No** | No |
+| Phase 2 | `modules/transcription/`, `modules/face_detection/`, `modules/audio_analysis/`, corresponding tests | Yes (additive) | **No** | No |
+| Phase 3 | `modules/scoring/`, `tests/unit/test_scoring.py`                                     | Yes (additive)          | **No**                 | No                  |
+| Phase 4 | `modules/clip_builder/`, `tests/unit/test_clip_builder.py`                           | Yes (additive)          | **No**                 | No                  |
+| Phase 5 | `modules/compositor/`, `tests/unit/test_compositor.py`                               | Yes (additive)          | **No**                 | No                  |
+| Phase 6 | `modules/hook_generator/`, `modules/tts/`, `modules/subtitle/`, `modules/renderer/`, corresponding tests | Yes (additive) | **No** | No |
+| Phase 7 | `modules/thumbnail/`, `modules/metadata/`, corresponding tests                       | Yes (additive)          | **No**                 | No                  |
+| Phase 8 | `modules/storage/`, `modules/scheduler/`, corresponding tests                        | Yes (additive)          | **No**                 | No                  |
+| Phase 9 | `modules/publisher/`, `tests/unit/test_publisher.py`                                 | Yes (additive)          | **No**                 | No                  |
+
+### Phase Isolation Enforcement
+
+- **`database/`** — Only Phase 0 may modify. All other phases treat as read-only.
+- **`docs/`** — Read-only for all phases. Documentation sync happens post-merge only.
+- **`contracts/`** — Any phase may ADD new DTO files. No phase may modify existing DTO fields.
+- **`core/`** — Only Phase 0 may modify. Other phases treat as read-only.
+- **Other phase modules** — Never touch modules owned by another phase.
+- **Violation of these rules triggers automatic rollback** in the parallel development pipeline.
 
 ---
 

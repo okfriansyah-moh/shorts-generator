@@ -33,6 +33,7 @@ For each phase, extract the task checklist from `docs/implementation_roadmap.md`
 | Rule                    | Verification Command                                                                 |
 | ----------------------- | ------------------------------------------------------------------------------------ |
 | No cross-module imports | `grep -rn "from modules\." modules/ --include='*.py' \| grep -v __init__`            |
+| Relative imports in `__init__.py` | `grep -rn "from modules\." modules/ --include='__init__.py'` → must be empty |
 | No raw SQL in modules   | `grep -rn "import sqlite3\|import psycopg2" modules/ --include='*.py'`               |
 | Structured logging      | `grep -rn "print(" modules/ --include='*.py' \| grep -v __pycache__` → must be empty |
 | Frozen DTOs             | All classes in `contracts/` use `@dataclass(frozen=True)`                            |
@@ -104,3 +105,13 @@ Never just report issues — always fix them.
 - FFmpeg via subprocess — no Python video libraries
 - Config via YAML — no hardcoded thresholds
 - Logging via `logging` module — no `print()`
+
+## Phase Isolation (STRICT)
+
+- **NEVER approve** changes to `database/` from any phase other than Phase 0.
+- **NEVER approve** changes to `docs/` — read-only for all phases.
+- **NEVER approve** changes to `core/` from any phase other than Phase 0.
+- `contracts/` — additive only. New files OK, no field changes on existing DTOs.
+- Module `__init__.py` MUST use relative imports: `from .X import Y`, NOT `from modules.X.Y import Y`.
+- Verify each phase only modifies files within its owned directories (see `pipeline` skill for ownership matrix).
+- Violation of these rules triggers automatic pipeline rollback.

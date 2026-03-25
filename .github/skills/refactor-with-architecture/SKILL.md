@@ -73,6 +73,22 @@ After refactoring, verify:
 | FFmpeg helpers   | Within the module, or `core/` | `contracts/`             |
 | Test fixtures    | `tests/`                      | `modules/`, `contracts/` |
 
+## Phase Isolation (STRICT)
+
+> During parallel development, each phase owns specific directories.
+> Refactoring MUST stay within the current phase's owned directories.
+
+| Protected Directory | Rule                                        |
+| ------------------- | ------------------------------------------- |
+| `database/`         | Phase 0 only — NEVER modify from any module |
+| `docs/`             | Read-only — NEVER modify                    |
+| `core/`             | Phase 0 only — NEVER modify                 |
+| `contracts/`        | Additive only — new files OK, no field changes |
+
+- Module `__init__.py` MUST use relative imports: `from .X import Y`, NOT `from modules.X.Y import Y`.
+- NEVER refactor code in another phase's owned directory.
+- Violation of these rules triggers automatic pipeline rollback.
+
 ## Dependencies
 
 ```
