@@ -13,10 +13,9 @@ from __future__ import annotations
 
 import json
 import logging
-import sqlite3
 import tempfile
 import os
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -25,7 +24,6 @@ from contracts.errors import (
     DataError,
     DependencyError,
     ErrorType,
-    PipelineError,
     ProcessError,
     ValidationError,
 )
@@ -518,7 +516,7 @@ class TestOrchestratorIdempotency:
             mock_ingest.__name__ = "run_ingestion"
             mock_ingest.return_value = sample_ingestion
             orch.run_ingestion = mock_ingest  # type: ignore[method-assign]
-            result = orch.run_ingestion()
+            orch.run_ingestion()
 
         # Video already existed — adapter.get_video would return non-None
         existing = adapter.get_video(sample_ingestion.video_id)
