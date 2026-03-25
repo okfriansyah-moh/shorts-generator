@@ -11,8 +11,11 @@ never access the database directly.
 from __future__ import annotations
 
 import logging
+import time
 import uuid
 from typing import TYPE_CHECKING, Any
+
+from contracts.errors import ErrorType, PipelineError, classify_error
 
 if TYPE_CHECKING:
     from contracts.ingestion import IngestionResult
@@ -123,6 +126,70 @@ class Orchestrator:
         self._adapter = adapter
         self._video_path = video_path
         self._run_id: str = str(uuid.uuid4())
+        retry_cfg = config.get("retry", {})
+        self._max_stage_attempts: int = int(retry_cfg.get("per_stage_max", 2))
+
+    # ------------------------------------------------------------------
+    # Retry helper
+    # ------------------------------------------------------------------
+
+    def _run_stage_with_retry(
+        self,
+        stage_name: str,
+        stage_fn: Any,
+        *args: Any,
+    ) -> Any:
+        """Execute a stage function with bounded retries.
+
+        Deterministic: no randomness, no jitter, fixed attempt count.
+        Logs each attempt with full observability fields.
+
+        Returns:
+            The stage function's return value on success.
+
+        Raises:
+            The last exception if all attempts fail.
+        """
+        last_exc: Exception | None = None
+        for attempt in range(1, self._max_stage_attempts + 1):
+            start_time = time.monotonic()
+            try:
+                result = stage_fn(*args)
+                elapsed_ms = round((time.monotonic() - start_time) * 1000)
+                logger.info(
+                    f"Stage {stage_name} completed",
+                    extra={
+                        "stage": stage_name,
+                        "status": "success",
+                        "video_id": getattr(self, "_current_video_id", ""),
+                        "run_id": self._run_id,
+                        "stage_attempt": attempt,
+                        "stage_duration_ms": elapsed_ms,
+                    },
+                )
+                return result
+            except Exception as exc:
+                elapsed_ms = round((time.monotonic() - start_time) * 1000)
+                error_type = classify_error(exc)
+                last_exc = exc
+                logger.error(
+                    f"Stage {stage_name} failed (attempt {attempt}/{self._max_stage_attempts})",
+                    extra={
+                        "stage": stage_name,
+                        "status": "failed",
+                        "video_id": getattr(self, "_current_video_id", ""),
+                        "run_id": self._run_id,
+                        "stage_attempt": attempt,
+                        "retry_count": attempt - 1,
+                        "stage_duration_ms": elapsed_ms,
+                        "error": str(exc),
+                        "error_type": error_type.value,
+                    },
+                )
+                if attempt >= self._max_stage_attempts:
+                    raise
+        # Unreachable but makes type checker happy
+        raise last_exc  # type: ignore[misc]
 
     # ------------------------------------------------------------------
     # Stage: ingestion
@@ -141,6 +208,7 @@ class Orchestrator:
         from modules.ingestion.ingest import ingest
 
         result = ingest(self._video_path, self._config)
+        self._current_video_id = result.video_id
 
         existing = self._adapter.get_video(result.video_id)
         if existing is None:
@@ -155,15 +223,6 @@ class Orchestrator:
                 file_size_bytes=result.file_size_bytes,
                 codec_video=result.codec,
                 codec_audio=result.audio_codec,
-            )
-            logger.info(
-                "Ingestion stage complete",
-                extra={"stage": "ingestion", "video_id": result.video_id},
-            )
-        else:
-            logger.info(
-                "Ingestion stage skipped — video already processed",
-                extra={"stage": "ingestion", "video_id": result.video_id},
             )
 
         return result
@@ -184,7 +243,7 @@ class Orchestrator:
         Returns:
             SceneList DTO.
         """
-        from contracts.scene import SceneList, SceneSegment
+        from contracts.scene import SceneList
         from modules.scene_splitter.split import split_scenes
 
         video_id = ingestion_result.video_id
@@ -195,22 +254,15 @@ class Orchestrator:
                 "Scene splitter stage skipped — scenes already in database",
                 extra={
                     "stage": "scene_splitter",
+                    "status": "skipped",
                     "video_id": video_id,
                     "scene_count": len(existing_scenes),
                 },
             )
             segments = tuple(
-                SceneSegment(
-                    scene_id=row["scene_id"],
-                    video_id=row["video_id"],
-                    start_time=int(row["start_time"]),
-                    end_time=int(row["end_time"]),
-                    duration=float(row["duration"]),
-                )
-                for row in sorted(existing_scenes, key=lambda r: r["start_time"])
+                sorted(existing_scenes, key=lambda s: s.start_time)
             )
             total_duration = round(sum(s.duration for s in segments), 6)
-            self._adapter.update_checkpoint(self._run_id, "scene_splitter")
             return SceneList(
                 video_id=video_id,
                 scenes=segments,
@@ -218,29 +270,8 @@ class Orchestrator:
             )
 
         scene_list = split_scenes(ingestion_result, self._config)
+        self._adapter.insert_scenes(scene_list.scenes)
 
-        self._adapter.insert_scenes(
-            [
-                {
-                    "scene_id": s.scene_id,
-                    "video_id": s.video_id,
-                    "start_time": s.start_time,
-                    "end_time": s.end_time,
-                    "duration": s.duration,
-                }
-                for s in scene_list.scenes
-            ]
-        )
-
-        logger.info(
-            "Scene splitter stage complete",
-            extra={
-                "stage": "scene_splitter",
-                "video_id": video_id,
-                "scene_count": len(scene_list.scenes),
-            },
-        )
-        self._adapter.update_checkpoint(self._run_id, "scene_splitter")
         return scene_list
 
     # ------------------------------------------------------------------
@@ -252,7 +283,7 @@ class Orchestrator:
 
         Creates the pipeline run record after ingestion (FK constraint requires
         video to exist), then checkpoints and proceeds with scene splitting.
-        Supports resume from checkpoint.
+        Supports resume from checkpoint. Uses bounded retries per stage.
 
         Returns:
             SceneList from the scene_splitter stage, or None on fatal error.
@@ -263,19 +294,37 @@ class Orchestrator:
             {k: v for k, v in self._config.items() if k != "channel"},
             default=str,
         )
+        self._current_video_id = ""
 
         try:
-            ingestion_result = self.run_ingestion()
+            # Stage 1: ingestion (with retry)
+            ingestion_result = self._run_stage_with_retry(
+                "ingestion", self.run_ingestion,
+            )
+            self._current_video_id = ingestion_result.video_id
 
+            # Create pipeline_run (requires video to exist for FK)
             self._adapter.create_pipeline_run(
                 run_id=self._run_id,
                 video_id=ingestion_result.video_id,
                 config_snapshot=config_snapshot,
             )
             self._adapter.update_pipeline_status(self._run_id, "analyzing")
+            # Checkpoint AFTER pipeline_run record exists
             self._adapter.update_checkpoint(self._run_id, "ingestion")
 
-            scene_list = self.run_scene_splitter(ingestion_result)
+            # Reconfigure logging with per-run log file
+            _reconfigure_logging_for_run(
+                self._config, ingestion_result.video_id,
+            )
+
+            # Stage 2: scene_splitter (with retry)
+            scene_list = self._run_stage_with_retry(
+                "scene_splitter", self.run_scene_splitter, ingestion_result,
+            )
+            self._adapter.update_checkpoint(self._run_id, "scene_splitter")
+
+            # Mark partial — not all 16 stages implemented yet
             self._adapter.update_pipeline_status(
                 self._run_id,
                 "partial",
@@ -284,6 +333,7 @@ class Orchestrator:
             return scene_list
         except Exception as exc:
             error_message = str(exc)
+            error_type = classify_error(exc)
             try:
                 self._adapter.update_pipeline_status(
                     self._run_id,
@@ -296,8 +346,32 @@ class Orchestrator:
                 "Pipeline failed",
                 extra={
                     "stage": "orchestrator",
-                    "video_id": "",
+                    "video_id": self._current_video_id,
+                    "run_id": self._run_id,
                     "error": error_message,
+                    "error_type": error_type.value,
                 },
             )
             return None
+
+
+def _reconfigure_logging_for_run(config: dict[str, Any], video_id: str) -> None:
+    """Add a per-run file handler after video_id is known."""
+    import os
+
+    from core.logging import JSONFormatter
+
+    output_dir = config.get("paths", {}).get("output_dir", "output")
+    log_dir = os.path.join(output_dir, video_id)
+    os.makedirs(log_dir, exist_ok=True)
+    log_path = os.path.join(log_dir, "pipeline.log")
+
+    root_logger = logging.getLogger()
+    # Only add if not already present (idempotent on resume)
+    for h in root_logger.handlers:
+        if isinstance(h, logging.FileHandler) and h.baseFilename == os.path.abspath(log_path):
+            return
+
+    file_handler = logging.FileHandler(log_path, mode="a", encoding="utf-8")
+    file_handler.setFormatter(JSONFormatter())
+    root_logger.addHandler(file_handler)
