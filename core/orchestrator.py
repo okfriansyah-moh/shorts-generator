@@ -1,7 +1,7 @@
 """Pipeline orchestrator for Shorts Factory.
 
-Defines the 16-stage pipeline sequence and wires the first two stages:
-ingestion → scene_splitter.
+Defines the 16-stage pipeline sequence and wires the first five stages:
+ingestion → scene_splitter → [transcription, face_detection, audio_analysis].
 
 The orchestrator is the ONLY component that calls modules and writes to
 the database (via DatabaseAdapter). Modules never call each other and
@@ -18,8 +18,11 @@ from typing import TYPE_CHECKING, Any
 from contracts.errors import classify_error
 
 if TYPE_CHECKING:
+    from contracts.audio import AudioEnergyData
+    from contracts.face import FaceDetectionResult
     from contracts.ingestion import IngestionResult
     from contracts.scene import SceneList
+    from contracts.transcript import Transcript
     from database.adapter import DatabaseAdapter
 
 logger = logging.getLogger(__name__)
@@ -275,18 +278,95 @@ class Orchestrator:
         return scene_list
 
     # ------------------------------------------------------------------
+    # Stage: transcription
+    # ------------------------------------------------------------------
+
+    def run_transcription(
+        self,
+        ingestion_result: "IngestionResult",
+        scene_list: "SceneList",
+    ) -> "Transcript":
+        """Execute the transcription stage.
+
+        Transcribes audio from the video using faster-whisper with word-level
+        timestamps. Returns an empty Transcript if no speech is detected.
+
+        Args:
+            ingestion_result: Output of the ingestion stage.
+            scene_list: Output of the scene_splitter stage.
+
+        Returns:
+            Transcript DTO.
+        """
+        from modules.transcription.transcribe import transcribe
+
+        return transcribe(ingestion_result, self._config, scene_list)
+
+    # ------------------------------------------------------------------
+    # Stage: face_detection
+    # ------------------------------------------------------------------
+
+    def run_face_detection(
+        self,
+        ingestion_result: "IngestionResult",
+        scene_list: "SceneList",
+    ) -> "FaceDetectionResult":
+        """Execute the face detection stage.
+
+        Samples frames at 2fps per scene using FFmpeg, detects faces via
+        MediaPipe, and applies EMA smoothing to bounding boxes.
+        Returns zero visibility ratios if no faces are detected (valid state).
+
+        Args:
+            ingestion_result: Output of the ingestion stage.
+            scene_list: Output of the scene_splitter stage.
+
+        Returns:
+            FaceDetectionResult DTO.
+        """
+        from modules.face_detection.detect import detect_faces
+
+        return detect_faces(ingestion_result, scene_list, self._config)
+
+    # ------------------------------------------------------------------
+    # Stage: audio_analysis
+    # ------------------------------------------------------------------
+
+    def run_audio_analysis(
+        self,
+        ingestion_result: "IngestionResult",
+        scene_list: "SceneList",
+    ) -> "AudioEnergyData":
+        """Execute the audio analysis stage.
+
+        Extracts per-scene RMS energy via FFmpeg astats filter and normalizes
+        values across the video to [0, 1].
+
+        Args:
+            ingestion_result: Output of the ingestion stage.
+            scene_list: Output of the scene_splitter stage.
+
+        Returns:
+            AudioEnergyData DTO.
+        """
+        from modules.audio_analysis.analyze import analyze_audio
+
+        return analyze_audio(ingestion_result, scene_list, self._config)
+
+    # ------------------------------------------------------------------
     # Entry point
     # ------------------------------------------------------------------
 
-    def run(self) -> "SceneList | None":
+    def run(self) -> "AudioEnergyData | None":
         """Execute the pipeline up to the end of currently implemented stages.
 
         Creates the pipeline run record after ingestion (FK constraint requires
-        video to exist), then checkpoints and proceeds with scene splitting.
+        video to exist), then checkpoints and proceeds through scene splitting,
+        transcription, face detection, and audio analysis.
         Supports resume from checkpoint. Uses bounded retries per stage.
 
         Returns:
-            SceneList from the scene_splitter stage, or None on fatal error.
+            AudioEnergyData from the audio_analysis stage, or None on fatal error.
         """
         import json as _json
 
@@ -324,13 +404,32 @@ class Orchestrator:
             )
             self._adapter.update_checkpoint(self._run_id, "scene_splitter")
 
+            # Stage 3: transcription (with retry)
+            _transcript = self._run_stage_with_retry(
+                "transcription", self.run_transcription, ingestion_result, scene_list,
+            )
+            self._adapter.update_checkpoint(self._run_id, "transcription")
+
+            # Stage 4: face_detection (with retry)
+            _face_result = self._run_stage_with_retry(
+                "face_detection", self.run_face_detection, ingestion_result, scene_list,
+            )
+            self._adapter.update_checkpoint(self._run_id, "face_detection")
+
+            # Stage 5: audio_analysis (with retry) — audio_analysis is not a named
+            # pipeline stage but feeds the scoring stage; checkpoint under scoring
+            audio_data = self._run_stage_with_retry(
+                "scoring", self.run_audio_analysis, ingestion_result, scene_list,
+            )
+            self._adapter.update_checkpoint(self._run_id, "scoring")
+
             # Mark partial — not all 16 stages implemented yet
             self._adapter.update_pipeline_status(
                 self._run_id,
                 "partial",
                 clips_generated=0,
             )
-            return scene_list
+            return audio_data
         except Exception as exc:
             error_message = str(exc)
             error_type = classify_error(exc)
