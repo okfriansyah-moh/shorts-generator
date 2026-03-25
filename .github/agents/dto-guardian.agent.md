@@ -75,11 +75,11 @@ Load these skills on-demand:
 
 **NEVER modify these protected directories (violation = automatic pipeline rollback):**
 
-| Directory      | Rule                                                                              |
-| -------------- | --------------------------------------------------------------------------------- |
-| `database/*`   | Phase 0 only. Do NOT create migrations, modify adapter.py, or change connection.py |
-| `docs/*`       | Read-only. Do NOT modify any documentation files                                  |
-| `core/*`       | Phase 0 only. Do NOT modify config.py, dependencies.py, or orchestrator.py        |
+| Directory    | Rule                                                                               |
+| ------------ | ---------------------------------------------------------------------------------- |
+| `database/*` | Phase 0 only. Do NOT create migrations, modify adapter.py, or change connection.py |
+| `docs/*`     | Read-only. Do NOT modify any documentation files                                   |
+| `core/*`     | Phase 0 only. Do NOT modify config.py, dependencies.py, or orchestrator.py         |
 
 **You may ONLY touch `contracts/` (additive) and `modules/` (fix imports).** If you find issues in `database/` or `docs/`, report them but do NOT fix them — those require Phase 0 attention.
 

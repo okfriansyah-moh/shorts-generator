@@ -103,14 +103,15 @@ git add -A && git commit -m "fix: resolve quality gate failures for Phase X"
 
 **NEVER modify these protected directories (violation = automatic pipeline rollback):**
 
-| Directory      | Rule                                                                              |
-| -------------- | --------------------------------------------------------------------------------- |
-| `database/*`   | Phase 0 only. Do NOT create migrations, modify adapter.py, or change connection.py |
-| `docs/*`       | Read-only. Do NOT modify any documentation files                                  |
-| `contracts/*`  | Additive only. You may ADD new files. Do NOT modify existing DTO fields           |
-| `core/*`       | Phase 0 only. Do NOT modify config.py, dependencies.py, or orchestrator.py        |
+| Directory     | Rule                                                                               |
+| ------------- | ---------------------------------------------------------------------------------- |
+| `database/*`  | Phase 0 only. Do NOT create migrations, modify adapter.py, or change connection.py |
+| `docs/*`      | Read-only. Do NOT modify any documentation files                                   |
+| `contracts/*` | Additive only. You may ADD new files. Do NOT modify existing DTO fields            |
+| `core/*`      | Phase 0 only. Do NOT modify config.py, dependencies.py, or orchestrator.py         |
 
 **Module `__init__.py` files MUST use relative imports:**
+
 ```python
 # ✅ CORRECT
 from .score import score_scenes
@@ -120,6 +121,7 @@ from modules.scoring.score import score_scenes
 ```
 
 **Only fix files within the scope of the failing phase.** Do not fix pre-existing issues in other phases' modules.
+
 - **Never modify frozen DTOs** without `dto-guardian` review
 - **Never modify existing migration files** — always create new ones
 - **Never introduce randomness** — all behavior must be deterministic
