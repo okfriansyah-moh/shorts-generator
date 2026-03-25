@@ -15,6 +15,8 @@ import time
 import uuid
 from typing import TYPE_CHECKING, Any
 
+from dataclasses import dataclass
+
 from contracts.errors import classify_error
 
 if TYPE_CHECKING:
@@ -70,6 +72,22 @@ CLIP_STATES: tuple[str, ...] = (
     "published",
     "failed",
 )
+
+
+@dataclass(frozen=True)
+class PipelineResult:
+    """Aggregated result of a pipeline run.
+
+    Bundles all stage outputs so the return type of ``Orchestrator.run()``
+    remains stable as new stages are added. Fields for unimplemented stages
+    are ``None`` until the corresponding phase is wired.
+    """
+
+    video_id: str
+    scene_list: "SceneList"
+    transcript: "Transcript | None" = None
+    face_detection: "FaceDetectionResult | None" = None
+    audio_energy: "AudioEnergyData | None" = None
 
 
 def get_stage_index(stage_name: str) -> int:
@@ -357,7 +375,7 @@ class Orchestrator:
     # Entry point
     # ------------------------------------------------------------------
 
-    def run(self) -> "AudioEnergyData | None":
+    def run(self) -> PipelineResult | None:
         """Execute the pipeline up to the end of currently implemented stages.
 
         Creates the pipeline run record after ingestion (FK constraint requires
@@ -366,7 +384,7 @@ class Orchestrator:
         Supports resume from checkpoint. Uses bounded retries per stage.
 
         Returns:
-            AudioEnergyData from the audio_analysis stage, or None on fatal error.
+            PipelineResult bundling all stage outputs, or None on fatal error.
         """
         import json as _json
 
@@ -411,7 +429,7 @@ class Orchestrator:
             self._adapter.update_checkpoint(self._run_id, "transcription")
 
             # Stage 4: face_detection (with retry)
-            _face_result = self._run_stage_with_retry(
+            face_result = self._run_stage_with_retry(
                 "face_detection", self.run_face_detection, ingestion_result, scene_list,
             )
             self._adapter.update_checkpoint(self._run_id, "face_detection")
@@ -429,7 +447,13 @@ class Orchestrator:
                 "partial",
                 clips_generated=0,
             )
-            return audio_data
+            return PipelineResult(
+                video_id=ingestion_result.video_id,
+                scene_list=scene_list,
+                transcript=_transcript,
+                face_detection=face_result,
+                audio_energy=audio_data,
+            )
         except Exception as exc:
             error_message = str(exc)
             error_type = classify_error(exc)

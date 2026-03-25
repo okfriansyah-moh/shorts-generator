@@ -337,6 +337,7 @@ class TestSampleCount:
              patch("modules.face_detection.detect._detect_face_in_frame", return_value=None):
             result = _process_scene(
                 scene, "/fake.mp4", "abc", MagicMock(),
-                sample_fps=2, min_confidence=0.7, ema_alpha=0.3, config=config,
+                sample_fps=2, min_confidence=0.7, ema_alpha=0.3,
+                min_face_size=0.05, config=config,
             )
         assert result.sample_count == 15  # ceil(7.3 * 2) = 15

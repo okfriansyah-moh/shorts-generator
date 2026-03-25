@@ -19,7 +19,7 @@ import sys
 from core.config import load_config
 from core.dependencies import check_all_dependencies
 from core.logging import configure_logging
-from core.orchestrator import PIPELINE_STAGES, Orchestrator
+from core.orchestrator import PIPELINE_STAGES, Orchestrator, PipelineResult
 from database.adapter import DatabaseAdapter
 from database.connection import initialize_database
 
@@ -145,7 +145,7 @@ def main(argv: list[str] | None = None) -> int:
         extra={
             "stage": "startup",
             "video_id": result.video_id,
-            "scene_energies_count": len(result.scene_energies),
+            "scene_count": len(result.scene_list.scenes),
         },
     )
     return 0
