@@ -318,10 +318,25 @@ class TestDetectFaces:
 # ---------------------------------------------------------------------------
 
 class TestSampleCount:
-    def test_sample_count_is_ceil_of_duration_times_fps(self) -> None:
-        """sample_count = ceil(duration_s * sample_fps)"""
-        import math
-        duration_s = 7.3
-        sample_fps = 2
-        expected = max(1, math.ceil(duration_s * sample_fps))
-        assert expected == 15  # ceil(14.6) = 15
+    def test_sample_count_from_process_scene(self) -> None:
+        """_process_scene sets sample_count = ceil(duration_s * sample_fps)."""
+        from modules.face_detection.detect import _process_scene
+
+        scene = SceneSegment(
+            scene_id="abc_0_7300",
+            video_id="abc",
+            start_time=0,
+            end_time=7300,
+            duration=7.3,
+        )
+        config: dict[str, Any] = {
+            "paths": {"temp_dir": "/tmp/test"},
+            "pipeline": {"ffmpeg_timeout": 10},
+        }
+        with patch("modules.face_detection.detect._extract_frames", return_value=[]), \
+             patch("modules.face_detection.detect._detect_face_in_frame", return_value=None):
+            result = _process_scene(
+                scene, "/fake.mp4", "abc", MagicMock(),
+                sample_fps=2, min_confidence=0.7, ema_alpha=0.3, config=config,
+            )
+        assert result.sample_count == 15  # ceil(7.3 * 2) = 15

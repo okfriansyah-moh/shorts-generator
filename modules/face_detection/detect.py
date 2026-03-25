@@ -176,6 +176,10 @@ def _process_scene(
         sample_fps, temp_dir, scene.scene_id, config
     )
 
+    min_face_size: float = float(
+        config.get("face_detection", {}).get("min_face_size", _DEFAULT_MIN_FACE_SIZE)
+    )
+
     bboxes: list[FaceBBox] = []
     try:
         for i, frame_path in enumerate(frame_paths):
@@ -183,7 +187,7 @@ def _process_scene(
             bbox = _detect_face_in_frame(
                 frame_path, detector, frame_ts_ms, min_confidence
             )
-            if bbox is not None:
+            if bbox is not None and bbox.width >= min_face_size and bbox.height >= min_face_size:
                 bboxes.append(bbox)
     finally:
         for fp in frame_paths:
@@ -303,7 +307,7 @@ def _detect_face_in_frame(
     timestamp_ms: int,
     min_confidence: float,
 ) -> FaceBBox | None:
-    """Detect the largest face in a single frame.
+    """Detect the highest-confidence face in a single frame.
 
     Args:
         frame_path: Path to the JPEG frame image.
@@ -312,7 +316,7 @@ def _detect_face_in_frame(
         min_confidence: Minimum confidence threshold for filtering.
 
     Returns:
-        FaceBBox for the largest detected face, or None if no face found.
+        FaceBBox for the highest-confidence detected face, or None if no face found.
     """
     try:
         import cv2  # type: ignore[import]

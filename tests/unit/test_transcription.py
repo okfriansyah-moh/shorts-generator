@@ -265,8 +265,10 @@ class TestSecondsToMs:
 
     def test_rounding(self) -> None:
         from modules.transcription.transcribe import _seconds_to_ms
-        # floor behavior
-        assert _seconds_to_ms(1.9999) == 1999
+        # round-to-nearest behavior
+        assert _seconds_to_ms(1.9999) == 2000
+        assert _seconds_to_ms(1.4994) == 1499
+        assert _seconds_to_ms(1.4995) == 1500
 
 
 class TestExtractAudioToWav:
