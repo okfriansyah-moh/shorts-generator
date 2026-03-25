@@ -116,12 +116,16 @@ shorts-generator/
 ├── run_pipeline.py              # Single entry point
 ├── contracts/                   # Frozen dataclass DTO definitions
 │   ├── ingestion.py             # IngestionResult (Phase 1)
-│   └── scene.py                 # SceneSegment, SceneList (Phase 1)
+│   ├── scene.py                 # SceneSegment, SceneList (Phase 1)
+│   ├── transcript.py            # Word, TranscriptSegment, Transcript (Phase 2)
+│   ├── face.py                  # FaceBBox, SceneFaceData, FaceDetectionResult (Phase 2)
+│   └── audio.py                 # SceneAudioEnergy, AudioEnergyData (Phase 2)
 ├── modules/
 │   ├── ingestion/               # Video validation + SHA-256 fingerprinting [Phase 1]
 │   ├── scene_splitter/          # Scene boundary detection [Phase 1]
-│   ├── transcription/           # Speech-to-text [Phase 2+]
-│   ├── face_detection/          # Face tracking [Phase 2+]
+│   ├── transcription/           # Speech-to-text, word-level timestamps [Phase 2]
+│   ├── face_detection/          # Face tracking, EMA smoothing [Phase 2]
+│   ├── audio_analysis/          # Per-scene RMS energy extraction [Phase 2]
 │   ├── scoring/                 # Rule-based scene ranking [Phase 3+]
 │   ├── clip_builder/            # Scene → clip assembly [Phase 4+]
 │   ├── hook_generator/          # Narration script templates [Phase 5+]
