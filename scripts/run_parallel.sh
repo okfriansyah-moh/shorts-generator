@@ -466,7 +466,7 @@ phase_builder_execute() {
     cd "${work_dir}"
     local pb_log="${LOG_DIR}/${phase_label}-phase-builder-${attempt}.log"
     copilot \
-        -p "Read PHASE_TASK.md and implement all listed phases sequentially. ${skill_prompt}. MANDATORY: Use ONLY skills as primary knowledge source (dto, pipeline, modularity, determinism, idempotency). DO NOT read full documentation unless skills are insufficient — if reading docs, explain why skills are insufficient. For each phase: implement, test, then commit with message 'feat(phase-N): implement <name>'. Follow all constraints in .github/copilot-instructions.md." \
+        -p "Read PHASE_TASK.md and implement all listed phases sequentially. ${skill_prompt}. MANDATORY: Use ONLY skills as primary knowledge source (dto, pipeline, modularity, determinism, idempotency). DO NOT read full documentation unless skills are insufficient — if reading docs, explain why skills are insufficient. CRITICAL: NEVER modify files in database/ or docs/ — these are protected directories. Only create/modify files in contracts/ (additive only) and modules/. Module __init__.py files MUST use relative imports (from .X import Y, NOT from modules.X.Y import). For each phase: implement, test, then commit with message 'feat(phase-N): implement <name>'. Follow all constraints in .github/copilot-instructions.md." \
         --agent=phase-builder \
         --model="${model}" \
         --no-ask-user \
@@ -528,7 +528,7 @@ phase_builder_fix() {
     cd "${work_dir}"
     local fix_log="${LOG_DIR}/${phase_label}-phase-builder-fix-${attempt}.log"
     copilot \
-        -p "Phase builder validation failed. Fix compilation and syntax issues ONLY. Do not change architecture. ${skill_prompt}. Commit fixes." \
+        -p "Phase builder validation failed. Fix compilation and syntax issues ONLY. NEVER modify files in database/ or docs/ — only touch contracts/ and modules/. Do not change architecture. ${skill_prompt}. Commit fixes." \
         --agent=refactor \
         --model="${model}" \
         --no-ask-user \
@@ -545,7 +545,7 @@ dto_guardian_execute() {
     cd "${work_dir}"
     local dg_log="${LOG_DIR}/${phase_label}-dto-guardian-${attempt}.log"
     copilot \
-        -p "Validate all DTOs in contracts/ against docs/dto_contracts.md. STRICT checks: no missing fields, no extra fields, no type mismatches, all dataclasses are frozen. Use skills: dto. MANDATORY: Use ONLY skills as primary knowledge source. DO NOT read full documentation unless skills are insufficient. Report violations and fix them. Commit fixes if any." \
+        -p "Validate all DTOs in contracts/ against docs/dto_contracts.md. STRICT checks: no missing fields, no extra fields, no type mismatches, all dataclasses are frozen. Use skills: dto. MANDATORY: Use ONLY skills as primary knowledge source. DO NOT read full documentation unless skills are insufficient. NEVER modify files in database/ or docs/ — only touch contracts/ and modules/. Report violations in contracts/ and fix them. Commit fixes if any." \
         --agent=dto-guardian \
         --model="${model}" \
         --no-ask-user \
@@ -584,7 +584,7 @@ dto_guardian_fix() {
     cd "${work_dir}"
     local fix_log="${LOG_DIR}/${phase_label}-dto-fix-${attempt}.log"
     copilot \
-        -p "DTO validation failed. Fix DTO-specific issues ONLY: ensure all dataclasses are frozen, no missing/extra fields, no type mismatches, no mutable defaults. Use skills: dto. Commit fixes." \
+        -p "DTO validation failed. Fix DTO-specific issues ONLY: ensure all dataclasses are frozen, no missing/extra fields, no type mismatches, no mutable defaults. NEVER modify files in database/ or docs/ — only touch contracts/ and modules/. Use skills: dto. Commit fixes." \
         --agent=dto-guardian \
         --model="${model}" \
         --no-ask-user \
@@ -602,7 +602,7 @@ integration_execute() {
     cd "${work_dir}"
     local int_log="${LOG_DIR}/${phase_label}-integration-${attempt}.log"
     copilot \
-        -p "Validate module integration for the phases just implemented. STRICT checklist: (1) DTO compatibility across producer/consumer stages, (2) no cross-module imports, (3) no raw SQL in modules — no sqlite3/psycopg2/asyncpg imports in modules, (4) no module calling another module, (5) database access only through orchestrator, (6) deterministic ordering preserved — all collections explicitly sorted, (7) idempotency preserved — content-addressable IDs, (8) no hidden side effects. Use skills: ${CORE_SKILLS}. MANDATORY: Use ONLY skills as primary knowledge source. Report and fix violations. Commit fixes if any." \
+        -p "Validate module integration for the phases just implemented. STRICT checklist: (1) DTO compatibility across producer/consumer stages, (2) no cross-module imports — module __init__.py MUST use relative imports (from .X import Y), (3) no raw SQL in modules — no sqlite3/psycopg2/asyncpg imports in modules, (4) no module calling another module, (5) database access only through orchestrator, (6) deterministic ordering preserved — all collections explicitly sorted, (7) idempotency preserved — content-addressable IDs, (8) no hidden side effects. CRITICAL: NEVER modify files in database/ or docs/ — only touch contracts/ and modules/. These are protected directories and any modification causes a pipeline rollback. Use skills: ${CORE_SKILLS}. MANDATORY: Use ONLY skills as primary knowledge source. Report and fix violations in modules/ and contracts/ ONLY. Commit fixes if any." \
         --agent=integration \
         --model="${model}" \
         --no-ask-user \
@@ -669,7 +669,7 @@ integration_fix() {
     cd "${work_dir}"
     local fix_log="${LOG_DIR}/${phase_label}-integration-fix-${attempt}.log"
     copilot \
-        -p "Integration validation failed. Fix integration-level issues: remove cross-module imports, remove DB usage from modules, remove print statements, ensure deterministic ordering (sorted collections). Use skills: ${CORE_SKILLS}. Do not change architecture. Commit fixes." \
+        -p "Integration validation failed. Fix integration-level issues: remove cross-module imports (use relative imports in __init__.py), remove DB usage from modules, remove print statements, ensure deterministic ordering (sorted collections). CRITICAL: NEVER modify files in database/ or docs/ — only touch contracts/ and modules/. These are protected directories. Use skills: ${CORE_SKILLS}. Do not change architecture. Commit fixes." \
         --agent=refactor \
         --model="${model}" \
         --no-ask-user \
@@ -792,7 +792,7 @@ run_agent_pipeline() {
 
             local ref_log="${LOG_DIR}/${phase_label}-refactor-${qg_attempt}.log"
             copilot \
-                -p "Quality gates failed. Fix all violations: lint errors, test failures, cross-module imports, raw SQL in modules, print statements. Do not change architecture. Use skills: ${CORE_SKILLS}, code-quality-fixer. MANDATORY: Use ONLY skills as primary knowledge source. Commit fixes." \
+                -p "Quality gates failed. Fix all violations: lint errors, test failures, cross-module imports, raw SQL in modules, print statements. CRITICAL: NEVER modify files in database/ or docs/ — only touch contracts/ and modules/. Do not change architecture. Use skills: ${CORE_SKILLS}, code-quality-fixer. MANDATORY: Use ONLY skills as primary knowledge source. Commit fixes." \
                 --agent=refactor \
                 --model="${model}" \
                 --no-ask-user \
@@ -1009,11 +1009,16 @@ HEADER
 - All database access through \`database/adapter.py\` only — orchestrator calls adapter, modules NEVER touch the database
 - No \`print()\` — use \`logging\` module
 - No cross-module imports — only \`contracts/\` types
+- Module \`__init__.py\` files MUST use relative imports: \`from .X import Y\`, NOT \`from modules.X.Y import Y\`
 - No module may call another module — only the orchestrator calls modules
 - All IDs are content-addressable (SHA256-based)
 - All collections must be explicitly sorted (deterministic ordering)
 - Tests must work without GPU, network, or real video files
-- Protected files: \`contracts/*\` (additive only), \`database/*\` (Phase 0 only), \`docs/*\` (read-only)
+
+**PROTECTED DIRECTORIES — NEVER MODIFY (violation = automatic rollback):**
+- \`database/*\` — Phase 0 only. Do NOT create migrations, modify adapter.py, or change connection.py.
+- \`docs/*\` — Read-only. Do NOT modify any documentation files.
+- \`contracts/*\` — Additive only. You may ADD new files. Do NOT modify existing DTO fields.
 
 **After implementation:**
 1. Run \`python3 -m pytest tests/ --tb=short -q\` and fix all failures
