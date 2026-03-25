@@ -9,7 +9,6 @@ Entry point: transcribe(ingestion_result, config) -> Transcript
 from __future__ import annotations
 
 import logging
-import math
 import os
 import subprocess
 import tempfile

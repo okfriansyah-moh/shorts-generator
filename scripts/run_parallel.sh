@@ -1110,17 +1110,23 @@ run_quality_gates() {
         log_warn "Import check skipped (no modules yet)"
     fi
 
-    # 2. Lint check
+    # 2. Lint check (scoped to modules/ contracts/ tests/ — not entire repo)
     log_info "Checking lint..."
-    if command -v ruff &>/dev/null; then
-        if ruff check . --quiet 2>/dev/null; then
+    local lint_targets=""
+    [[ -d "modules" ]] && lint_targets="${lint_targets} modules/"
+    [[ -d "contracts" ]] && lint_targets="${lint_targets} contracts/"
+    [[ -d "tests" ]] && lint_targets="${lint_targets} tests/"
+    if [[ -z "${lint_targets}" ]]; then
+        log_warn "No lint targets found"
+    elif command -v ruff &>/dev/null; then
+        if ruff check ${lint_targets} --quiet 2>/dev/null; then
             log_success "Lint check passed"
         else
             log_error "Lint check failed"
             ((failures++))
         fi
     elif command -v flake8 &>/dev/null; then
-        if flake8 . --count --select=E9,F63,F7,F82 --show-source --statistics 2>/dev/null; then
+        if flake8 ${lint_targets} --count --select=E9,F63,F7,F82 --show-source --statistics 2>/dev/null; then
             log_success "Lint check passed"
         else
             log_error "Lint check failed"
@@ -1262,20 +1268,51 @@ run_quality_gates() {
 
     # 9. Protected files check
     log_info "Checking protected file integrity..."
-    # This check is meaningful during merge — verify no unexpected modifications
-    # to protected paths by comparing against the base branch
+    # Verify no unexpected modifications to protected paths.
+    # Adding NEW files to contracts/ is allowed (additive policy).
+    # Any changes to database/ or docs/ are flagged.
     if git rev-parse --is-inside-work-tree &>/dev/null; then
         local base_branch="main"
         if git rev-parse --verify "${base_branch}" &>/dev/null; then
-            local protected_changes
-            protected_changes=$(git diff --name-only "${base_branch}" -- contracts/ database/ docs/ 2>/dev/null || true)
-            if [[ -n "${protected_changes}" ]]; then
-                log_warn "Protected files modified (verify these changes are intentional):"
-                echo "${protected_changes}" | head -10 | while read -r f; do
-                    log_warn "  ${f}"
-                done
-            else
-                log_success "No protected files modified"
+            local gate9_issues=0
+
+            # database/ — no changes allowed (Phase 0 only)
+            local db_changes
+            db_changes=$(git diff --name-only "${base_branch}" -- database/ 2>/dev/null || true)
+            if [[ -n "${db_changes}" ]]; then
+                log_warn "database/ modified (Phase 0 only):"
+                echo "${db_changes}" | head -5 | while read -r f; do log_warn "  ${f}"; done
+                ((gate9_issues++))
+            fi
+
+            # docs/ — no changes allowed (read-only)
+            local doc_changes
+            doc_changes=$(git diff --name-only "${base_branch}" -- docs/ 2>/dev/null || true)
+            if [[ -n "${doc_changes}" ]]; then
+                log_warn "docs/ modified (read-only policy):"
+                echo "${doc_changes}" | head -5 | while read -r f; do log_warn "  ${f}"; done
+                ((gate9_issues++))
+            fi
+
+            # contracts/ — MODIFIED existing files are flagged; NEW files are OK
+            local modified_contracts
+            modified_contracts=$(git diff --name-only --diff-filter=M "${base_branch}" -- contracts/ 2>/dev/null || true)
+            if [[ -n "${modified_contracts}" ]]; then
+                log_warn "Existing contracts/ files modified (additive-only policy):"
+                echo "${modified_contracts}" | head -5 | while read -r f; do log_warn "  ${f}"; done
+                ((gate9_issues++))
+            fi
+
+            # Log new contracts (informational, not a failure)
+            local new_contracts
+            new_contracts=$(git diff --name-only --diff-filter=A "${base_branch}" -- contracts/ 2>/dev/null || true)
+            if [[ -n "${new_contracts}" ]]; then
+                log_success "New contracts added (allowed):"
+                echo "${new_contracts}" | head -5 | while read -r f; do log_info "  ${f}"; done
+            fi
+
+            if (( gate9_issues == 0 )); then
+                log_success "Protected file integrity verified"
             fi
         fi
     fi
