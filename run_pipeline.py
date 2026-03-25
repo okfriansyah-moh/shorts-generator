@@ -19,7 +19,7 @@ import sys
 from core.config import load_config
 from core.dependencies import check_all_dependencies
 from core.logging import configure_logging
-from core.orchestrator import PIPELINE_STAGES, Orchestrator, PipelineResult
+from core.orchestrator import PIPELINE_STAGES, Orchestrator
 from database.adapter import DatabaseAdapter
 from database.connection import initialize_database
 
