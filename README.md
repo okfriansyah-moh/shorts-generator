@@ -176,7 +176,7 @@ shorts-generator/
 | ----- | ----------------------- | ------------ | ----------------------------------------------------- |
 | 0     | Core Infrastructure     | ✅ Complete  | Config, logging, DB migrations, FFmpeg checks         |
 | 1     | Core Pipeline Skeleton  | ✅ Complete  | Ingestion, scene splitting, orchestrator wiring       |
-| 2     | Signal Extraction       | ⏳ Pending   | Transcription, face detection, audio analysis         |
+| 2     | Signal Extraction       | ✅ Complete  | Transcription, face detection, audio analysis         |
 | 3–10  | Scoring through Publish | ⏳ Pending   | Full pipeline stages                                  |
 
 ## Development System

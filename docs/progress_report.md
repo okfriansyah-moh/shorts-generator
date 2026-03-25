@@ -2,7 +2,7 @@
 
 **Last Updated:** 2026-03-25
 **Active Phase:** Phase 2 — Transcription & Signal Extraction
-**Phase Status:** ✅ COMPLETE (Verified & Audited)
+**Phase Status:** ✅ COMPLETE (Verified & Audited — Post-Merge Review)
 
 ---
 
@@ -186,11 +186,11 @@
 - [x] Implement `modules/transcription/transcribe.py` with faster-whisper, word-level timestamps
 - [x] Implement `modules/face_detection/detect.py` with MediaPipe, 2fps sampling, EMA smoothing
 - [x] Implement `modules/audio_analysis/analyze.py` with FFmpeg RMS extraction
-- [x] Update `core/orchestrator.py` to wire scene_splitter → transcription → face_detection → audio_analysis
-- [x] Write unit tests for transcription (speech present, no speech, confidence scores)
+- [x] Update `core/orchestrator.py` to wire scene_splitter → [transcription, face_detection, audio_analysis]
+- [x] Write unit tests for transcription (speech present, no speech, confidence scores, frozen DTOs)
 - [x] Write unit tests for face detection (face visible, no face, multiple faces, EMA smoothing correctness)
-- [x] Write unit tests for audio energy (varying energy, flat energy, normalization range)
-- [x] Write integration test: full signal extraction on a mocked video
+- [x] Write unit tests for audio energy (varying energy, flat energy, normalization range, FFmpeg failure)
+- [x] Write integration tests: full signal extraction chain, empty signal graceful paths
 
 ### Files Created
 
@@ -238,3 +238,7 @@
 - ✅ All public function signatures have type annotations
 - ✅ Tests pass without GPU, without network, without real video files
 - ✅ FFmpeg used for all audio/frame extraction (no Python video libraries)
+- ✅ Deterministic: same input + same config = identical Transcript, FaceDetectionResult, AudioEnergyData
+- ✅ Normalized coordinates: all face bounding boxes in [0, 1] range
+- ✅ Word-level timestamps: transcription produces per-word timing, not just segments
+- ✅ Graceful empty signals: no speech/no face/flat audio → valid empty DTOs, not errors
