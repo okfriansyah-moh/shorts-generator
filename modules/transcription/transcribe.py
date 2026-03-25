@@ -18,7 +18,6 @@ from contracts.transcript import Transcript, TranscriptSegment, Word
 
 if TYPE_CHECKING:
     from contracts.ingestion import IngestionResult
-    from contracts.scene import SceneList
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +30,6 @@ _DEFAULT_BEAM_SIZE = 5
 def transcribe(
     ingestion_result: "IngestionResult",
     config: dict[str, Any],
-    scene_list: "SceneList | None" = None,
 ) -> Transcript:
     """Transcribe audio from a video file using faster-whisper.
 
@@ -43,7 +41,6 @@ def transcribe(
     Args:
         ingestion_result: DTO from the ingestion stage.
         config: Pipeline configuration dict (from config.yaml).
-        scene_list: Optional SceneList for aligning segments to scene boundaries.
 
     Returns:
         Transcript DTO with word-level timestamps.

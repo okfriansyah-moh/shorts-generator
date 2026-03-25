@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 import math
 import os
+import shutil
 import subprocess
 import tempfile
 from typing import TYPE_CHECKING, Any
@@ -293,7 +294,6 @@ def _extract_frames(
                 dir=temp_dir,
             )
             os.close(fd)
-            import shutil
             shutil.copy2(src_path, dst_path)
             persistent_paths.append(dst_path)
 
