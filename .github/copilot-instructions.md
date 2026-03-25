@@ -203,18 +203,18 @@ During parallel development, each phase owns specific directories. **Agents MUST
 
 ### Phase-to-Directory Ownership Matrix
 
-| Phase   | Owned Directories                                                                    | May Add to `contracts/` | May Modify `database/` | May Modify `docs/` |
-| ------- | ------------------------------------------------------------------------------------ | ----------------------- | ---------------------- | ------------------- |
-| Phase 0 | `core/`, `database/`, `config/`, `run_pipeline.py`                                   | Yes (additive)          | **Yes**                | No                  |
-| Phase 1 | `modules/ingestion/`, `modules/scene_splitter/`, `tests/unit/test_ingestion.py`, `tests/unit/test_scene_splitter.py` | Yes (additive) | **No** | No |
-| Phase 2 | `modules/transcription/`, `modules/face_detection/`, `modules/audio_analysis/`, corresponding tests | Yes (additive) | **No** | No |
-| Phase 3 | `modules/scoring/`, `tests/unit/test_scoring.py`                                     | Yes (additive)          | **No**                 | No                  |
-| Phase 4 | `modules/clip_builder/`, `tests/unit/test_clip_builder.py`                           | Yes (additive)          | **No**                 | No                  |
-| Phase 5 | `modules/compositor/`, `tests/unit/test_compositor.py`                               | Yes (additive)          | **No**                 | No                  |
-| Phase 6 | `modules/hook_generator/`, `modules/tts/`, `modules/subtitle/`, `modules/renderer/`, corresponding tests | Yes (additive) | **No** | No |
-| Phase 7 | `modules/thumbnail/`, `modules/metadata/`, corresponding tests                       | Yes (additive)          | **No**                 | No                  |
-| Phase 8 | `modules/storage/`, `modules/scheduler/`, corresponding tests                        | Yes (additive)          | **No**                 | No                  |
-| Phase 9 | `modules/publisher/`, `tests/unit/test_publisher.py`                                 | Yes (additive)          | **No**                 | No                  |
+| Phase   | Owned Directories                                                                                                    | May Add to `contracts/` | May Modify `database/` | May Modify `docs/` |
+| ------- | -------------------------------------------------------------------------------------------------------------------- | ----------------------- | ---------------------- | ------------------ |
+| Phase 0 | `core/`, `database/`, `config/`, `run_pipeline.py`                                                                   | Yes (additive)          | **Yes**                | No                 |
+| Phase 1 | `modules/ingestion/`, `modules/scene_splitter/`, `tests/unit/test_ingestion.py`, `tests/unit/test_scene_splitter.py` | Yes (additive)          | **No**                 | No                 |
+| Phase 2 | `modules/transcription/`, `modules/face_detection/`, `modules/audio_analysis/`, corresponding tests                  | Yes (additive)          | **No**                 | No                 |
+| Phase 3 | `modules/scoring/`, `tests/unit/test_scoring.py`                                                                     | Yes (additive)          | **No**                 | No                 |
+| Phase 4 | `modules/clip_builder/`, `tests/unit/test_clip_builder.py`                                                           | Yes (additive)          | **No**                 | No                 |
+| Phase 5 | `modules/compositor/`, `tests/unit/test_compositor.py`                                                               | Yes (additive)          | **No**                 | No                 |
+| Phase 6 | `modules/hook_generator/`, `modules/tts/`, `modules/subtitle/`, `modules/renderer/`, corresponding tests             | Yes (additive)          | **No**                 | No                 |
+| Phase 7 | `modules/thumbnail/`, `modules/metadata/`, corresponding tests                                                       | Yes (additive)          | **No**                 | No                 |
+| Phase 8 | `modules/storage/`, `modules/scheduler/`, corresponding tests                                                        | Yes (additive)          | **No**                 | No                 |
+| Phase 9 | `modules/publisher/`, `tests/unit/test_publisher.py`                                                                 | Yes (additive)          | **No**                 | No                 |
 
 ### Phase Isolation Enforcement
 

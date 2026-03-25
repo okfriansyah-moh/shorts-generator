@@ -73,14 +73,15 @@ Load these skills on-demand:
 
 **NEVER modify these protected directories (violation = automatic pipeline rollback):**
 
-| Directory      | Rule                                                                              |
-| -------------- | --------------------------------------------------------------------------------- |
-| `database/*`   | Phase 0 only. Do NOT create migrations, modify adapter.py, or change connection.py |
-| `docs/*`       | Read-only. Do NOT modify any documentation files                                  |
-| `contracts/*`  | Additive only. You may ADD new DTO files. Do NOT modify existing DTO fields       |
-| `core/*`       | Phase 0 only. Do NOT modify config.py, dependencies.py, or orchestrator.py        |
+| Directory     | Rule                                                                               |
+| ------------- | ---------------------------------------------------------------------------------- |
+| `database/*`  | Phase 0 only. Do NOT create migrations, modify adapter.py, or change connection.py |
+| `docs/*`      | Read-only. Do NOT modify any documentation files                                   |
+| `contracts/*` | Additive only. You may ADD new DTO files. Do NOT modify existing DTO fields        |
+| `core/*`      | Phase 0 only. Do NOT modify config.py, dependencies.py, or orchestrator.py         |
 
 **Module `__init__.py` files MUST use relative imports:**
+
 ```python
 # ✅ CORRECT
 from .score import score_scenes

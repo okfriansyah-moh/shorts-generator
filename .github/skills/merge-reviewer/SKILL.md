@@ -30,17 +30,17 @@ For each phase, extract the task checklist from `docs/implementation_roadmap.md`
 
 ### 2. Architecture Compliance
 
-| Rule                    | Verification Command                                                                 |
-| ----------------------- | ------------------------------------------------------------------------------------ |
-| No cross-module imports | `grep -rn "from modules\." modules/ --include='*.py' \| grep -v __init__`            |
-| Relative imports in `__init__.py` | `grep -rn "from modules\." modules/ --include='__init__.py'` → must be empty |
-| No raw SQL in modules   | `grep -rn "import sqlite3\|import psycopg2" modules/ --include='*.py'`               |
-| Structured logging      | `grep -rn "print(" modules/ --include='*.py' \| grep -v __pycache__` → must be empty |
-| Frozen DTOs             | All classes in `contracts/` use `@dataclass(frozen=True)`                            |
-| Content-addressable IDs | Video, scene, and clip IDs use SHA256-based formulas                                 |
-| Determinism             | No `random`, no `time.time()` for IDs, no network-dependent behavior                 |
-| DB adapter only         | Modules never import `sqlite3` — all DB access through `database/adapter.py`         |
-| Type hints              | All public function signatures have type annotations                                 |
+| Rule                              | Verification Command                                                                 |
+| --------------------------------- | ------------------------------------------------------------------------------------ |
+| No cross-module imports           | `grep -rn "from modules\." modules/ --include='*.py' \| grep -v __init__`            |
+| Relative imports in `__init__.py` | `grep -rn "from modules\." modules/ --include='__init__.py'` → must be empty         |
+| No raw SQL in modules             | `grep -rn "import sqlite3\|import psycopg2" modules/ --include='*.py'`               |
+| Structured logging                | `grep -rn "print(" modules/ --include='*.py' \| grep -v __pycache__` → must be empty |
+| Frozen DTOs                       | All classes in `contracts/` use `@dataclass(frozen=True)`                            |
+| Content-addressable IDs           | Video, scene, and clip IDs use SHA256-based formulas                                 |
+| Determinism                       | No `random`, no `time.time()` for IDs, no network-dependent behavior                 |
+| DB adapter only                   | Modules never import `sqlite3` — all DB access through `database/adapter.py`         |
+| Type hints                        | All public function signatures have type annotations                                 |
 
 ### 3. Integration Testing
 
