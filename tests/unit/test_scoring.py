@@ -159,7 +159,6 @@ class TestKeywordScoring:
     def test_no_words_in_scene_returns_zero(self):
         from modules.scoring.keywords import get_keywords, score_keyword
 
-        scenes = _make_scene_list(1)
         transcript = _make_empty_transcript()
         keywords = get_keywords(_default_config())
         score = score_keyword(0, 5000, transcript, keywords)
@@ -407,7 +406,6 @@ class TestWeightedComposite:
             "scene_activity": 1.0,
             "sentence_density": 1.0,
         }
-        total = 9.0
         composite = _weighted_composite(1.0, 1.0, 1.0, 1.0, 1.0, weights)
         assert abs(composite - 1.0) < 1e-9
 

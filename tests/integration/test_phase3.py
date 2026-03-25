@@ -403,7 +403,7 @@ class TestFullSignalChainToScoring:
         """SceneList produced by scene_splitter passes correctly into scoring."""
         from contracts.ingestion import IngestionResult
 
-        ingestion = IngestionResult(
+        _ingestion = IngestionResult(
             video_id=VIDEO_ID,
             path="/fake/video.mp4",
             duration_seconds=3600.0,
