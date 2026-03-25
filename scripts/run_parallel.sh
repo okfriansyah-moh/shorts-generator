@@ -826,6 +826,14 @@ save_state() {
     done
     branches_json+="]"
 
+    local rotation_json="["
+    first=true
+    for m in "${MODEL_ROTATE_POOL[@]}"; do
+        if $first; then first=false; else rotation_json+=","; fi
+        rotation_json+="\"${m}\""
+    done
+    rotation_json+="]"
+
     cat > "${STATE_FILE}" <<EOF
 {
     "mode": ${mode},
@@ -833,7 +841,9 @@ save_state() {
     "integration_branch": "${integration_branch}",
     "branches": ${branches_json},
     "started_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-    "status": "running"
+    "status": "running",
+    "model_heavy": "${MODEL_HEAVY}",
+    "model_rotation_pool": ${rotation_json}
 }
 EOF
 }
@@ -1405,9 +1415,20 @@ run_mode_2() {
     log_info "  Log: ${log_file}"
 
     local phase_label="group-$(IFS=-; echo "${phases[*]}")"
+
+    # Track phase status in phase-status.json (same as Mode 1 & 3)
+    update_phase_status "${phase_label}" state "running" model "${model}" started_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
     # Activate venv so validation uses the right python
     source "${PROJECT_ROOT}/.venv/bin/activate" 2>/dev/null || true
-    run_agent_pipeline "${PROJECT_ROOT}" "${model}" "${phase_label}" "${phases[@]}"
+    local pipeline_rc=0
+    run_agent_pipeline "${PROJECT_ROOT}" "${model}" "${phase_label}" "${phases[@]}" || pipeline_rc=$?
+
+    if (( pipeline_rc == 0 )); then
+        update_phase_status "${phase_label}" state "complete" exit_code "0"
+    else
+        update_phase_status "${phase_label}" state "failed" exit_code "${pipeline_rc}"
+    fi
 
     # Clean up task file
     rm -f "${task_file}"
@@ -1684,6 +1705,7 @@ auto_resolve_conflicts() {
     set_rotate_model
     log_info "    Spawning conflict-resolver agent (model: ${ROTATE_MODEL}, timeout: 10min)..."
     log_info "    Agent log: ${resolve_log}"
+    update_phase_status "conflict-resolve-${phase}" state "running" model "${ROTATE_MODEL}" started_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
     local resolve_prompt
     resolve_prompt="WORKING DIRECTORY: You are already at the project root.
@@ -1764,9 +1786,11 @@ STRICT EXECUTION RULES:
     if git commit --no-edit 2>/dev/null || \
        git commit -m "Merge Phase ${phase}: all phases combined"; then
         log_success "    Phase ${phase} merge commit created."
+        update_phase_status "conflict-resolve-${phase}" state "complete" exit_code "0"
         return 0
     else
         log_error "    Could not create merge commit for Phase ${phase}."
+        update_phase_status "conflict-resolve-${phase}" state "failed" exit_code "1"
         return 1
     fi
 }
@@ -1884,6 +1908,7 @@ STRICT EXECUTION RULES:
 - no background agents, no interactive steps, complete in one session"
 
     set_rotate_model
+    update_phase_status "remediation-${attempt}" state "running" model "${ROTATE_MODEL}" started_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     (
         cd "${PROJECT_ROOT}" || exit 1
         copilot \
@@ -1899,8 +1924,10 @@ STRICT EXECUTION RULES:
     local exit_code=$?
     if [[ "$exit_code" -eq 0 ]]; then
         log_success "  Remediation agent completed (attempt ${attempt}) [model: ${ROTATE_MODEL}]."
+        update_phase_status "remediation-${attempt}" state "complete" exit_code "0"
     else
         log_warn "  Remediation agent exited with code ${exit_code}. Check: ${remediation_log}"
+        update_phase_status "remediation-${attempt}" state "failed" exit_code "${exit_code}"
     fi
 }
 
@@ -2145,6 +2172,7 @@ STRICT EXECUTION RULES:
 - no background agents, no interactive steps, complete in one session"
 
     set_rotate_model
+    update_phase_status "int-remediation-${attempt}" state "running" model "${ROTATE_MODEL}" started_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     (
         cd "${PROJECT_ROOT}" || exit 1
         copilot \
@@ -2160,8 +2188,10 @@ STRICT EXECUTION RULES:
     local exit_code=$?
     if [[ "$exit_code" -eq 0 ]]; then
         log_success "  Integration remediation agent completed (attempt ${attempt}) [model: ${ROTATE_MODEL}]."
+        update_phase_status "int-remediation-${attempt}" state "complete" exit_code "0"
     else
         log_warn "  Integration remediation agent exited with code ${exit_code}. Check: ${remediation_log}"
+        update_phase_status "int-remediation-${attempt}" state "failed" exit_code "${exit_code}"
     fi
 }
 
@@ -2320,6 +2350,7 @@ cmd_merge() {
     fi
 
     log_success "All phases merged into: ${integration_branch}"
+    update_phase_status "merge" state "complete" exit_code "0"
 
     # ── Post-merge review agent ───────────────────────────────────────────
     echo ""
@@ -2327,6 +2358,7 @@ cmd_merge() {
     log_header "Post-Merge Review Agent"
     log_info "Agent: ${AGENT_MERGE_REVIEWER}, model: ${ROTATE_MODEL}"
     log_info "Verifying ALL phases are fully implemented and fixing issues."
+    update_phase_status "post-merge-review" state "running" model "${ROTATE_MODEL}" started_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
     local review_log="${LOG_DIR}/merge-review.log"
     local review_transcript="${LOG_DIR}/merge-review-session.md"
@@ -2425,14 +2457,17 @@ STRICT EXECUTION RULES:
     local docs_exit=$?
     if [[ "$docs_exit" -eq 0 ]]; then
         log_success "Documentation sync completed."
+        update_phase_status "docs-sync" state "complete" exit_code "0"
     else
         log_warn "Documentation sync agent exited with code ${docs_exit}. Check: ${docs_log}"
+        update_phase_status "docs-sync" state "failed" exit_code "${docs_exit}"
     fi
 
     # ── Quality Gate + Remediation Loop ───────────────────────────────────
     echo ""
     log_header "Quality Gate Checks"
     log_info "All gates must pass before PR creation."
+    update_phase_status "quality-gate" state "running" started_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
     ensure_python_env "${PROJECT_ROOT}" 2>/dev/null || true
 
@@ -2501,11 +2536,13 @@ STRICT EXECUTION RULES:
     fi
 
     log_success "All quality gates passed!"
+    update_phase_status "quality-gate" state "complete" exit_code "0"
 
     # ── Integration Verification + Remediation Loop ───────────────────────
     echo ""
     log_header "Integration Verification"
     log_info "Running 8 integration checks..."
+    update_phase_status "integration-verify" state "running" started_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
     local int_max_attempts=3
     local int_attempt=0
@@ -2551,6 +2588,7 @@ STRICT EXECUTION RULES:
     fi
 
     log_success "All 8 integration checks passed! PR-ready."
+    update_phase_status "integration-verify" state "complete" exit_code "0"
 
     # Commit any remaining fixes
     if [[ -n "$(git status --porcelain 2>/dev/null)" ]]; then
@@ -2679,17 +2717,44 @@ _detect_pipeline_stage() {
             | grep -q . && int_remote=true
     fi
 
-    # Count phase completion states
+    # Count phase completion states from phase-status.json (authoritative source)
     local complete_count=0 in_progress_count=0
+    local status_file="${PROJECT_ROOT}/.parallel-dev/phase-status.json"
     for ph in "${PHASES[@]}"; do
-        local wt; wt="$(worktree_for_phase "$ph")"
-        local br; br="$(branch_for_phase "$ph")"
-        if [[ -f "${wt}/.phase-complete" ]]; then
+        local ph_state=""
+        if [[ -f "$status_file" ]]; then
+            # Try exact phase key first, then group patterns
+            ph_state=$(python3 -c "
+import json, sys
+data = json.load(open('$status_file'))
+phases = data.get('phases', {})
+# Direct phase match
+if '$ph' in phases:
+    print(phases['$ph'].get('state', ''))
+elif 'phase-$ph' in phases:
+    print(phases['phase-$ph'].get('state', ''))
+else:
+    # Check group keys that contain this phase
+    for k, v in sorted(phases.items()):
+        if 'group-' in k and '$ph' in k.split('group-')[1].split('-'):
+            print(v.get('state', ''))
+            break
+" 2>/dev/null || true)
+        fi
+        if [[ "$ph_state" == "complete" ]]; then
             ((complete_count++)) || true
-        elif git -C "$PROJECT_ROOT" rev-parse --verify "$br" &>/dev/null; then
-            local cc; cc="$(git -C "$PROJECT_ROOT" log --oneline "main..${br}" \
-                2>/dev/null | wc -l | tr -d ' ')"
-            [[ "$cc" -gt 0 ]] && ((in_progress_count++)) || true
+        elif [[ "$ph_state" == "running" ]]; then
+            ((in_progress_count++)) || true
+        else
+            # Fallback: check git branch for commits
+            local br; br="$(branch_for_phase "$ph")"
+            if git -C "$PROJECT_ROOT" rev-parse --verify "$br" &>/dev/null; then
+                local cc; cc="$(git -C "$PROJECT_ROOT" log --oneline "main..${br}" \
+                    2>/dev/null | wc -l | tr -d ' ')"
+                if [[ "$cc" -gt 0 ]]; then
+                    ((in_progress_count++)) || true
+                fi
+            fi
         fi
     done
 
@@ -2772,93 +2837,204 @@ cmd_status() {
 
     _detect_pipeline_stage
 
-    local complete_count=0 in_progress_count=0 not_started_count=0
-    for phase in "${PHASES[@]}"; do
-        local branch; branch="$(branch_for_phase "$phase")"
-        local wt; wt="$(worktree_for_phase "$phase")"
-        if [[ -f "${wt}/.phase-complete" ]]; then
-            ((complete_count++)) || true
-        elif git -C "$PROJECT_ROOT" rev-parse --verify "$branch" &>/dev/null; then
-            local cc; cc="$(git -C "$PROJECT_ROOT" log --oneline "main..${branch}" \
-                2>/dev/null | wc -l | tr -d ' ')"
-            if [[ "$cc" -gt 0 ]]; then ((in_progress_count++)) || true
-            else ((not_started_count++)) || true; fi
-        else
-            ((not_started_count++)) || true
-        fi
-    done
+    local status_file="${PROJECT_ROOT}/.parallel-dev/phase-status.json"
 
+    # ── Header ────────────────────────────────────────────────────────────
     echo ""
-    echo -e "${BOLD}============================================================${NC}"
-    echo -e "${BOLD}  Parallel Development Status${NC}"
-    echo -e "${BOLD}============================================================${NC}"
-    printf "  %-18s %b● %s%b\n" "Pipeline stage:" \
-        "${PIPELINE_STAGE_COLOR}" "${PIPELINE_STAGE}" "${NC}"
-    printf "  %-18s %d / %d phases complete" \
-        "Phase progress:" "$complete_count" "${#PHASES[@]}"
-    if [[ "$in_progress_count" -gt 0 ]]; then
-        printf "  (%d in progress)" "$in_progress_count"
+    log_header "Parallel Development Status"
+
+    # ── Session info from state.json ──────────────────────────────────────
+    if [[ -f "${STATE_FILE}" ]]; then
+        STATE_FILE_PATH="${STATE_FILE}" python3 <<'PYEOF'
+import json, os
+
+sf = os.environ["STATE_FILE_PATH"]
+data = json.load(open(sf))
+
+mode_num = data.get("mode", "?")
+mode_names = {1: "Full Parallel", 2: "Token-Optimized", 3: "Hybrid"}
+mode_label = f"{mode_num} ({mode_names.get(int(mode_num), 'Unknown')})"
+
+print(f"  Mode:               {mode_label}")
+print(f"  Phases:             {data.get('phases', '?')}")
+print(f"  Integration branch: {data.get('integration_branch', '?')}")
+print(f"  Status:             {data.get('status', '?')}")
+print(f"  Started:            {data.get('started_at', '?')}")
+
+branches = data.get("branches", [])
+if branches:
+    print(f"  Branches:           {', '.join(branches)}")
+
+# Model routing
+heavy = data.get("model_heavy", "")
+pool = data.get("model_rotation_pool", [])
+if heavy:
+    print(f"")
+    print(f"  Model (heavy):      {heavy}")
+if pool:
+    print(f"  Rotation pool:      {' → '.join(pool)}")
+PYEOF
     fi
     echo ""
-    if [[ -n "$PIPELINE_ACTIVE_LABEL" ]]; then
-        printf "  %-18s %s  (%s)\n" "Active process:" \
-            "${PIPELINE_ACTIVE_LABEL}" "${PIPELINE_ACTIVE_AGE}"
-    fi
-    echo ""
+
+    # ── Phase/group progress with git details ─────────────────────────────
     echo "-----------------------------------------------------------"
 
     for phase in "${PHASES[@]}"; do
         local branch; branch="$(branch_for_phase "$phase")"
-        local wt; wt="$(worktree_for_phase "$phase")"
         local status_icon details=""
 
-        status_icon="${RED}[NOT STARTED]${NC}"
+        # Try reading state from phase-status.json first
+        local ph_state="" ph_model=""
+        if [[ -f "$status_file" ]]; then
+            read -r ph_state ph_model < <(python3 -c "
+import json
+data = json.load(open('$status_file'))
+phases = data.get('phases', {})
+entry = None
+# Try exact phase key
+for key in ['$phase', 'phase-$phase']:
+    if key in phases:
+        entry = phases[key]
+        break
+# Try group keys containing this phase
+if entry is None:
+    for k, v in sorted(phases.items()):
+        if 'group-' in k and '$phase' in k.split('group-', 1)[1].split('-'):
+            entry = v
+            break
+if entry:
+    print(entry.get('state', ''), entry.get('model', ''))
+else:
+    print('', '')
+" 2>/dev/null || echo " ")
+        fi
 
+        # Determine status icon from phase-status.json state
+        if [[ "$ph_state" == "complete" ]]; then
+            status_icon="${GREEN}[COMPLETE]${NC}"
+        elif [[ "$ph_state" == "running" ]]; then
+            status_icon="${YELLOW}[IN PROGRESS]${NC}"
+        elif [[ "$ph_state" == "failed" ]]; then
+            status_icon="${RED}[FAILED]${NC}"
+        else
+            status_icon="${RED}[NOT STARTED]${NC}"
+        fi
+
+        # Enrich with git details if branch exists
         if git -C "$PROJECT_ROOT" rev-parse --verify "$branch" &>/dev/null; then
             local cc; cc="$(git -C "$PROJECT_ROOT" log --oneline "main..${branch}" \
                 2>/dev/null | wc -l | tr -d ' ')"
 
-            if [[ -f "${wt}/.phase-complete" ]]; then
-                status_icon="${GREEN}[COMPLETE]${NC}"
-                details="${cc} commits"
-            elif [[ "$cc" -gt 0 ]]; then
-                status_icon="${YELLOW}[IN PROGRESS]${NC}"
-                details="${cc} commits"
-            else
-                status_icon="${BLUE}[STARTED]${NC}"
-                details="no commits yet"
+            if [[ "$ph_state" != "complete" ]] && [[ "$ph_state" != "running" ]] && [[ "$ph_state" != "failed" ]]; then
+                if [[ "$cc" -gt 0 ]]; then
+                    status_icon="${YELLOW}[IN PROGRESS]${NC}"
+                else
+                    status_icon="${BLUE}[STARTED]${NC}"
+                fi
             fi
 
+            details="${cc} commits"
             local last_msg
             last_msg="$(git -C "$PROJECT_ROOT" log --oneline -1 "$branch" 2>/dev/null | cut -c 9-)"
             [[ -n "$last_msg" ]] && details="${details} — ${last_msg}"
+        elif [[ -z "$ph_state" ]]; then
+            details="no branch"
         fi
 
         echo -e "  Phase ${phase} (${PHASE_NAMES[$phase]:-unknown}): ${status_icon} ${details}"
     done
 
+    # ── Post-merge pipeline processes ─────────────────────────────────────
+    local has_post_merge=false
+    local process_entries=()
+
+    # Check each post-merge process log
+    if [[ -f "${LOG_DIR}/merge-review.log" ]]; then
+        has_post_merge=true
+        local mr_state="complete"
+        local mr_size; mr_size=$(wc -c < "${LOG_DIR}/merge-review.log" 2>/dev/null | tr -d ' ')
+        process_entries+=("Post-Merge Review|${mr_state}|${mr_size} bytes|${LOG_DIR}/merge-review.log")
+    fi
+    if [[ -f "${LOG_DIR}/docs-sync.log" ]]; then
+        has_post_merge=true
+        local ds_state="complete"
+        local ds_size; ds_size=$(wc -c < "${LOG_DIR}/docs-sync.log" 2>/dev/null | tr -d ' ')
+        process_entries+=("Documentation Sync|${ds_state}|${ds_size} bytes|${LOG_DIR}/docs-sync.log")
+    fi
+    for attempt_file in "${LOG_DIR}"/remediation-attempt-*.log; do
+        [[ -f "$attempt_file" ]] || continue
+        has_post_merge=true
+        local ra_size; ra_size=$(wc -c < "$attempt_file" 2>/dev/null | tr -d ' ')
+        local ra_name; ra_name="$(basename "$attempt_file" .log)"
+        process_entries+=("Quality Gate (${ra_name})|complete|${ra_size} bytes|${attempt_file}")
+    done
+    for attempt_file in "${LOG_DIR}"/integration-remediation-attempt-*.log; do
+        [[ -f "$attempt_file" ]] || continue
+        has_post_merge=true
+        local ir_size; ir_size=$(wc -c < "$attempt_file" 2>/dev/null | tr -d ' ')
+        local ir_name; ir_name="$(basename "$attempt_file" .log)"
+        process_entries+=("Integration Verify (${ir_name})|complete|${ir_size} bytes|${attempt_file}")
+    done
+    for attempt_file in "${LOG_DIR}"/conflict-resolve-phase-*.log; do
+        [[ -f "$attempt_file" ]] || continue
+        has_post_merge=true
+        local cr_size; cr_size=$(wc -c < "$attempt_file" 2>/dev/null | tr -d ' ')
+        local cr_name; cr_name="$(basename "$attempt_file" .log)"
+        process_entries+=("Conflict Resolution (${cr_name})|complete|${cr_size} bytes|${attempt_file}")
+    done
+
+    if $has_post_merge; then
+        echo ""
+        for entry in "${process_entries[@]}"; do
+            IFS='|' read -r pname pstate pdetail plog <<< "$entry"
+            echo -e "  ${pname}: ${GREEN}[${pstate^^}]${NC} ${pdetail}"
+        done
+    fi
+
     echo "-----------------------------------------------------------"
 
-    # Show state file info
-    if [[ -f "${STATE_FILE}" ]]; then
+    # ── Agent Status table (from phase-status.json) ───────────────────────
+    if [[ -f "$status_file" ]]; then
         echo ""
-        python3 <<PYEOF
+        echo -e "  ${BOLD}Agent Status:${NC}"
+        printf "    %-22s %-12s %-28s %-6s %s\n" \
+            "Phase/Group" "State" "Model" "Exit" "Updated"
+        printf "    %-22s %-12s %-28s %-6s %s\n" \
+            "──────────────────────" "────────────" "────────────────────────────" "──────" "────────────────────"
+        PHASE_STATUS_FILE="$status_file" python3 <<'PYEOF'
 import json, os
-state = json.load(open("${STATE_FILE}"))
-print(f"  Mode:               {state.get('mode', '?')}")
-print(f"  Integration branch: {state.get('integration_branch', '?')}")
-print(f"  Status:             {state.get('status', '?')}")
-print(f"  Started:            {state.get('started_at', '?')}")
+
+sf = os.environ["PHASE_STATUS_FILE"]
+data = json.load(open(sf))
+phases = data.get("phases", {})
+for key in sorted(phases.keys()):
+    entry = phases[key]
+    state = entry.get("state", "unknown")
+    model = entry.get("model", "—")
+    exit_code = entry.get("exit_code", "—")
+    if exit_code is None:
+        exit_code = "—"
+    updated = entry.get("updated_at", "—")
+    print(f"    {key:<22s} {state:<12s} {model:<28s} {str(exit_code):<6s} {updated}")
 PYEOF
     fi
 
-    # Show log files
+    # ── Log files ─────────────────────────────────────────────────────────
     if [[ -d "${LOG_DIR}" ]]; then
-        local log_count
-        log_count=$(find "${LOG_DIR}" -type f 2>/dev/null | wc -l | tr -d ' ')
-        if [[ "$log_count" -gt 0 ]]; then
+        local log_files=()
+        while IFS= read -r lf; do
+            log_files+=("$lf")
+        done < <(find "${LOG_DIR}" -type f -name '*.log' -o -name '*-session.md' 2>/dev/null | sort)
+
+        if [[ ${#log_files[@]} -gt 0 ]]; then
             echo ""
-            log_info "Log files: ${log_count} files in ${LOG_DIR}"
+            echo -e "  ${BOLD}Log files:${NC}"
+            for lf in "${log_files[@]}"; do
+                local lf_base; lf_base="$(basename "$lf")"
+                local lf_size; lf_size=$(wc -c < "$lf" 2>/dev/null | tr -d ' ')
+                echo "    ${lf_base} → ${lf} (${lf_size} bytes)"
+            done
         fi
     fi
 
