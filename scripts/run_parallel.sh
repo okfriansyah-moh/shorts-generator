@@ -120,6 +120,21 @@ declare -A PHASE_SKILLS=(
     [10]="logging, testing"
 )
 
+# Directories owned by each phase — agents MUST NOT modify files outside these
+declare -A PHASE_OWNED_DIRS=(
+    [0]="core/ database/ config/ run_pipeline.py"
+    [1]="modules/ingestion/ modules/scene_splitter/ tests/unit/test_ingestion.py tests/unit/test_scene_splitter.py"
+    [2]="modules/transcription/ modules/face_detection/ modules/audio_analysis/ tests/unit/test_transcription.py tests/unit/test_face_detection.py tests/unit/test_audio_analysis.py"
+    [3]="modules/scoring/ tests/unit/test_scoring.py"
+    [4]="modules/clip_builder/ tests/unit/test_clip_builder.py"
+    [5]="modules/compositor/ tests/unit/test_compositor.py"
+    [6]="modules/hook_generator/ modules/tts/ modules/subtitle/ modules/renderer/ tests/unit/test_hook_generator.py tests/unit/test_tts.py tests/unit/test_subtitle.py tests/unit/test_renderer.py"
+    [7]="modules/thumbnail/ modules/metadata/ tests/unit/test_thumbnail.py tests/unit/test_metadata.py"
+    [8]="modules/storage/ modules/scheduler/ tests/unit/test_storage.py tests/unit/test_scheduler.py"
+    [9]="modules/publisher/ tests/unit/test_publisher.py"
+    [10]="modules/analytics/ tests/unit/test_analytics.py"
+)
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Color output
 # ─────────────────────────────────────────────────────────────────────────────
@@ -658,6 +673,16 @@ integration_validate() {
         if grep -rn "for .* in .*\.keys()\|for .* in .*\.values()\|for .* in .*\.items()" modules/ 2>/dev/null | grep -v "sorted(" | grep -v "# noqa" | head -5 | grep -q .; then
             log_warn "[integration-validate] Possible non-deterministic dict iteration in modules/ (verify sorted)"
         fi
+
+        # __init__.py MUST use relative imports (from .X import Y), NOT absolute (from modules.X.Y import Y)
+        local abs_init_imports
+        abs_init_imports=$(find modules/ -name '__init__.py' -exec grep -ln "from modules\." {} \; 2>/dev/null)
+        if [[ -n "${abs_init_imports}" ]]; then
+            while IFS= read -r file; do
+                log_error "[integration-validate] Absolute import in __init__.py: ${file} — must use relative imports (from .X import Y)"
+                ((failures++))
+            done <<< "${abs_init_imports}"
+        fi
     fi
 
     return $(( failures > 0 ? 1 : 0 ))
@@ -719,6 +744,28 @@ validate_protected_files() {
         log_error "[protected-files] docs/ modified (read-only policy):"
         echo "${doc_changes}" | while read -r f; do log_error "  ${f}"; done
         ((violations++))
+    fi
+
+    # core/ — only Phase 0 allowed
+    local core_changes
+    core_changes=$(git diff --name-only "${base_branch}" -- core/ 2>/dev/null || true)
+    if [[ -n "${core_changes}" ]]; then
+        if [[ "${phase_label}" != *"phase-0"* ]] && [[ "${phase_label}" != *"group-0"* ]]; then
+            log_error "[protected-files] core/ modified outside Phase 0:"
+            echo "${core_changes}" | while read -r f; do log_error "  ${f}"; done
+            ((violations++))
+        fi
+    fi
+
+    # __init__.py — must use relative imports (from .X import Y)
+    if [[ -d "modules" ]]; then
+        local abs_init_imports
+        abs_init_imports=$(find modules/ -name '__init__.py' -exec grep -ln "from modules\." {} \; 2>/dev/null)
+        if [[ -n "${abs_init_imports}" ]]; then
+            log_error "[protected-files] Absolute imports in __init__.py (must use relative: from .X import Y):"
+            echo "${abs_init_imports}" | while read -r f; do log_error "  ${f}"; done
+            ((violations++))
+        fi
     fi
 
     return $(( violations > 0 ? 1 : 0 ))
@@ -989,11 +1036,19 @@ HEADER
     for phase in "${phases[@]}"; do
         local name="${PHASE_NAMES[$phase]}"
         local skills="${PHASE_SKILLS[$phase]}"
+        local owned="${PHASE_OWNED_DIRS[$phase]}"
 
         cat >> "${output_path}" <<EOF
 ## Phase ${phase} — ${name}
 
 **Required skills:** ${skills}
+
+**YOUR OWNED DIRECTORIES (only modify these):**
+\`\`\`
+${owned}
+contracts/  (additive only — new files OK, no field changes)
+\`\`\`
+**EVERYTHING ELSE is OFF-LIMITS.** Do not create or modify files outside these directories.
 
 **Skill-first approach (MANDATORY):**
 - Pipeline stage ordering and DTO flow → \`pipeline\` skill
@@ -1018,6 +1073,7 @@ HEADER
 **PROTECTED DIRECTORIES — NEVER MODIFY (violation = automatic rollback):**
 - \`database/*\` — Phase 0 only. Do NOT create migrations, modify adapter.py, or change connection.py.
 - \`docs/*\` — Read-only. Do NOT modify any documentation files.
+- \`core/*\` — Phase 0 only. Do NOT modify any core infrastructure files.
 - \`contracts/*\` — Additive only. You may ADD new files. Do NOT modify existing DTO fields.
 
 **After implementation:**
@@ -1130,6 +1186,20 @@ run_quality_gates() {
         fi
     else
         log_warn "No modules/ directory yet"
+    fi
+
+    # 5b. __init__.py relative import check
+    log_info "Checking __init__.py for absolute imports..."
+    if [[ -d "modules" ]]; then
+        local abs_init
+        abs_init=$(find modules/ -name '__init__.py' -exec grep -ln "from modules\." {} \; 2>/dev/null)
+        if [[ -n "${abs_init}" ]]; then
+            log_error "Absolute imports in __init__.py (must use relative: from .X import Y):"
+            echo "${abs_init}" | while read -r f; do log_error "  ${f}"; done
+            ((failures++))
+        else
+            log_success "All __init__.py use relative imports"
+        fi
     fi
 
     # 6. Print check

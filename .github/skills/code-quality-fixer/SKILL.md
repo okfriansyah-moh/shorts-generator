@@ -78,6 +78,11 @@ pytest tests/ --tb=short -q && \
 ## Hard Constraints
 
 - **Never bypass architecture** — fixes must comply with all invariants in copilot-instructions.md
+- **NEVER modify `database/*`** — Phase 0 only. Report database issues, don't fix them.
+- **NEVER modify `docs/*`** — Read-only for all phases. Report documentation issues, don't fix them.
+- **NEVER modify `core/*`** — Phase 0 only. Report core issues, don't fix them.
+- **Module `__init__.py`** MUST use relative imports: `from .X import Y`, NOT `from modules.X.Y import Y`
+- **Only fix files within `modules/` and `contracts/` (additive only for contracts)**
 - **Never delete tests** — fix source to make tests pass, or fix test if test is wrong
 - **Never use `print()`** — always `logging` module
 - **Never add cross-module imports** — only `contracts/` types cross boundaries

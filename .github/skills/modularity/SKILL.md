@@ -141,8 +141,10 @@ scored = scoring.process(scene_list, transcript, face_result, config)
 Before committing:
 
 - [ ] No imports from `modules.*` in any module (only `contracts.*`)
+- [ ] Module `__init__.py` uses relative imports (`from .X import Y`, NOT `from modules.X.Y import Y`)
 - [ ] Module `__init__.py` exports only the public entry function
 - [ ] No global mutable state
 - [ ] No direct file reads from another module's output directory
 - [ ] Config values passed in, not read directly from YAML inside module
 - [ ] Database access is NOT performed inside modules (orchestrator handles it)
+- [ ] No modifications to `database/`, `docs/`, or `core/` (unless Phase 0)

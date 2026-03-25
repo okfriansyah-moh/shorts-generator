@@ -98,6 +98,28 @@ import psycopg2                                             # DB driver in modul
 - Do NOT modify `contracts/` DTOs without consulting DTO Guardian
 - Do NOT import from other modules (only `contracts/`)
 - Do NOT add new dependencies without justification
+
+## PHASE ISOLATION GUARDRAILS (STRICT)
+
+**NEVER modify these protected directories (violation = automatic pipeline rollback):**
+
+| Directory      | Rule                                                                              |
+| -------------- | --------------------------------------------------------------------------------- |
+| `database/*`   | Phase 0 only. Do NOT create migrations, modify adapter.py, or change connection.py |
+| `docs/*`       | Read-only. Do NOT modify any documentation files                                  |
+| `contracts/*`  | Additive only. You may ADD new DTO files. Do NOT modify existing DTO fields       |
+| `core/*`       | Phase 0 only. Do NOT modify config.py, dependencies.py, or orchestrator.py        |
+
+**Module `__init__.py` files MUST use relative imports:**
+```python
+# ✅ CORRECT
+from .score import score_scenes
+
+# ❌ FORBIDDEN — causes integration validation failure
+from modules.scoring.score import score_scenes
+```
+
+**Only create/modify files within your target module's directory.** Do not touch other modules.
 - Do NOT hardcode paths, thresholds, or magic numbers
 - Do NOT use `print()` — use structured `logging` only
 - Do NOT introduce randomness (`random`, `uuid4`, `datetime.now()` as logic input)

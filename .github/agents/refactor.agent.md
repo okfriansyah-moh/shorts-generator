@@ -69,6 +69,28 @@ Load these skills on-demand:
 - Do NOT introduce randomness or non-determinism
 - If tests fail after a change, REVERT immediately
 
+## PHASE ISOLATION GUARDRAILS (STRICT)
+
+**NEVER modify these protected directories (violation = automatic pipeline rollback):**
+
+| Directory      | Rule                                                                              |
+| -------------- | --------------------------------------------------------------------------------- |
+| `database/*`   | Phase 0 only. Do NOT create migrations, modify adapter.py, or change connection.py |
+| `docs/*`       | Read-only. Do NOT modify any documentation files                                  |
+| `contracts/*`  | Additive only. You may ADD new DTO files. Do NOT modify existing DTO fields       |
+| `core/*`       | Phase 0 only. Do NOT modify config.py, dependencies.py, or orchestrator.py        |
+
+**Module `__init__.py` files MUST use relative imports:**
+```python
+# ✅ CORRECT
+from .score import score_scenes
+
+# ❌ FORBIDDEN — causes integration validation failure
+from modules.scoring.score import score_scenes
+```
+
+**Only refactor files within the target module.** Do not fix pre-existing issues in other modules or protected directories.
+
 ## OUTPUT
 
 - Refactored code with improved structure

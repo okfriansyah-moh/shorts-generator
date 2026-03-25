@@ -159,16 +159,32 @@ After resolving all conflicts, verify:
    grep -rn 'from modules\.' modules/ --include='*.py' | grep -v __init__
    ```
 
-3. **No raw SQL in modules:**
+3. **Module `__init__.py` uses relative imports (NOT absolute):**
+
+   ```bash
+   # This MUST find nothing — absolute imports are forbidden in __init__.py
+   grep -rn 'from modules\.' modules/ --include='__init__.py'
+   ```
+
+4. **No raw SQL in modules:**
 
    ```bash
    grep -rn 'import sqlite3\|import psycopg2' modules/ --include='*.py'
    ```
 
-4. **Package loads:**
+5. **Package loads:**
    ```bash
    python -c "import sys; sys.path.insert(0, '.'); import importlib"
    ```
+
+## Phase Isolation (STRICT)
+
+- **NEVER modify `database/`** — Phase 0 only.
+- **NEVER modify `docs/`** — read-only for all phases.
+- **NEVER modify `core/`** — Phase 0 only.
+- `contracts/` — additive only. New files OK, no field changes on existing DTOs.
+- Module `__init__.py` MUST use relative imports: `from .X import Y`, NOT `from modules.X.Y import Y`.
+- Violation of these rules triggers automatic pipeline rollback.
 
 ## Architectural Invariants
 

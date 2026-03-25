@@ -125,9 +125,21 @@ grep -rn '<<<<<<<\|=======\|>>>>>>>' modules/ contracts/ tests/ database/ --incl
 # No cross-module imports
 grep -rn 'from modules\.' modules/ --include='*.py' | grep -v __init__
 
+# No absolute imports in __init__.py (must be relative)
+grep -rn 'from modules\.' modules/ --include='__init__.py'
+
 # No raw SQL in modules
 grep -rn 'import sqlite3\|import psycopg2' modules/ --include='*.py'
 
 # Package loads
 python -c "import sys; sys.path.insert(0, '.'); import importlib"
 ```
+
+## PHASE ISOLATION GUARDRAILS (STRICT)
+
+**During conflict resolution:**
+
+- Ensure module `__init__.py` files use relative imports: `from .X import Y`
+- If both sides introduce absolute imports (`from modules.X.Y`), convert to relative
+- NEVER introduce new modifications to `database/*` or `docs/*` during resolution
+- `contracts/` resolution: keep the union of all DTO files; never modify existing fields
