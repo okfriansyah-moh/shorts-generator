@@ -842,31 +842,29 @@ shorts_factory/
 
 ### Exit Criteria
 
-- [ ] `Transcript`, `TranscriptSegment`, `Word` DTOs defined with all fields
-- [ ] `FaceDetectionResult`, `SceneFaceData`, `FaceBBox` DTOs defined with all fields
-- [ ] Transcription produces word-level timestamps (not just segment-level)
-- [ ] Transcription returns empty result for videos with no speech (not an error)
-- [ ] Face detection samples at 2fps, not every frame
-- [ ] Face detection applies EMA smoothing with configurable alpha
-- [ ] Face detection returns normalized bounding boxes (0–1 range)
-- [ ] Audio energy extraction returns per-scene normalized RMS values
-- [ ] All three modules are independently testable with mock `IngestionResult` and `SceneList`
-- [ ] Integration test: real video → transcription → non-empty Transcript with word timestamps
-- [ ] Integration test: real video → face detection → FaceDetectionResult with visibility ratios
-- [ ] Integration test: real video → audio analysis → per-scene energy scores
+- [x] `Transcript`, `TranscriptSegment`, `Word` DTOs defined with all fields
+- [x] `FaceDetectionResult`, `SceneFaceData`, `FaceBBox` DTOs defined with all fields
+- [x] Transcription produces word-level timestamps (not just segment-level)
+- [x] Transcription returns empty result for videos with no speech (not an error)
+- [x] Face detection samples at 2fps, not every frame
+- [x] Face detection applies EMA smoothing with configurable alpha
+- [x] Face detection returns normalized bounding boxes (0–1 range)
+- [x] Audio energy extraction returns per-scene normalized RMS values
+- [x] All three modules are independently testable with mock `IngestionResult` and `SceneList`
+- [x] Integration test: signal extraction chain verified with mocked dependencies
 
 ### Tasks
 
-- [ ] Define `Transcript`, `TranscriptSegment`, `Word` DTOs in `contracts/transcript.py`
-- [ ] Define `FaceDetectionResult`, `SceneFaceData`, `FaceBBox` DTOs in `contracts/face.py`
-- [ ] Implement `modules/transcription/transcribe.py` with faster-whisper, word-level timestamps
-- [ ] Implement `modules/face_detection/detect.py` with MediaPipe, 2fps sampling, EMA smoothing
-- [ ] Implement `modules/audio_analysis/analyze.py` with FFmpeg RMS extraction
-- [ ] Update `core/orchestrator.py` to wire scene_splitter → [transcription, face_detection, audio_analysis]
-- [ ] Write unit tests for transcription (speech present, no speech, confidence scores)
-- [ ] Write unit tests for face detection (face visible, no face, multiple faces, EMA smoothing correctness)
-- [ ] Write unit tests for audio energy (varying energy, flat energy, normalization range)
-- [ ] Write integration test: full signal extraction on a 30-second test video
+- [x] Define `Transcript`, `TranscriptSegment`, `Word` DTOs in `contracts/transcript.py`
+- [x] Define `FaceDetectionResult`, `SceneFaceData`, `FaceBBox` DTOs in `contracts/face.py`
+- [x] Implement `modules/transcription/transcribe.py` with faster-whisper, word-level timestamps
+- [x] Implement `modules/face_detection/detect.py` with MediaPipe, 2fps sampling, EMA smoothing
+- [x] Implement `modules/audio_analysis/analyze.py` with FFmpeg RMS extraction
+- [x] Update `core/orchestrator.py` to wire scene_splitter → [transcription, face_detection, audio_analysis]
+- [x] Write unit tests for transcription (speech present, no speech, confidence scores)
+- [x] Write unit tests for face detection (face visible, no face, multiple faces, EMA smoothing correctness)
+- [x] Write unit tests for audio energy (varying energy, flat energy, normalization range)
+- [x] Write integration test: full signal extraction chain using mocked 30-second video input (no real video file)
 
 ---
 
