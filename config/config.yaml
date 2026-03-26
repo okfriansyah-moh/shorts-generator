@@ -76,7 +76,7 @@ subtitle:
   font_size: 48
   font_name: "Arial"
   outline_width: 3
-  margin_bottom: 150
+  margin_bottom: 700
 
 compositor:
   gameplay_ratio: 0.65
