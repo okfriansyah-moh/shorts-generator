@@ -76,7 +76,7 @@ subtitle:
   font_size: 48
   font_name: "Arial"
   outline_width: 3
-  margin_bottom: 150
+  margin_bottom: 700
 
 compositor:
   gameplay_ratio: 0.65
@@ -89,7 +89,7 @@ renderer:
   crf: 20
   preset: "medium"
   fps: 30
-  max_file_size_mb: 300
+  max_file_size_mb: 100
   audio_mix_gameplay: 0.7
   audio_mix_narration: 0.3
 

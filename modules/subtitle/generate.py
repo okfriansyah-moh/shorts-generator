@@ -36,7 +36,7 @@ def _generate_ass_header(config: dict) -> str:
     font_name = sub_config.get("font_name", "Arial")
     font_size = sub_config.get("font_size", 48)
     outline_width = sub_config.get("outline_width", 3)
-    margin_bottom = sub_config.get("margin_bottom", 150)
+    margin_bottom = sub_config.get("margin_bottom", 700)
 
     return (
         "[Script Info]\n"
@@ -213,8 +213,14 @@ def process(
     if has_narration_subs:
         events.extend(_generate_narration_subs(tts_words))
 
-    # Sort events deterministically by start time string then layer
-    events.sort()
+    # Sort events deterministically by start time then layer.
+    # Each event is "Dialogue: {layer},{start},{end},..." — extract start
+    # time (field 1) and layer (field 0) for a correct chronological sort.
+    def _event_sort_key(line: str) -> tuple[str, str]:
+        parts = line.split(",", 3)
+        # parts[0] = "Dialogue: {layer}", parts[1] = start time
+        return (parts[1], parts[0]) if len(parts) >= 2 else (line, "")
+    events.sort(key=_event_sort_key)
 
     # Write ASS file atomically
     ass_content = header + "\n".join(events) + "\n"

@@ -67,6 +67,28 @@ def _normalize_audio(
     os.replace(tmp_path, output_path)
 
 
+def _convert_audio_format(
+    input_path: str,
+    output_path: str,
+    sample_rate: int = 44100,
+) -> None:
+    """Convert audio to WAV without loudnorm (fallback for normalization failure)."""
+    tmp_path = f"{output_path}.tmp"
+    result = subprocess.run(
+        [
+            "ffmpeg", "-y", "-i", input_path,
+            "-ar", str(sample_rate), "-ac", "1",
+            tmp_path,
+        ],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    if result.returncode != 0:
+        raise RuntimeError(f"FFmpeg format conversion failed: {result.stderr[:200]}")
+    os.replace(tmp_path, output_path)
+
+
 def _synthesize_edge_tts(
     text: str,
     output_path: str,
@@ -194,10 +216,29 @@ def process(
     cache_key = _get_cache_key(text, voice)
     raw_path = os.path.join(cache_dir, f"{cache_key}_raw.mp3")
     normalized_path = os.path.join(cache_dir, f"{cache_key}.wav")
+    timings_path = os.path.join(cache_dir, f"{cache_key}_timings.json")
 
     # Check cache — idempotent
     if os.path.exists(normalized_path):
         duration = _get_audio_duration(normalized_path)
+        # Load cached word timings if available
+        cached_timings: tuple[TTSWordTiming, ...] = ()
+        cached_engine = "cached"
+        if os.path.exists(timings_path):
+            try:
+                with open(timings_path, "r", encoding="utf-8") as f:
+                    timings_data = json.loads(f.read())
+                cached_timings = tuple(
+                    TTSWordTiming(
+                        text=t["text"],
+                        start_ms=t["start_ms"],
+                        end_ms=t["end_ms"],
+                    )
+                    for t in timings_data.get("timings", [])
+                )
+                cached_engine = timings_data.get("engine", "cached")
+            except (json.JSONDecodeError, KeyError, TypeError):
+                pass
         logger.info(
             "TTS cache hit",
             extra={"clip_id": hook_result.clip_id, "cache_key": cache_key},
@@ -207,8 +248,8 @@ def process(
             audio_path=normalized_path,
             duration_seconds=duration,
             sample_rate=tts_config.get("sample_rate", 44100),
-            word_timings=(),
-            engine_used="cached",
+            word_timings=cached_timings,
+            engine_used=cached_engine,
         )
 
     # Try Edge TTS first
@@ -250,16 +291,31 @@ def process(
         _normalize_audio(raw_path, normalized_path, target_lufs, sample_rate)
     except Exception as norm_err:
         logger.warning(
-            "Volume normalization failed, using raw audio",
+            "Volume normalization failed, converting format without loudnorm",
             extra={"clip_id": hook_result.clip_id, "error": str(norm_err)[:100]},
         )
-        # Fall back to raw audio if normalisation fails
-        if os.path.exists(raw_path):
-            os.replace(raw_path, normalized_path)
-        else:
-            raise
+        # Fall back to format conversion without loudnorm to avoid
+        # codec/extension mismatch (raw is MP3, normalized is WAV)
+        try:
+            _convert_audio_format(raw_path, normalized_path, sample_rate)
+        except Exception:
+            raise norm_err
 
     duration = _get_audio_duration(normalized_path)
+
+    # Save word timings to JSON sidecar for cache consistency
+    if word_timings:
+        timings_data = {
+            "engine": engine_used,
+            "timings": [
+                {"text": wt.text, "start_ms": wt.start_ms, "end_ms": wt.end_ms}
+                for wt in word_timings
+            ],
+        }
+        tmp_timings = f"{timings_path}.tmp"
+        with open(tmp_timings, "w", encoding="utf-8") as f:
+            f.write(json.dumps(timings_data))
+        os.replace(tmp_timings, timings_path)
 
     # Clean up raw file
     if os.path.exists(raw_path):
