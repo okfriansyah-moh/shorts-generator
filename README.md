@@ -133,10 +133,10 @@ shorts-generator/
 │   ├── subtitle/                # ASS subtitle generation [Phase 6]
 │   ├── compositor/              # 9:16 layout composition [Phase 5]
 │   ├── renderer/                # Final MP4 rendering [Phase 6]
-│   ├── thumbnail/               # Thumbnail generation [Phase 8+]
-│   ├── metadata/                # Title/description/tags [Phase 8+]
-│   ├── storage/                 # Filesystem persistence [Phase 9+]
-│   ├── scheduler/               # Publish date assignment [Phase 9+]
+│   ├── thumbnail/               # Thumbnail generation [Phase 7]
+│   ├── metadata/                # Title/description/tags [Phase 7]
+│   ├── storage/                 # Filesystem persistence [Phase 8]
+│   ├── scheduler/               # Publish date assignment [Phase 8]
 │   └── publisher/               # YouTube upload [Phase 9+]
 ├── core/
 │   ├── config.py                # YAML config loader + env overrides
@@ -181,7 +181,9 @@ shorts-generator/
 | 4     | Clip Builder             | ✅ Complete  | Deterministic clip assembly (30–60s), rejection/threshold flow |
 | 5     | Composition Engine       | ⚠️ Partial   | Compositor module + DTO + unit tests (orchestrator wiring TBD) |
 | 6     | Rendering Pipeline       | ⚠️ Partial   | Hook/TTS/subtitle/renderer modules + DTOs + unit tests         |
-| 7–10  | Metadata through Analytics | ⏳ Pending | Remaining downstream pipeline stages                            |
+| 7     | Metadata & Thumbnail      | ⚠️ Partial | Thumbnail/metadata modules + DTOs + unit tests (orchestrator/integration pending) |
+| 8     | Storage & Scheduling      | ⚠️ Partial | Storage/scheduler modules + DTO + unit tests (DB/orchestrator integration pending) |
+| 9–10  | Publisher through Analytics | ⏳ Pending | Remaining downstream pipeline stages                             |
 
 ## Development System
 
