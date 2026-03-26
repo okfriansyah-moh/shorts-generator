@@ -111,7 +111,6 @@ def _make_config(tmp_dir: str) -> dict:
         "scheduler": {
             "publish_time_utc": "10:00",
         },
-        "_clip_composite_score": 0.75,
     }
 
 
@@ -131,7 +130,7 @@ class TestStorageProcess:
             thumbnail = _make_thumbnail_result(tmp_dir)
             metadata = _make_metadata_result()
 
-            result = process(rendered, thumbnail, metadata, config)
+            result = process(rendered, thumbnail, metadata, config, composite_score=0.75)
 
             assert isinstance(result, StorageRecord)
             assert result.clip_id == "abcdef0123456789"

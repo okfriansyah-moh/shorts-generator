@@ -94,6 +94,7 @@ def process(
     metadata_result: MetadataResult,
     config: dict,
     *,
+    composite_score: float = 0.0,
     subtitle_result: SubtitleResult | None = None,
     tts_result: TTSResult | None = None,
 ) -> StorageRecord:
@@ -107,6 +108,7 @@ def process(
         thumbnail_result: The generated thumbnail.
         metadata_result: The generated metadata.
         config: Pipeline configuration dict.
+        composite_score: Average composite score of constituent scenes. 0.0-1.0.
         subtitle_result: Optional SubtitleResult DTO for resolving subtitle paths.
         tts_result: Optional TTSResult DTO for resolving narration paths.
 
@@ -203,8 +205,6 @@ def process(
 
     # Compute composite score from the rendered clip's parent data
     # The orchestrator passes this via config or we derive from clip metadata
-    composite_score = config.get("_clip_composite_score", 0.0)
-
     record = StorageRecord(
         clip_id=clip_id,
         video_id=video_id,
