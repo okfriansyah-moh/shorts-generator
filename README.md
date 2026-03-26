@@ -128,11 +128,11 @@ shorts-generator/
 │   ├── audio_analysis/          # Per-scene RMS energy extraction [Phase 2]
 │   ├── scoring/                 # Rule-based scene ranking [Phase 3+]
 │   ├── clip_builder/            # Scene → clip assembly [Phase 4+]
-│   ├── hook_generator/          # Narration script templates [Phase 5+]
-│   ├── tts/                     # Text-to-speech synthesis [Phase 6+]
-│   ├── subtitle/                # ASS subtitle generation [Phase 6+]
-│   ├── compositor/              # 9:16 layout composition [Phase 7+]
-│   ├── renderer/                # Final MP4 rendering [Phase 7+]
+│   ├── hook_generator/          # Narration script templates [Phase 6]
+│   ├── tts/                     # Text-to-speech synthesis [Phase 6]
+│   ├── subtitle/                # ASS subtitle generation [Phase 6]
+│   ├── compositor/              # 9:16 layout composition [Phase 5]
+│   ├── renderer/                # Final MP4 rendering [Phase 6]
 │   ├── thumbnail/               # Thumbnail generation [Phase 8+]
 │   ├── metadata/                # Title/description/tags [Phase 8+]
 │   ├── storage/                 # Filesystem persistence [Phase 9+]
@@ -172,12 +172,16 @@ shorts-generator/
 
 ## Implementation Status
 
-| Phase | Name                    | Status       | Key Deliverables                                      |
-| ----- | ----------------------- | ------------ | ----------------------------------------------------- |
-| 0     | Core Infrastructure     | ✅ Complete  | Config, logging, DB migrations, FFmpeg checks         |
-| 1     | Core Pipeline Skeleton  | ✅ Complete  | Ingestion, scene splitting, orchestrator wiring       |
-| 2     | Signal Extraction       | ✅ Complete  | Transcription, face detection, audio analysis         |
-| 3–10  | Scoring through Publish | ⏳ Pending   | Full pipeline stages                                  |
+| Phase | Name                     | Status       | Key Deliverables                                               |
+| ----- | ------------------------ | ------------ | -------------------------------------------------------------- |
+| 0     | Core Infrastructure      | ✅ Complete  | Config, logging, DB migrations, FFmpeg checks                  |
+| 1     | Core Pipeline Skeleton   | ✅ Complete  | Ingestion, scene splitting, orchestrator wiring                |
+| 2     | Signal Extraction        | ✅ Complete  | Transcription, face detection, audio analysis                  |
+| 3     | Scoring Engine           | ✅ Complete  | Rule-based scoring, normalization, ranking                     |
+| 4     | Clip Builder             | ✅ Complete  | Deterministic clip assembly (30–60s), rejection/threshold flow |
+| 5     | Composition Engine       | ⚠️ Partial   | Compositor module + DTO + unit tests (orchestrator wiring TBD) |
+| 6     | Rendering Pipeline       | ⚠️ Partial   | Hook/TTS/subtitle/renderer modules + DTOs + unit tests         |
+| 7–10  | Metadata through Analytics | ⏳ Pending | Remaining downstream pipeline stages                            |
 
 ## Development System
 
