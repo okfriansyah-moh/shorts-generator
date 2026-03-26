@@ -1126,30 +1126,30 @@ shorts_factory/
 
 ### Exit Criteria
 
-- [ ] `CompositeStream` DTO defined with all fields
-- [ ] Split layout produces correct 65/35 vertical split at 1080x1920
-- [ ] Face region correctly zoomed at 1.2× and centered on bounding box
-- [ ] Gameplay region correctly center-cropped to fill top portion
+- [x] `CompositeStream` DTO defined with all fields
+- [x] Split layout produces correct 65/35 vertical split at 1080x1920
+- [x] Face region correctly zoomed at 1.2× and centered on bounding box
+- [x] Gameplay region correctly center-cropped to fill top portion
 - [ ] No letterboxing or black bars in output
-- [ ] Fallback layout activated when face visibility < 0.3
+- [x] Fallback layout activated when face visibility < 0.3
 - [ ] EMA-smoothed bounding boxes produce stable face tracking
-- [ ] Intermediate file uses atomic rename pattern (`.tmp` → final)
+- [x] Intermediate file uses atomic rename pattern (`.tmp` → final)
 - [ ] Integration test: clip with face → split layout composite video
 - [ ] Integration test: clip without face → fallback layout composite video
 
 ### Tasks
 
-- [ ] Define `CompositeStream` DTO in `contracts/composite.py`
-- [ ] Implement `gameplay_crop.py` — center-crop to 9:16 and scale to 1080×1248
-- [ ] Implement `face_crop.py` — bbox-based crop with 1.2× zoom, EMA-smoothed coordinates, scale to 1080×672
-- [ ] Implement `compose.py` — stack gameplay + face on 1080×1920 canvas via FFmpeg filter chain
-- [ ] Implement `fallback.py` — full-gameplay layout with Ken Burns effect
-- [ ] Implement layout mode decision logic (face_visible_ratio threshold check)
+- [x] Define `CompositeStream` DTO in `contracts/compositor.py`
+- [x] Implement `gameplay_crop.py` — center-crop to 9:16 and scale to 1080×1248
+- [x] Implement `face_crop.py` — bbox-based crop with 1.2× zoom, EMA-smoothed coordinates, scale to 1080×672
+- [x] Implement `compose.py` — stack gameplay + face on 1080×1920 canvas via FFmpeg filter chain
+- [x] Implement `fallback.py` — full-gameplay layout with Ken Burns effect
+- [x] Implement layout mode decision logic (face_visible_ratio threshold check)
 - [ ] Implement edge-case handling (face at frame edge, low resolution)
 - [ ] Update `core/orchestrator.py` to wire clip_builder → compositor (per-clip)
-- [ ] Write unit tests for gameplay crop (various source resolutions)
-- [ ] Write unit tests for face crop (center, edge, missing bbox)
-- [ ] Write unit tests for layout mode decision
+- [x] Write unit tests for gameplay crop (various source resolutions)
+- [x] Write unit tests for face crop (center, edge, missing bbox)
+- [x] Write unit tests for layout mode decision
 - [ ] Write integration test: real clip → composite video at 1080x1920
 
 ---
@@ -1268,37 +1268,37 @@ shorts_factory/
 
 ### Exit Criteria
 
-- [ ] `HookResult`, `TTSResult`, `SubtitleResult`, `RenderedClip` DTOs defined
-- [ ] Hook generator uses 30+ templates with deterministic rotation
-- [ ] No template reused within a single batch
-- [ ] TTS produces normalized audio (-14 LUFS)
-- [ ] Subtitle ASS file has word-level timing
+- [x] `HookResult`, `TTSResult`, `SubtitleResult`, `RenderedClip` DTOs defined
+- [x] Hook generator uses 30+ templates with deterministic rotation
+- [x] No template reused within a single batch
+- [x] TTS produces normalized audio (-14 LUFS)
+- [x] Subtitle ASS file has word-level timing
 - [ ] Subtitles positioned in gameplay area (not over face region)
-- [ ] Final MP4 is 1080x1920, H.264, 30fps, AAC
+- [x] Final MP4 is 1080x1920, H.264, 30fps, AAC
 - [ ] Audio mix is 70% gameplay / 30% narration
-- [ ] Rendered duration is within [30, 60] seconds
+- [x] Rendered duration is within [30, 60] seconds
 - [ ] File size < 100MB
-- [ ] Clips outside duration range are rejected
+- [x] Clips outside duration range are rejected
 - [ ] Integration test: full render pipeline produces valid MP4 from composite + TTS + subtitles
 
 ### Tasks
 
-- [ ] Define `HookResult` DTO in `contracts/hook.py`
-- [ ] Define `TTSResult` DTO in `contracts/tts.py`
-- [ ] Define `SubtitleResult` DTO in `contracts/subtitle.py`
-- [ ] Define `RenderedClip` DTO in `contracts/render.py`
-- [ ] Implement `modules/hook_generator/templates.py` with 30+ parameterized patterns
-- [ ] Implement `modules/hook_generator/generate.py` with keyword extraction and template filling
-- [ ] Implement `modules/tts/synthesize.py` with Edge TTS and pyttsx3 fallback
-- [ ] Implement `modules/subtitle/generate.py` with word-level ASS generation
-- [ ] Implement `modules/renderer/render.py` with FFmpeg composition and validation
+- [x] Define `HookResult` DTO in `contracts/hook.py`
+- [x] Define `TTSResult` DTO in `contracts/tts.py`
+- [x] Define `SubtitleResult` DTO in `contracts/subtitle.py`
+- [x] Define `RenderedClip` DTO in `contracts/render.py`
+- [x] Implement `modules/hook_generator/templates.py` with 30+ parameterized patterns
+- [x] Implement `modules/hook_generator/generate.py` with keyword extraction and template filling
+- [x] Implement `modules/tts/synthesize.py` with Edge TTS and pyttsx3 fallback
+- [x] Implement `modules/subtitle/generate.py` with word-level ASS generation
+- [x] Implement `modules/renderer/render.py` with FFmpeg composition and validation
 - [ ] Implement audio mixing (70/30 with ducking)
-- [ ] Implement intermediate file cleanup
+- [x] Implement intermediate file cleanup
 - [ ] Update `core/orchestrator.py` to wire per-clip: hook → TTS → subtitle → render
-- [ ] Write unit tests for hook generation (normal, empty transcript, template rotation)
-- [ ] Write unit tests for TTS (synthesis, normalization, fallback)
-- [ ] Write unit tests for subtitle timing (word alignment, safe area)
-- [ ] Write unit tests for renderer (validation, rejection, re-encode logic)
+- [x] Write unit tests for hook generation (normal, empty transcript, template rotation)
+- [x] Write unit tests for TTS (synthesis, normalization, fallback)
+- [x] Write unit tests for subtitle timing (word alignment, safe area)
+- [x] Write unit tests for renderer (validation, rejection, re-encode logic)
 - [ ] Write integration test: composite video → full render → valid final.mp4
 
 ---
