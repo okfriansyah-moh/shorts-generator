@@ -190,6 +190,32 @@ class DatabaseAdapter:
         ).fetchall()
         return [dict(r) for r in rows]
 
+    def get_clips_by_status(self, statuses: list[str]) -> list[dict[str, Any]]:
+        """Retrieve all clips matching any of the given statuses."""
+        if not statuses:
+            return []
+        placeholders = ",".join("?" * len(statuses))
+        rows = self._conn.execute(
+            f"SELECT * FROM clips WHERE status IN ({placeholders}) ORDER BY scheduled_at ASC, clip_id ASC",
+            tuple(statuses),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+    def update_clip_publish_info(
+        self,
+        clip_id: str,
+        youtube_id: str,
+        published_at: str | None = None,
+    ) -> None:
+        """Persist youtube_id and published_at after a successful upload."""
+        self._conn.execute(
+            """UPDATE clips SET youtube_id = ?, published_at = ?,
+                updated_at = CURRENT_TIMESTAMP
+                WHERE clip_id = ?""",
+            (youtube_id, published_at, clip_id),
+        )
+        self._conn.commit()
+
     # ------------------------------------------------------------------
     # Pipeline run operations
     # ------------------------------------------------------------------

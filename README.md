@@ -119,7 +119,19 @@ shorts-generator/
 │   ├── scene.py                 # SceneSegment, SceneList (Phase 1)
 │   ├── transcript.py            # Word, TranscriptSegment, Transcript (Phase 2)
 │   ├── face.py                  # FaceBBox, SceneFaceData, FaceDetectionResult (Phase 2)
-│   └── audio.py                 # SceneAudioEnergy, AudioEnergyData (Phase 2)
+│   ├── audio.py                 # SceneAudioEnergy, AudioEnergyData (Phase 2)
+│   ├── scoring.py               # ScoredScene, ScoreBreakdown (Phase 3)
+│   ├── clip.py                  # ClipCandidate, ClipBatch (Phase 4)
+│   ├── compositor.py            # CompositorLayout, CompositorResult (Phase 5)
+│   ├── hook.py                  # HookScript, HookScriptList (Phase 6)
+│   ├── tts.py                   # TTSAudio, TTSResult (Phase 6)
+│   ├── subtitle.py              # SubtitleFile, SubtitleResult (Phase 6)
+│   ├── render.py                # RenderResult (Phase 6)
+│   ├── thumbnail.py             # ThumbnailResult (Phase 7)
+│   ├── metadata.py              # MetadataResult (Phase 7)
+│   ├── storage.py               # StorageRecord, StorageBatch (Phase 8)
+│   ├── analytics.py             # ScoreBin, QualityMetrics, PublishReport, PipelineReport (Phase 10)
+│   └── errors.py                # PipelineError base classes
 ├── modules/
 │   ├── ingestion/               # Video validation + SHA-256 fingerprinting [Phase 1]
 │   ├── scene_splitter/          # Scene boundary detection [Phase 1]
@@ -137,7 +149,8 @@ shorts-generator/
 │   ├── metadata/                # Title/description/tags [Phase 7]
 │   ├── storage/                 # Filesystem persistence [Phase 8]
 │   ├── scheduler/               # Publish date assignment [Phase 8]
-│   └── publisher/               # YouTube upload [Phase 9+]
+│   ├── publisher/               # YouTube upload [Phase 9]
+│   └── analytics/               # Observability & reports [Phase 10]
 ├── core/
 │   ├── config.py                # YAML config loader + env overrides
 │   ├── logging.py               # Structured JSON logging
@@ -150,8 +163,9 @@ shorts-generator/
 ├── config/
 │   └── config.yaml              # All default configuration values
 ├── scripts/
-│   └── run_parallel.sh          # Parallel development orchestrator
-├── tests/                       # Unit + integration tests (120 passing)
+│   ├── run_parallel.sh          # Parallel development orchestrator
+│   └── publish_cron.py          # Standalone YouTube publish cron job
+├── tests/                       # Unit + integration tests (517 passing)
 │   ├── unit/                    # Module unit tests
 │   └── integration/             # Pipeline integration tests
 ├── output/                      # Generated clips (gitignored)
@@ -183,7 +197,8 @@ shorts-generator/
 | 6     | Rendering Pipeline       | ⚠️ Partial   | Hook/TTS/subtitle/renderer modules + DTOs + unit tests         |
 | 7     | Metadata & Thumbnail      | ⚠️ Partial | Thumbnail/metadata modules + DTOs + unit tests (orchestrator/integration pending) |
 | 8     | Storage & Scheduling      | ⚠️ Partial | Storage/scheduler modules + DTO + unit tests (DB/orchestrator integration pending) |
-| 9–10  | Publisher through Analytics | ⏳ Pending | Remaining downstream pipeline stages                             |
+| 9     | Publisher                 | ✅ Complete | YouTube upload, OAuth2, retry, visibility transition, cron entry point |
+| 10    | Observability & Analytics | ✅ Complete | Pipeline report, quality metrics, publish status, JSON report output |
 
 ## Development System
 
