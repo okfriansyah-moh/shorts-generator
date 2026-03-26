@@ -191,10 +191,10 @@ class TestScoringDTOCompatibility:
             assert isinstance(s, ScoredScene)
             assert 0.0 <= s.composite_score <= 1.0
             assert 0.0 <= s.keyword_score <= 1.0
-            assert 0.0 <= s.audio_energy <= 1.0
-            assert 0.0 <= s.face_presence <= 1.0
-            assert 0.0 <= s.scene_activity <= 1.0
-            assert 0.0 <= s.sentence_density <= 1.0
+            assert 0.0 <= s.audio_energy_score <= 1.0
+            assert 0.0 <= s.face_presence_score <= 1.0
+            assert 0.0 <= s.scene_activity_score <= 1.0
+            assert 0.0 <= s.sentence_density_score <= 1.0
 
     def test_scene_id_and_video_id_preserved(self) -> None:
         from modules.scoring.score import process
@@ -273,11 +273,11 @@ class TestFaceSignalFlow:
         score_map = {s.scene_id: s for s in result.scenes}
         s0 = score_map[scenes.scenes[0].scene_id]
         s1 = score_map[scenes.scenes[1].scene_id]
-        assert s0.face_presence == pytest.approx(1.0)
-        assert s1.face_presence == pytest.approx(0.0)
+        assert s0.face_presence_score == pytest.approx(1.0)
+        assert s1.face_presence_score == pytest.approx(0.0)
 
     def test_missing_face_data_defaults_to_zero(self) -> None:
-        """FaceDetectionResult with empty scene_data → face_presence = 0.0."""
+        """FaceDetectionResult with empty scene_data → face_presence_score = 0.0."""
         from modules.scoring.score import process
 
         scenes = _make_scene_list(2)
@@ -293,7 +293,7 @@ class TestFaceSignalFlow:
         result = process(scenes, transcript, face, audio, _default_config())
 
         for s in result.scenes:
-            assert s.face_presence == pytest.approx(0.0)
+            assert s.face_presence_score == pytest.approx(0.0)
 
 
 # ---------------------------------------------------------------------------
@@ -317,7 +317,7 @@ class TestAudioSignalFlow:
         s0 = score_map[scenes.scenes[0].scene_id]
         s2 = score_map[scenes.scenes[2].scene_id]
         # Scene 2 has max audio energy → higher audio_energy score than scene 0
-        assert s2.audio_energy > s0.audio_energy
+        assert s2.audio_energy_score > s0.audio_energy_score
 
     def test_none_audio_data_defaults_to_zero(self) -> None:
         from modules.scoring.score import process
@@ -329,7 +329,7 @@ class TestAudioSignalFlow:
         result = process(scenes, transcript, face, None, _default_config())
 
         for s in result.scenes:
-            assert s.audio_energy == pytest.approx(0.0)
+            assert s.audio_energy_score == pytest.approx(0.0)
 
 
 # ---------------------------------------------------------------------------

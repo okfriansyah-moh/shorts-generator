@@ -33,10 +33,10 @@ def _make_scene(
     end_ms: int,
     composite_score: float = 0.5,
     keyword_score: float = 0.5,
-    audio_energy: float = 0.5,
-    face_presence: float = 0.5,
-    scene_activity: float = 0.5,
-    sentence_density: float = 0.5,
+    audio_energy_score: float = 0.5,
+    face_presence_score: float = 0.5,
+    scene_activity_score: float = 0.5,
+    sentence_density_score: float = 0.5,
 ) -> ScoredScene:
     """Create a ScoredScene with deterministic defaults."""
     duration = (end_ms - start_ms) / 1000.0
@@ -47,11 +47,12 @@ def _make_scene(
         end_time=end_ms,
         duration=duration,
         keyword_score=keyword_score,
-        audio_energy=audio_energy,
-        face_presence=face_presence,
-        scene_activity=scene_activity,
-        sentence_density=sentence_density,
+        audio_energy_score=audio_energy_score,
+        face_presence_score=face_presence_score,
+        scene_activity_score=scene_activity_score,
+        sentence_density_score=sentence_density_score,
         composite_score=composite_score,
+        rank=0,
     )
 
 
@@ -80,7 +81,14 @@ def _make_scored_scene_list(
 ) -> ScoredSceneList:
     """Wrap scenes in a ScoredSceneList sorted by composite DESC, start ASC."""
     ranked = sorted(scenes, key=lambda s: (-s.composite_score, s.start_time))
-    return ScoredSceneList(video_id=video_id, scenes=tuple(ranked))
+    composites = [s.composite_score for s in ranked]
+    return ScoredSceneList(
+        video_id=video_id,
+        scenes=tuple(ranked),
+        min_score=min(composites),
+        max_score=max(composites),
+        avg_score=sum(composites) / len(composites),
+    )
 
 
 def _default_config(**overrides: object) -> dict:

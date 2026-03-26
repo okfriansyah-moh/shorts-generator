@@ -943,30 +943,30 @@ shorts_factory/
 
 ### Exit Criteria
 
-- [ ] `ScoredSceneList` and `ScoredScene` DTOs defined with all per-factor and composite scores
-- [ ] All five scoring factors implemented and tested independently
-- [ ] Weights loaded from `config.yaml`, not hardcoded
-- [ ] Missing signals produce 0 score for affected factor, not a crash
-- [ ] Composite score normalized to [0, 1] range
-- [ ] Ranking is deterministic and stable (consistent ordering for equal scores)
-- [ ] Identical inputs produce identical scores on every run
-- [ ] Integration test: scored scene list from real video matches expected ranking
+- [x] `ScoredSceneList` and `ScoredScene` DTOs defined with all per-factor and composite scores
+- [x] All five scoring factors implemented and tested independently
+- [x] Weights loaded from `config.yaml`, not hardcoded
+- [x] Missing signals produce 0 score for affected factor, not a crash
+- [x] Composite score normalized to [0, 1] range
+- [x] Ranking is deterministic and stable (consistent ordering for equal scores)
+- [x] Identical inputs produce identical scores on every run
+- [x] Integration test: scored scene list from real video matches expected ranking
 
 ### Tasks
 
-- [ ] Define `ScoredSceneList` and `ScoredScene` DTOs in `contracts/scoring.py`
-- [ ] Implement keyword scoring with configurable keyword list
-- [ ] Implement audio energy score passthrough from analysis results
-- [ ] Implement face presence score passthrough from detection results
-- [ ] Implement scene activity scoring via frame differencing
-- [ ] Implement sentence density scoring with optimal range calculation
-- [ ] Implement weighted composite computation with configurable weights
-- [ ] Implement min-max normalization across all scenes
-- [ ] Implement deterministic ranking with stable sort
-- [ ] Write unit tests for each factor independently (known inputs → expected scores)
-- [ ] Write unit test for composite computation (verify weighting and normalization)
-- [ ] Write unit test for degenerate case (all identical scores → temporal distribution fallback)
-- [ ] Write integration test: transcription + face + audio → scoring → ranked scene list
+- [x] Define `ScoredSceneList` and `ScoredScene` DTOs in `contracts/scoring.py`
+- [x] Implement keyword scoring with configurable keyword list
+- [x] Implement audio energy score passthrough from analysis results
+- [x] Implement face presence score passthrough from detection results
+- [x] Implement scene activity scoring via frame differencing
+- [x] Implement sentence density scoring with optimal range calculation
+- [x] Implement weighted composite computation with configurable weights
+- [x] Implement min-max normalization across all scenes
+- [x] Implement deterministic ranking with stable sort
+- [x] Write unit tests for each factor independently (known inputs → expected scores)
+- [x] Write unit test for composite computation (verify weighting and normalization)
+- [x] Write unit test for degenerate case (all identical scores → temporal distribution fallback)
+- [x] Write integration test: transcription + face + audio → scoring → ranked scene list
 
 ---
 
@@ -1035,31 +1035,31 @@ shorts_factory/
 
 ### Exit Criteria
 
-- [ ] `ClipList` and `ClipDefinition` DTOs defined with all fields
-- [ ] No clip shorter than 30 seconds in output
-- [ ] No clip longer than 60 seconds in output
-- [ ] All scenes within a clip are temporally contiguous
-- [ ] Highest-scored scenes are selected first
-- [ ] Each scene belongs to at most one clip
-- [ ] Clip IDs are deterministic
-- [ ] Rejection criteria correctly discard low-quality clips
-- [ ] Threshold lowering produces additional clips when initial pool is too small
-- [ ] Integration test: 1-hour video → 10–15 clips, all within [30, 60] seconds
+- [x] `ClipList` and `ClipDefinition` DTOs defined with all fields
+- [x] No clip shorter than 30 seconds in output
+- [x] No clip longer than 60 seconds in output
+- [x] All scenes within a clip are temporally contiguous
+- [x] Highest-scored scenes are selected first
+- [x] Each scene belongs to at most one clip
+- [x] Clip IDs are deterministic
+- [x] Rejection criteria correctly discard low-quality clips
+- [x] Threshold lowering produces additional clips when initial pool is too small
+- [x] Integration test: 1-hour video → 10–15 clips, all within [30, 60] seconds
 
 ### Tasks
 
-- [ ] Define `ClipList` and `ClipDefinition` DTOs in `contracts/clip.py`
-- [ ] Implement greedy scene merging algorithm (nucleus expansion)
-- [ ] Implement duration enforcement (floor 30s, ceiling 60s)
-- [ ] Implement contiguity check (no gaps between merged scenes)
-- [ ] Implement rejection criteria (5 rejection rules)
-- [ ] Implement threshold lowering fallback for insufficient clips
-- [ ] Implement deterministic `clip_id` computation
-- [ ] Update `core/orchestrator.py` to wire scoring → clip_builder
-- [ ] Write unit tests for merging (normal case, edge cases, all long scenes, all short scenes)
-- [ ] Write unit test for rejection (each criterion independently)
-- [ ] Write unit test for threshold lowering behavior
-- [ ] Write integration test: scored scene list → clip builder → valid ClipList
+- [x] Define `ClipList` and `ClipDefinition` DTOs in `contracts/clip.py`
+- [x] Implement greedy scene merging algorithm (nucleus expansion)
+- [x] Implement duration enforcement (floor 30s, ceiling 60s)
+- [x] Implement contiguity check (no gaps between merged scenes)
+- [x] Implement rejection criteria (5 rejection rules)
+- [x] Implement threshold lowering fallback for insufficient clips
+- [x] Implement deterministic `clip_id` computation
+- [x] Update `core/orchestrator.py` to wire scoring → clip_builder
+- [x] Write unit tests for merging (normal case, edge cases, all long scenes, all short scenes)
+- [x] Write unit test for rejection (each criterion independently)
+- [x] Write unit test for threshold lowering behavior
+- [x] Write integration test: scored scene list → clip builder → valid ClipList
 
 ---
 
