@@ -21,9 +21,32 @@ logger = logging.getLogger(__name__)
 
 
 def _parse_publish_time(time_str: str) -> tuple[int, int]:
-    """Parse a HH:MM time string into (hour, minute) tuple."""
+    """Parse a HH:MM time string into (hour, minute) tuple.
+
+    Raises:
+        ValueError: If the string is not in HH:MM 24-hour format or is out of range.
+    """
+    if not isinstance(time_str, str):
+        raise ValueError(
+            f"publish_time_utc must be a string in 'HH:MM' 24-hour UTC format, "
+            f"got {type(time_str).__name__}"
+        )
     parts = time_str.split(":")
-    return int(parts[0]), int(parts[1])
+    if len(parts) != 2:
+        raise ValueError(
+            f"publish_time_utc must be in 'HH:MM' format, got {time_str!r}"
+        )
+    try:
+        hour, minute = int(parts[0]), int(parts[1])
+    except ValueError:
+        raise ValueError(
+            f"publish_time_utc contains non-numeric values: {time_str!r}"
+        )
+    if not (0 <= hour <= 23 and 0 <= minute <= 59):
+        raise ValueError(
+            f"publish_time_utc out of range (hour 0-23, minute 0-59): {time_str!r}"
+        )
+    return hour, minute
 
 
 def _find_next_available_date(
@@ -73,6 +96,8 @@ def process(
     records: list[StorageRecord],
     existing_scheduled: list[StorageRecord],
     config: dict,
+    *,
+    reference_time: datetime | None = None,
 ) -> list[StorageRecord]:
     """Assign publish dates to queued StorageRecords.
 
@@ -85,6 +110,10 @@ def process(
         records: List of StorageRecords with status 'queued' to schedule.
         existing_scheduled: Already-scheduled records to avoid date conflicts.
         config: Pipeline configuration dict.
+        reference_time: Optional explicit UTC datetime for determinism.
+            When provided, scheduling starts from this timestamp instead
+            of wall-clock time. The orchestrator should pass the pipeline
+            run's started_at timestamp here.
 
     Returns:
         List of updated StorageRecords with status 'scheduled' and
@@ -122,7 +151,9 @@ def process(
         return list(records)
 
     # Determine start date: tomorrow (UTC)
-    now = datetime.now(timezone.utc)
+    # Accept an explicit reference_time for determinism; fall back to
+    # wall-clock only when the caller (orchestrator) does not provide one.
+    now = reference_time if reference_time is not None else datetime.now(timezone.utc)
     start_date = (now + timedelta(days=1)).replace(
         hour=0, minute=0, second=0, microsecond=0
     )

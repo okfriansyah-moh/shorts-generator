@@ -209,7 +209,18 @@ def _build_tags(
         if tag not in sorted_tags:
             sorted_tags.append(tag)
 
-    return tuple(sorted(sorted_tags[:max_count]))
+    sorted_tags = sorted(sorted_tags[:max_count])
+
+    # Enforce total character budget (contract: total chars <= 500).
+    max_total_chars: int = meta_cfg.get("tag_total_chars_max", 500)
+    total_chars = sum(len(t) for t in sorted_tags)
+    while total_chars > max_total_chars and sorted_tags:
+        # Drop the longest tag to get under budget.
+        longest_idx = max(range(len(sorted_tags)), key=lambda i: len(sorted_tags[i]))
+        removed = sorted_tags.pop(longest_idx)
+        total_chars -= len(removed)
+
+    return tuple(sorted_tags)
 
 
 def process(

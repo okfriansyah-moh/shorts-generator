@@ -14,7 +14,7 @@ class MetadataResult:
 
     Fields:
         clip_id: Reference to parent clip. 16 lowercase hex chars.
-        title: Video title. 40-60 characters. Contains 1-2 emojis.
+        title: Video title. 40-60 characters.
         description: Video description. 150-300 characters. Contains hashtags.
         tags: Video tags. 10-15 tags. Total characters <= 500.
         category: YouTube category. One of: "Gaming", "Entertainment".

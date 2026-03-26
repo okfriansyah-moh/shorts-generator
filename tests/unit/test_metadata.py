@@ -323,6 +323,18 @@ class TestBuildTags:
         tags = _build_tags(hook, transcript, config)
         assert len(tags) >= 10
 
+    def test_total_chars_within_budget(self):
+        """Tags total character count must not exceed the configured budget."""
+        # Generate many long keywords to push total chars over 500.
+        long_keywords = tuple(f"verylongkeyword{i:03d}" for i in range(20))
+        hook = _make_hook(keywords=long_keywords)
+        transcript = _make_transcript(with_words=False)
+        config = _sample_config()
+        config["metadata"]["tag_total_chars_max"] = 100  # tight budget
+        tags = _build_tags(hook, transcript, config)
+        total = sum(len(t) for t in tags)
+        assert total <= 100
+
 
 # ---------------------------------------------------------------------------
 # Tests — process
@@ -345,13 +357,13 @@ class TestProcess:
         result = process(hook, transcript, clip, config)
         assert result.clip_id == "test1234test1234"
 
-    def test_video_id_preserved(self):
-        hook = _make_hook(video_id="abcdef1234567890")
+    def test_category_default(self):
+        hook = _make_hook()
         transcript = _make_transcript()
-        clip = _make_clip(clip_id="custom12345678", video_id="abcdef1234567890")
+        clip = _make_clip()
         config = _sample_config()
         result = process(hook, transcript, clip, config)
-        assert result.clip_id == "custom12345678"
+        assert result.category == "Gaming"
 
     def test_title_within_bounds(self):
         hook = _make_hook()

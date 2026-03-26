@@ -1509,7 +1509,7 @@ shorts_factory/
 ### Tasks
 
 - [x] Define `StorageRecord` DTO in `contracts/storage.py`
-- [x] Implement `modules/storage/store.py` with file verification and atomic DB writes
+- [x] Implement `modules/storage/store.py` with file verification and atomic filesystem writes (DB writes handled by orchestrator/DB adapter)
 - [x] Implement `modules/scheduler/schedule.py` with daily slot assignment
 - [x] Implement orphaned file cleanup on pipeline startup
 - [ ] Implement pipeline run tracking (start, progress, completion in `pipeline_runs`)
