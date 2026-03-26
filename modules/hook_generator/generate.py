@@ -10,7 +10,6 @@ from __future__ import annotations
 import hashlib
 import logging
 import re
-from typing import Optional
 
 from contracts.clip import ClipDefinition
 from contracts.hook import HookResult
@@ -100,23 +99,21 @@ def process(
     clip: ClipDefinition,
     transcript: Transcript,
     config: dict,
-    used_template_ids: Optional[set[int]] = None,
-) -> HookResult:
+    used_template_ids: frozenset[int] = frozenset(),
+) -> tuple[HookResult, frozenset[int]]:
     """Generate hook and story text for a clip.
 
     Args:
         clip: The clip definition with time range and clip_id.
         transcript: Full video transcript with word-level timestamps.
         config: Configuration dict (hook_generator section used).
-        used_template_ids: Set of already-used template indices in this batch.
-                          Mutated in-place to track usage. Pass None to disable
-                          batch-level dedup.
+        used_template_ids: Immutable set of already-used template indices
+                          in this batch. The updated set is returned.
 
     Returns:
-        HookResult with generated hook and story text.
+        Tuple of (HookResult, updated_used_template_ids).
     """
-    if used_template_ids is None:
-        used_template_ids = set()
+    working_used = set(used_template_ids)
 
     hook_config = config.get("hook_generator", {})
     max_hook_words = hook_config.get("max_hook_words", 15)
@@ -141,9 +138,9 @@ def process(
     for offset in range(len(pool)):
         candidate = (base_idx + offset) % len(pool)
         template_key = candidate if pool_name == "hook" else candidate + len(HOOK_TEMPLATES)
-        if template_key not in used_template_ids:
+        if template_key not in working_used:
             selected_idx = candidate
-            used_template_ids.add(template_key)
+            working_used.add(template_key)
             break
     else:
         # All templates used in this batch — reset and reuse
@@ -151,10 +148,10 @@ def process(
             "Template pool exhausted, reusing templates",
             extra={"clip_id": clip.clip_id, "pool": pool_name},
         )
-        used_template_ids.clear()
+        working_used = set()
         selected_idx = base_idx
         template_key = selected_idx if pool_name == "hook" else selected_idx + len(HOOK_TEMPLATES)
-        used_template_ids.add(template_key)
+        working_used.add(template_key)
 
     hook_template, story_template = pool[selected_idx]
     template_id = f"{pool_name}_{selected_idx}"
@@ -187,4 +184,4 @@ def process(
         story_text=story_text,
         template_id=template_id,
         keyword_source=tuple(keywords),
-    )
+    ), frozenset(working_used)

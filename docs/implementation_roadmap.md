@@ -1139,7 +1139,7 @@ shorts_factory/
 
 ### Tasks
 
-- [x] Define `CompositeStream` DTO in `contracts/composite.py`
+- [x] Define `CompositeStream` DTO in `contracts/compositor.py`
 - [x] Implement `gameplay_crop.py` — center-crop to 9:16 and scale to 1080×1248
 - [x] Implement `face_crop.py` — bbox-based crop with 1.2× zoom, EMA-smoothed coordinates, scale to 1080×672
 - [x] Implement `compose.py` — stack gameplay + face on 1080×1920 canvas via FFmpeg filter chain

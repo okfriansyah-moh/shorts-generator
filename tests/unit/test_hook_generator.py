@@ -123,16 +123,17 @@ class TestHookGeneration:
     def test_returns_hook_result(self) -> None:
         clip = _make_clip()
         transcript = _make_transcript()
-        result = process(clip, transcript, _make_config())
+        result, used = process(clip, transcript, _make_config())
 
         assert isinstance(result, HookResult)
         assert result.clip_id == clip.clip_id
         assert result.video_id == clip.video_id
+        assert isinstance(used, frozenset)
 
     def test_hook_within_word_limit(self) -> None:
         clip = _make_clip()
         transcript = _make_transcript()
-        result = process(clip, transcript, _make_config())
+        result, _ = process(clip, transcript, _make_config())
 
         hook_words = len(result.hook_text.split())
         story_words = len(result.story_text.split())
@@ -142,7 +143,7 @@ class TestHookGeneration:
     def test_non_empty_texts(self) -> None:
         clip = _make_clip()
         transcript = _make_transcript()
-        result = process(clip, transcript, _make_config())
+        result, _ = process(clip, transcript, _make_config())
 
         assert len(result.hook_text) > 0
         assert len(result.story_text) > 0
@@ -151,7 +152,7 @@ class TestHookGeneration:
     def test_keywords_extracted(self) -> None:
         clip = _make_clip()
         transcript = _make_transcript()
-        result = process(clip, transcript, _make_config())
+        result, _ = process(clip, transcript, _make_config())
 
         # "kill", "shot", "headshot", "enemy" are engagement keywords
         assert len(result.keyword_source) > 0
@@ -159,7 +160,7 @@ class TestHookGeneration:
     def test_empty_transcript_uses_fallback(self) -> None:
         clip = _make_clip()
         transcript = _make_empty_transcript()
-        result = process(clip, transcript, _make_config())
+        result, _ = process(clip, transcript, _make_config())
 
         assert isinstance(result, HookResult)
         assert result.template_id.startswith("fallback_")
@@ -170,8 +171,8 @@ class TestHookGeneration:
         transcript = _make_transcript()
         config = _make_config()
 
-        result1 = process(clip, transcript, config)
-        result2 = process(clip, transcript, config)
+        result1, _ = process(clip, transcript, config)
+        result2, _ = process(clip, transcript, config)
 
         assert result1.hook_text == result2.hook_text
         assert result1.story_text == result2.story_text
@@ -184,7 +185,7 @@ class TestHookGeneration:
         results = []
         for i in range(5):
             clip = _make_clip(clip_id=f"clip{i:015d}a", clip_index=i)
-            result = process(clip, transcript, config)
+            result, _ = process(clip, transcript, config)
             results.append(result.template_id)
 
         # At least some templates should differ across clips
@@ -197,12 +198,12 @@ class TestBatchTemplateDedup:
     def test_no_template_reuse_in_batch(self) -> None:
         transcript = _make_transcript()
         config = _make_config()
-        used = set()
+        used: frozenset[int] = frozenset()
 
         template_ids = []
         for i in range(min(10, len(HOOK_TEMPLATES))):
             clip = _make_clip(clip_id=f"batchclip{i:06d}a", clip_index=i)
-            result = process(clip, transcript, config, used_template_ids=used)
+            result, used = process(clip, transcript, config, used_template_ids=used)
             template_ids.append(result.template_id)
 
         # All templates should be unique within the batch
@@ -212,14 +213,14 @@ class TestBatchTemplateDedup:
         """When all templates are used, pool resets and continues."""
         transcript = _make_transcript()
         config = _make_config()
-        used = set()
+        used: frozenset[int] = frozenset()
 
         # Generate more hooks than templates available
         total = len(HOOK_TEMPLATES) + 3
         results = []
         for i in range(total):
             clip = _make_clip(clip_id=f"exhaust{i:09d}ab", clip_index=i)
-            result = process(clip, transcript, config, used_template_ids=used)
+            result, used = process(clip, transcript, config, used_template_ids=used)
             results.append(result)
 
         # Should not crash and all results should be valid
