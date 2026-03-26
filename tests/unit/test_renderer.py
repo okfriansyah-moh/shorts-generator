@@ -37,6 +37,8 @@ def _make_composite(
         resolution=(1080, 1920),
         layout="face_gameplay_split",
         duration_seconds=duration,
+        has_face=True,
+        source_fps=30.0,
     )
 
 
