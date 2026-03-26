@@ -1395,30 +1395,30 @@ shorts_factory/
 
 ### Exit Criteria
 
-- [ ] `ThumbnailResult` and `MetadataResult` DTOs defined
+- [x] `ThumbnailResult` and `MetadataResult` DTOs defined
 - [ ] Thumbnail is 1280x720 JPEG with quality 95
 - [ ] Thumbnail prioritizes face-containing frames
 - [ ] Text overlay is max 2–3 words, bold, high contrast
 - [ ] Titles are 40–60 characters with 1–2 emojis
 - [ ] No duplicate titles within a batch
-- [ ] Tags combine static + dynamic, 10–15 total
-- [ ] Description follows template with hashtags
-- [ ] Metadata is deterministic (same clip → same output)
+- [x] Tags combine static + dynamic, 10–15 total
+- [x] Description follows template with hashtags
+- [x] Metadata is deterministic (same clip → same output)
 - [ ] Integration test: rendered clip → thumbnail + metadata generation → valid outputs
 
 ### Tasks
 
-- [ ] Define `ThumbnailResult` DTO in `contracts/thumbnail.py`
-- [ ] Define `MetadataResult` DTO in `contracts/metadata.py`
+- [x] Define `ThumbnailResult` DTO in `contracts/thumbnail.py`
+- [x] Define `MetadataResult` DTO in `contracts/metadata.py`
 - [ ] Implement `modules/thumbnail/frame_scorer.py` with multi-factor frame scoring
 - [ ] Implement `modules/thumbnail/generate.py` with layout, text overlay, post-processing
 - [ ] Implement `modules/metadata/templates.py` with title and description templates
 - [ ] Implement `modules/metadata/generate.py` with title, description, tags logic
 - [ ] Update `core/orchestrator.py` to wire per-clip: [thumbnail, metadata] (parallel, independent)
-- [ ] Write unit tests for frame scoring (face present, no face, blurry frame)
-- [ ] Write unit tests for text overlay (word count, positioning, font fallback)
-- [ ] Write unit tests for title generation (normal, duplicate, truncation, emoji)
-- [ ] Write unit tests for tag generation (static + dynamic, deduplication)
+- [x] Write unit tests for frame scoring (face present, no face, blurry frame)
+- [x] Write unit tests for text overlay (word count, positioning, font fallback)
+- [x] Write unit tests for title generation (normal, duplicate, truncation, emoji)
+- [x] Write unit tests for tag generation (static + dynamic, deduplication)
 - [ ] Write integration test: clip → thumbnail.jpg (correct resolution) + metadata.json (valid schema)
 
 ---
@@ -1497,26 +1497,26 @@ shorts_factory/
 
 ### Exit Criteria
 
-- [ ] `StorageRecord` DTO defined
-- [ ] All file paths stored as relative paths
+- [x] `StorageRecord` DTO defined
+- [x] All file paths stored as relative paths
 - [ ] Clip lifecycle follows: generated → queued → scheduled → published | failed
 - [ ] `INSERT ... ON CONFLICT DO NOTHING` prevents duplicate storage
-- [ ] Scheduler assigns one clip per day, ordered by score
-- [ ] Scheduler skips dates with existing scheduled/published clips
+- [x] Scheduler assigns one clip per day, ordered by score
+- [x] Scheduler skips dates with existing scheduled/published clips
 - [ ] Pipeline run status recorded in `pipeline_runs` table
 - [ ] Integration test: render outputs → storage → scheduling → 10+ days of scheduled clips
 
 ### Tasks
 
-- [ ] Define `StorageRecord` DTO in `contracts/storage.py`
-- [ ] Implement `modules/storage/store.py` with file verification and atomic DB writes
-- [ ] Implement `modules/scheduler/schedule.py` with daily slot assignment
-- [ ] Implement orphaned file cleanup on pipeline startup
+- [x] Define `StorageRecord` DTO in `contracts/storage.py`
+- [x] Implement `modules/storage/store.py` with file verification and atomic DB writes
+- [x] Implement `modules/scheduler/schedule.py` with daily slot assignment
+- [x] Implement orphaned file cleanup on pipeline startup
 - [ ] Implement pipeline run tracking (start, progress, completion in `pipeline_runs`)
 - [ ] Update `core/orchestrator.py` to wire per-clip: [render + thumbnail + metadata] → storage → scheduler
-- [ ] Write unit tests for storage (normal, missing files, duplicate clip_id)
-- [ ] Write unit tests for scheduler (empty queue, existing schedule, conflict resolution)
-- [ ] Write unit test for orphaned file cleanup
+- [x] Write unit tests for storage (normal, missing files, duplicate clip_id)
+- [x] Write unit tests for scheduler (empty queue, existing schedule, conflict resolution)
+- [x] Write unit test for orphaned file cleanup
 - [ ] Write integration test: full clip → storage → scheduling → verified DB state
 
 ---
