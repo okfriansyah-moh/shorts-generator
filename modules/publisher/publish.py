@@ -255,8 +255,12 @@ def publish_single(
                     "status": "quota_exceeded",
                 },
             )
-            # Don't retry on quota — wait for next cron cycle
-            break
+            # Don't retry on quota — let orchestrator keep clip in a retryable state
+            return replace(
+                record,
+                retry_count=attempt + 1,
+                error_message=last_error,
+            )
 
         logger.warning(
             "Upload attempt failed",
@@ -289,7 +293,7 @@ def publish_single(
         record,
         status="failed",
         error_message=last_error,
-        retry_count=max_retries,
+        retry_count=attempt + 1,
     )
 
     logger.error(

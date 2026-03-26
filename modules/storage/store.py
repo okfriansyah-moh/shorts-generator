@@ -203,8 +203,7 @@ def process(
 
     created_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    # Compute composite score from the rendered clip's parent data
-    # The orchestrator passes this via config or we derive from clip metadata
+    # Composite score is provided by the caller (e.g., orchestrator scoring stage)
     record = StorageRecord(
         clip_id=clip_id,
         video_id=video_id,
