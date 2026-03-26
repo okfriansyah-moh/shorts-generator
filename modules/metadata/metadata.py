@@ -235,12 +235,12 @@ def process(
     title = _build_title(hook_result, config)
     description = _build_description(hook_result, transcript, config)
     tags = _build_tags(hook_result, transcript, config)
+    category = config.get("metadata", {}).get("category", "Gaming")
 
     logger.info(
         "Metadata generated",
         extra={
             "clip_id": clip.clip_id,
-            "video_id": clip.video_id,
             "stage": "metadata",
             "status": "ok",
             "title_len": len(title),
@@ -251,8 +251,8 @@ def process(
 
     return MetadataResult(
         clip_id=clip.clip_id,
-        video_id=clip.video_id,
         title=title,
         description=description,
         tags=tags,
+        category=category,
     )

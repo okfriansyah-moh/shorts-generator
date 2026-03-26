@@ -34,15 +34,29 @@ def _run_ffmpeg(args: list[str], timeout: int = 60) -> subprocess.CompletedProce
 
 
 def _select_timestamp(clip: ClipDefinition) -> float:
-    """Return thumbnail frame timestamp at 15% into clip (hook moment).
+    """Return thumbnail frame timestamp (seconds) at 15% into clip (hook moment).
 
     Deterministic: same clip always produces the same timestamp.
-    Rationale: the first 30% of a clip contains the hook moment; 15% is
-    the midpoint of that zone giving the best chance of an action frame.
     """
     start_s = clip.start_time / 1000.0
     duration_s = (clip.end_time - clip.start_time) / 1000.0
     return start_s + duration_s * 0.15
+
+
+def _select_timestamp_ms(clip: ClipDefinition) -> int:
+    """Return thumbnail frame timestamp in milliseconds at 15% into clip."""
+    duration_ms = clip.end_time - clip.start_time
+    return clip.start_time + int(duration_ms * 0.15)
+
+
+def _has_face(face_result: FaceDetectionResult | None) -> bool:
+    """Return True if any face was detected in the clip."""
+    if face_result is None:
+        return False
+    return any(
+        sd.clip_id == sd.clip_id and len(sd.bboxes) > 0
+        for sd in face_result.scenes
+    )
 
 
 def _build_text_overlay(hook_result: HookResult, max_words: int) -> str:
@@ -134,11 +148,12 @@ def process(
         )
         return ThumbnailResult(
             clip_id=clip.clip_id,
-            video_id=clip.video_id,
-            thumbnail_path=output_path,
-            width=1280,
-            height=720,
+            image_path=output_path,
+            resolution=(1280, 720),
             text_overlay=text_overlay,
+            face_visible=_has_face(face_result),
+            frame_timestamp_ms=_select_timestamp_ms(clip),
+            frame_score=0.0,
         )
 
     timestamp = _select_timestamp(clip)
@@ -181,9 +196,10 @@ def process(
     )
     return ThumbnailResult(
         clip_id=clip.clip_id,
-        video_id=clip.video_id,
-        thumbnail_path=output_path,
-        width=1280,
-        height=720,
+        image_path=output_path,
+        resolution=(1280, 720),
         text_overlay=text_overlay,
+        face_visible=_has_face(face_result),
+        frame_timestamp_ms=_select_timestamp_ms(clip),
+        frame_score=0.0,
     )
