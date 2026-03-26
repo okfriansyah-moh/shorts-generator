@@ -14,9 +14,9 @@ class ThumbnailResult:
 
     Fields:
         clip_id: Reference to parent clip. 16 lowercase hex chars.
-        image_path: Path to thumbnail JPEG. Relative path.
+        image_path: Absolute filesystem path to thumbnail JPEG.
         resolution: Thumbnail resolution. Must be (1280, 720).
-        text_overlay: Text rendered on the thumbnail. 2-3 words max. Non-empty.
+        text_overlay: Text rendered on the thumbnail. Up to max_text_words (default 3). Non-empty.
         face_visible: Whether a face is present in the thumbnail.
         frame_timestamp_ms: Source frame timestamp used. >= clip start_time.
         frame_score: Frame selection score. >= 0.0.

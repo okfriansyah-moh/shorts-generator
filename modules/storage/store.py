@@ -20,7 +20,9 @@ from datetime import datetime, timezone
 from contracts.metadata import MetadataResult
 from contracts.render import RenderedClip
 from contracts.storage import StorageRecord
+from contracts.subtitle import SubtitleResult
 from contracts.thumbnail import ThumbnailResult
+from contracts.tts import TTSResult
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +93,9 @@ def process(
     thumbnail_result: ThumbnailResult,
     metadata_result: MetadataResult,
     config: dict,
+    *,
+    subtitle_result: SubtitleResult | None = None,
+    tts_result: TTSResult | None = None,
 ) -> StorageRecord:
     """Store all pipeline artifacts for a single clip.
 
@@ -102,6 +107,8 @@ def process(
         thumbnail_result: The generated thumbnail.
         metadata_result: The generated metadata.
         config: Pipeline configuration dict.
+        subtitle_result: Optional SubtitleResult DTO for resolving subtitle paths.
+        tts_result: Optional TTSResult DTO for resolving narration paths.
 
     Returns:
         StorageRecord with status 'queued' and all paths populated.
@@ -157,13 +164,24 @@ def process(
         shutil.copy2(thumbnail_abs, thumbnail_dest)
     thumbnail_path = thumbnail_dest
 
-    # Resolve subtitle and narration paths from config conventions
-    narration_path = os.path.join(
-        output_dir, video_id, "tts", f"{clip_id}.wav"
-    )
-    subtitles_path = os.path.join(
-        output_dir, video_id, "subtitles", f"{clip_id}.ass"
-    )
+    # Resolve subtitle and narration paths from upstream DTOs when
+    # available; fall back to convention-based lookup.
+    if subtitle_result is not None and os.path.isfile(subtitle_result.ass_path):
+        subtitles_path = subtitle_result.ass_path
+    else:
+        subtitles_path = os.path.join(
+            output_dir, video_id, "clips", clip_id, "subtitles.ass"
+        )
+
+    if tts_result is not None and os.path.isfile(tts_result.audio_path):
+        narration_path = tts_result.audio_path
+    else:
+        narration_path = os.path.join(
+            output_dir, video_id, "tts_cache"
+        )
+        # Convention fallback cannot reliably resolve cache-key filenames,
+        # so treat as missing when no DTO is provided.
+        narration_path = ""
 
     # Build file_paths dict with relative paths
     file_paths: dict[str, str] = {
@@ -171,10 +189,10 @@ def process(
         "thumbnail": _make_relative_path(thumbnail_path, output_dir),
         "metadata": _make_relative_path(metadata_path, output_dir),
         "subtitles": _make_relative_path(subtitles_path, output_dir)
-        if os.path.isfile(subtitles_path)
+        if subtitles_path and os.path.isfile(subtitles_path)
         else "",
         "narration": _make_relative_path(narration_path, output_dir)
-        if os.path.isfile(narration_path)
+        if narration_path and os.path.isfile(narration_path)
         else "",
     }
 

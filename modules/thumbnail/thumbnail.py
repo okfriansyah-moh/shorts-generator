@@ -115,7 +115,7 @@ def process(
         hook_result: Hook text for overlay. Up to max_text_words used.
         ingestion_result: Source video metadata (path used for frame extraction).
         config: Full pipeline config dict.
-        output_dir: Base output directory (e.g. ``output/{video_id}``).
+        output_dir: Root output directory (e.g. ``output/``).
 
     Returns:
         ThumbnailResult DTO with path to the generated thumbnail.
