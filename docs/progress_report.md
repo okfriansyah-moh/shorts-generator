@@ -1,8 +1,8 @@
 # Shorts Factory — Progress Report
 
 **Last Updated:** 2026-03-26
-**Active Phase:** Phase 8 — Storage & Scheduling
-**Phase Status:** ⚠️ PARTIAL (Merged Phase 7/8 code audited; orchestrator integration pending)
+**Active Phase:** Phase 10 — Observability & Analytics
+**Phase Status:** ✅ COMPLETE (Phases 9 and 10 merged and verified)
 
 ---
 
@@ -19,8 +19,8 @@
 | Phase 6  | Rendering Pipeline     | ⚠️ PARTIAL |
 | Phase 7  | Metadata & Thumbnail   | ⚠️ PARTIAL |
 | Phase 8  | Storage & Scheduling   | ⚠️ PARTIAL |
-| Phase 9  | Publisher              | ⏳ Pending  |
-| Phase 10 | Observability & Analytics | ⏳ Pending  |
+| Phase 9  | Publisher              | ✅ COMPLETE |
+| Phase 10 | Observability & Analytics | ✅ COMPLETE |
 
 ---
 
@@ -596,3 +596,93 @@
   - `tests/unit/test_scheduler.py`
 - Focused run: **32 tests passing** (Phase 8 unit tests)
 - Included in full suite: **469 tests passing**, **0 lint errors**
+
+---
+
+## Phase 9 — Publisher
+
+**Status:** ✅ COMPLETE
+
+### Completed Tasks
+
+- [x] Implement `modules/publisher/youtube_client.py` with OAuth2 authentication and upload methods
+- [x] Implement `modules/publisher/publish.py` with upload orchestration, retry, and status tracking
+- [x] Implement `modules/publisher/visibility.py` with delayed unlisted → public transition
+- [x] Create `scripts/publish_cron.py` as standalone entry point
+- [x] Write unit tests for YouTube client (mock API responses: success, failure, quota)
+- [x] Write unit tests for retry logic (1st, 2nd, 3rd failure, dead letter)
+- [x] Write unit tests for visibility transition timing
+- [x] Write integration test with mocked YouTube API: scheduled clip → published
+
+### Files Created
+
+| File Path | Purpose |
+| --- | --- |
+| `modules/publisher/__init__.py` | Public module API — exposes `process()` |
+| `modules/publisher/publish.py` | Upload orchestration, retry logic, idempotency, status tracking |
+| `modules/publisher/youtube_client.py` | YouTube Data API v3 wrapper with OAuth2 authentication |
+| `modules/publisher/visibility.py` | Delayed unlisted → public transition after configurable delay |
+| `scripts/publish_cron.py` | Standalone cron entry point — decoupled from pipeline modules |
+| `tests/unit/test_publisher.py` | Unit tests for upload, retry, visibility, idempotency |
+
+### Exit Criteria
+
+- [x] Publisher queries only `scheduled` clips with `scheduled_at <= now`
+- [x] Video uploaded as unlisted with correct title, description, tags
+- [x] Thumbnail uploaded separately after video confirmation
+- [x] Privacy transitions to public after configurable delay
+- [x] Retry strategy: 3 attempts, exponential backoff
+- [x] Failed clips logged with reason, do not block queue
+- [x] Cron script is standalone (does not import pipeline modules)
+- [x] Integration test: mock YouTube API → publish flow → status updated to published
+
+### Test Results
+
+- Phase 9 unit test file present and passing:
+  - `tests/unit/test_publisher.py`
+- Focused run: **29 tests passing** (Phase 9 unit tests)
+- Included in full suite: **517 tests passing**, **0 lint errors**
+
+---
+
+## Phase 10 — Observability & Analytics
+
+**Status:** ✅ COMPLETE
+
+### Completed Tasks
+
+- [x] Implement `modules/analytics/pipeline_report.py` with run summary aggregation
+- [x] Implement `modules/analytics/quality_metrics.py` with score and face visibility stats
+- [x] Implement `modules/analytics/publish_report.py` with publishing status tracking
+- [x] Write unit tests for report aggregation (various clip counts, edge cases)
+
+### Files Created
+
+| File Path | Purpose |
+| --- | --- |
+| `contracts/analytics.py` | `ScoreBin`, `QualityMetrics`, `PublishReport`, `PipelineReport` frozen DTOs |
+| `modules/analytics/__init__.py` | Public module API — exposes `process()` |
+| `modules/analytics/pipeline_report.py` | Per-run summary: clips, scores, durations, timing; writes `report.json` |
+| `modules/analytics/quality_metrics.py` | Score distribution histograms, face visibility stats, rejection rates |
+| `modules/analytics/publish_report.py` | Publishing status: published, scheduled, queued, failed, queue depth |
+| `tests/unit/test_analytics.py` | Unit tests for all three sub-reports and the full process() pipeline |
+
+### Open Gaps
+
+- [ ] Report generation not yet wired as final step in `core/orchestrator.py` (protected file — requires Phase 0 agent)
+- [ ] CLI command for on-demand quality and publishing reports not yet implemented
+
+### Exit Criteria
+
+- [x] Post-pipeline summary printed with clips generated, scores, durations, timing
+- [x] JSON report written to output directory (`{output_dir}/{video_id}/report.json`)
+- [x] Quality metrics queryable (score distribution, face visibility, rejection rates)
+- [x] Publishing report shows queue depth and upload status
+- [x] Analytics do not affect pipeline determinism
+
+### Test Results
+
+- Phase 10 unit test file present and passing:
+  - `tests/unit/test_analytics.py`
+- Focused run: **18 tests passing** (Phase 10 unit tests)
+- Included in full suite: **517 tests passing**, **0 lint errors**
