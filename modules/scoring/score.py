@@ -87,11 +87,12 @@ def process(
                 end_time=scene.end_time,
                 duration=scene.duration,
                 keyword_score=kw,
-                audio_energy=ae,
-                face_presence=fp,
-                scene_activity=sa,
-                sentence_density=sd,
+                audio_energy_score=ae,
+                face_presence_score=fp,
+                scene_activity_score=sa,
+                sentence_density_score=sd,
                 composite_score=composite,
+                rank=0,  # Placeholder — assigned after sorting.
             )
         )
 
@@ -110,6 +111,26 @@ def process(
     # Deterministic sort: composite DESC, start_time ASC as tiebreaker.
     ranked = sorted(scored, key=lambda s: (-s.composite_score, s.start_time))
 
+    # Assign rank (1-based) by sort position.
+    ranked = [
+        ScoredScene(
+            scene_id=s.scene_id,
+            video_id=s.video_id,
+            start_time=s.start_time,
+            end_time=s.end_time,
+            duration=s.duration,
+            keyword_score=s.keyword_score,
+            audio_energy_score=s.audio_energy_score,
+            face_presence_score=s.face_presence_score,
+            scene_activity_score=s.scene_activity_score,
+            sentence_density_score=s.sentence_density_score,
+            composite_score=s.composite_score,
+            rank=i + 1,
+        )
+        for i, s in enumerate(ranked)
+    ]
+
+    composites = [s.composite_score for s in ranked]
     logger.info(
         "Scoring complete",
         extra={
@@ -117,9 +138,18 @@ def process(
             "stage": "scoring",
             "status": "success",
             "scene_count": len(ranked),
+            "min_score": min(composites),
+            "max_score": max(composites),
+            "avg_score": sum(composites) / len(composites),
         },
     )
-    return ScoredSceneList(video_id=video_id, scenes=tuple(ranked))
+    return ScoredSceneList(
+        video_id=video_id,
+        scenes=tuple(ranked),
+        min_score=min(composites),
+        max_score=max(composites),
+        avg_score=sum(composites) / len(composites),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -204,11 +234,12 @@ def _normalize_composite_scores(scenes: list[ScoredScene]) -> list[ScoredScene]:
             end_time=s.end_time,
             duration=s.duration,
             keyword_score=s.keyword_score,
-            audio_energy=s.audio_energy,
-            face_presence=s.face_presence,
-            scene_activity=s.scene_activity,
-            sentence_density=s.sentence_density,
+            audio_energy_score=s.audio_energy_score,
+            face_presence_score=s.face_presence_score,
+            scene_activity_score=s.scene_activity_score,
+            sentence_density_score=s.sentence_density_score,
             composite_score=(s.composite_score - vmin) / span,
+            rank=s.rank,
         )
         for s in scenes
     ]
@@ -270,11 +301,12 @@ def _temporal_fallback(scenes: list[ScoredScene]) -> list[ScoredScene]:
                 end_time=scene.end_time,
                 duration=scene.duration,
                 keyword_score=scene.keyword_score,
-                audio_energy=scene.audio_energy,
-                face_presence=scene.face_presence,
-                scene_activity=scene.scene_activity,
-                sentence_density=scene.sentence_density,
+                audio_energy_score=scene.audio_energy_score,
+                face_presence_score=scene.face_presence_score,
+                scene_activity_score=scene.scene_activity_score,
+                sentence_density_score=scene.sentence_density_score,
                 composite_score=score,
+                rank=scene.rank,
             )
         )
     return result

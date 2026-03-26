@@ -274,9 +274,9 @@ class TestAudioEnergyPassthrough:
 
         # Recover scenes by scene_id for deterministic assertion.
         by_id = {s.scene_id: s for s in result.scenes}
-        assert abs(by_id[f"{VIDEO_ID}_0_5000"].audio_energy - 0.2) < 1e-9
-        assert abs(by_id[f"{VIDEO_ID}_5000_10000"].audio_energy - 0.6) < 1e-9
-        assert abs(by_id[f"{VIDEO_ID}_10000_15000"].audio_energy - 0.9) < 1e-9
+        assert abs(by_id[f"{VIDEO_ID}_0_5000"].audio_energy_score - 0.2) < 1e-9
+        assert abs(by_id[f"{VIDEO_ID}_5000_10000"].audio_energy_score - 0.6) < 1e-9
+        assert abs(by_id[f"{VIDEO_ID}_10000_15000"].audio_energy_score - 0.9) < 1e-9
 
     def test_none_audio_data_defaults_to_zero(self):
         from modules.scoring.score import process
@@ -288,7 +288,7 @@ class TestAudioEnergyPassthrough:
 
         result = process(scenes, transcript, face, None, config)
         for s in result.scenes:
-            assert s.audio_energy == 0.0
+            assert s.audio_energy_score == 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -306,8 +306,8 @@ class TestFacePresencePassthrough:
 
         result = process(scenes, transcript, face, None, config)
         by_id = {s.scene_id: s for s in result.scenes}
-        assert by_id[f"{VIDEO_ID}_0_5000"].face_presence == 0.0
-        assert abs(by_id[f"{VIDEO_ID}_5000_10000"].face_presence - 0.8) < 1e-9
+        assert by_id[f"{VIDEO_ID}_0_5000"].face_presence_score == 0.0
+        assert abs(by_id[f"{VIDEO_ID}_5000_10000"].face_presence_score - 0.8) < 1e-9
 
     def test_empty_face_result_defaults_to_zero(self):
         from modules.scoring.score import process
@@ -325,7 +325,7 @@ class TestFacePresencePassthrough:
 
         result = process(scenes, transcript, face, None, config)
         for s in result.scenes:
-            assert s.face_presence == 0.0
+            assert s.face_presence_score == 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -351,7 +351,7 @@ class TestSceneActivity:
             result = process(scenes, transcript, face, None, config, file_path="/fake/video.mp4")
 
         for s in result.scenes:
-            assert s.scene_activity == 0.0
+            assert s.scene_activity_score == 0.0
 
     def test_ffmpeg_success_produces_nonzero_activity(self):
         from modules.scoring.score import process
@@ -376,7 +376,7 @@ class TestSceneActivity:
 
         # Single scene → normalised to 0.0 (min == max); but raw value > 0
         # was produced — activity normalisation maps identical values to 0.
-        assert result.scenes[0].scene_activity == 0.0  # Only one scene → norm=0
+        assert result.scenes[0].scene_activity_score == 0.0  # Only one scene → norm=0
 
     def test_no_file_path_leaves_activity_zero(self):
         from modules.scoring.score import process
@@ -388,7 +388,7 @@ class TestSceneActivity:
 
         result = process(scenes, transcript, face, None, config, file_path=None)
         for s in result.scenes:
-            assert s.scene_activity == 0.0
+            assert s.scene_activity_score == 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -497,11 +497,12 @@ class TestDegenerateCase:
                 end_time=s.end_time,
                 duration=s.duration,
                 keyword_score=0.0,
-                audio_energy=0.5,
-                face_presence=0.5,
-                scene_activity=0.0,
-                sentence_density=0.0,
+                audio_energy_score=0.5,
+                face_presence_score=0.5,
+                scene_activity_score=0.0,
+                sentence_density_score=0.0,
                 composite_score=0.5,
+                rank=0,
             )
             for s in scenes_list.scenes
         ]
@@ -521,11 +522,12 @@ class TestDegenerateCase:
                 end_time=s.end_time,
                 duration=s.duration,
                 keyword_score=0.0,
-                audio_energy=0.0,
-                face_presence=0.0,
-                scene_activity=0.0,
-                sentence_density=0.0,
+                audio_energy_score=0.0,
+                face_presence_score=0.0,
+                scene_activity_score=0.0,
+                sentence_density_score=0.0,
                 composite_score=0.5,
+                rank=0,
             )
             for s in scenes_list.scenes
         ]
@@ -614,10 +616,10 @@ class TestProcessIntegration:
             assert isinstance(s, ScoredScene)
             assert 0.0 <= s.composite_score <= 1.0
             assert 0.0 <= s.keyword_score <= 1.0
-            assert 0.0 <= s.audio_energy <= 1.0
-            assert 0.0 <= s.face_presence <= 1.0
-            assert 0.0 <= s.scene_activity <= 1.0
-            assert 0.0 <= s.sentence_density <= 1.0
+            assert 0.0 <= s.audio_energy_score <= 1.0
+            assert 0.0 <= s.face_presence_score <= 1.0
+            assert 0.0 <= s.scene_activity_score <= 1.0
+            assert 0.0 <= s.sentence_density_score <= 1.0
 
     def test_empty_transcript_does_not_crash(self):
         from modules.scoring.score import process
