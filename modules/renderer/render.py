@@ -17,6 +17,8 @@ from contracts.render import RenderedClip
 from contracts.subtitle import SubtitleResult
 from contracts.tts import TTSResult
 
+from core.gpu import resolve_gpu_settings
+
 logger = logging.getLogger(__name__)
 
 
@@ -159,11 +161,23 @@ def _build_render_command(
     args.extend(["-map", video_map, "-map", audio_map])
 
     # Encoding settings
+    gpu_settings = resolve_gpu_settings(config)
+    if crf_override is not None and not gpu_settings["enabled"]:
+        # CPU mode with CRF override (retry with lower quality)
+        args.extend([
+            "-c:v", gpu_settings["ffmpeg_encoder"],
+            "-crf", str(crf_override),
+            "-preset", preset,
+            "-profile:v", "high",
+        ])
+    elif crf_override is not None and gpu_settings["enabled"]:
+        # GPU mode with quality override — use fallback args
+        args.extend(gpu_settings["ffmpeg_encode_args_fallback"])
+    else:
+        # Normal encoding — CPU or GPU primary args
+        args.extend(gpu_settings["ffmpeg_encode_args"])
+
     args.extend([
-        "-c:v", codec,
-        "-crf", str(crf),
-        "-preset", preset,
-        "-profile:v", "high",
         "-c:a", "aac",
         "-b:a", "128k",
         "-ar", "44100",

@@ -10,7 +10,7 @@ Shorts Factory takes a **long-form video** (30–120 minutes, like a gaming stre
 
 It does everything: scene detection, speech transcription, scoring, clip selection, face-cam compositing, text-to-speech narration, subtitles, thumbnails, metadata, scheduling, and publishing.
 
-**No cloud services, no paid APIs, no GPUs required.** Everything runs locally on your machine.
+**No cloud services, no paid APIs, no GPUs required.** Everything runs locally on your machine. If you have an NVIDIA GPU, you can optionally enable hardware-accelerated encoding and transcription for faster processing.
 
 ---
 
@@ -18,14 +18,14 @@ It does everything: scene detection, speech transcription, scoring, clip selecti
 
 ### System
 
-| Requirement | Minimum       | Recommended   |
-| ----------- | ------------- | ------------- |
-| OS          | macOS / Linux | macOS / Linux |
-| Python      | 3.10+         | 3.11+         |
-| RAM         | 8 GB          | 16 GB         |
-| Disk (free) | 5 GB          | 20 GB         |
-| CPU         | 4 cores       | 8 cores       |
-| GPU         | Not required  | Not required  |
+| Requirement | Minimum       | Recommended                               |
+| ----------- | ------------- | ----------------------------------------- |
+| OS          | macOS / Linux | macOS / Linux                             |
+| Python      | 3.10+         | 3.11+                                     |
+| RAM         | 8 GB          | 16 GB                                     |
+| Disk (free) | 5 GB          | 20 GB                                     |
+| CPU         | 4 cores       | 8 cores                                   |
+| GPU         | Not required  | NVIDIA (optional, for NVENC acceleration) |
 
 ### External Tools
 
@@ -93,7 +93,7 @@ pip install pyyaml pyscenedetect faster-whisper mediapipe edge-tts pyttsx3 pillo
 python -m pytest tests/ -x -q
 ```
 
-You should see something like `517 passed`. All tests run without a GPU, without network, and without real video files.
+You should see something like `535 passed`. All tests run without a GPU, without network, and without real video files.
 
 ---
 
@@ -106,7 +106,11 @@ Put a video file (MP4, MKV, AVI, MOV, or WebM) somewhere accessible. The video s
 ### 2. Run the pipeline
 
 ```bash
+# Default CPU mode
 python run_pipeline.py /path/to/your/video.mp4
+
+# With NVIDIA GPU acceleration (optional — requires NVENC-capable GPU)
+python run_pipeline.py --gpu /path/to/your/video.mp4
 ```
 
 That's it. The pipeline will:
@@ -197,6 +201,31 @@ scheduler:
   publish_time_utc: "10:00" # Publish at 10:00 AM UTC
 ```
 
+### GPU Acceleration (Optional)
+
+If you have an NVIDIA GPU with NVENC support, you can enable hardware-accelerated encoding and CUDA-based transcription:
+
+```yaml
+gpu:
+  enabled: true # Enable GPU mode (default: false)
+  encoder: "h264_nvenc" # NVIDIA hardware encoder
+  preset: "p4" # p1 (fastest) to p7 (best quality)
+  cq: 20 # Constant quality (lower = better)
+  transcription_device: "cuda"
+  transcription_compute_type: "float16"
+```
+
+You can also enable it per-run via CLI (`--gpu`) or environment variable (`SF_GPU_ENABLED=true`) without modifying config.yaml.
+
+**Requirements for GPU mode:**
+
+- NVIDIA GPU with NVENC support (GTX 1060+ / RTX series)
+- NVIDIA drivers installed (`nvidia-smi` must work)
+- FFmpeg compiled with `--enable-nvenc`
+- For CUDA transcription: PyTorch with CUDA (`pip install torch --index-url https://download.pytorch.org/whl/cu121`)
+
+> **Note:** If CUDA is unavailable for transcription, it automatically falls back to CPU. NVENC encoding will hard-fail at startup if the GPU or drivers are missing.
+
 ---
 
 ## Publishing to YouTube
@@ -264,6 +293,7 @@ Stage 15: publisher        → Upload to YouTube (via cron)
 - **Idempotent**: Running twice on the same video produces no duplicates.
 - **Resumable**: If the pipeline crashes, rerun it — it picks up from the last checkpoint.
 - **No cloud**: Everything runs locally. No API keys needed (except for YouTube publishing).
+- **GPU optional**: Works on CPU by default; add `--gpu` for NVIDIA acceleration.
 
 ---
 
@@ -299,6 +329,10 @@ The scoring engine couldn't find enough engaging content. Try:
 
 Just rerun the same command. The pipeline checkpoints after each stage and resumes from where it left off. No data is lost.
 
+### "nvidia-smi not found" or "FFmpeg does not support h264_nvenc"
+
+GPU mode (`--gpu`) requires NVIDIA drivers and an NVENC-capable FFmpeg build. If you don't have a GPU, simply omit the `--gpu` flag — the pipeline works fine on CPU.
+
 ### Tests fail
 
 Make sure you're in the virtual environment (`source .venv/bin/activate`) and all dependencies are installed. Tests don't need FFmpeg, a GPU, or network access.
@@ -316,7 +350,7 @@ shorts-generator/
 │   └── config.yaml      # All settings live here
 ├── contracts/           # Data structures (DTOs) shared between modules
 ├── modules/             # The 16 pipeline stages (one folder each)
-├── core/                # Orchestrator, config loader, logging
+├── core/                # Orchestrator, config loader, logging, GPU resolver
 ├── database/            # SQLite database layer
 ├── output/              # Generated clips go here
 ├── tests/               # Unit and integration tests

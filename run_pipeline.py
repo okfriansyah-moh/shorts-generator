@@ -46,6 +46,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
         help="Logging level (default: INFO).",
     )
+    parser.add_argument(
+        "--gpu",
+        action="store_true",
+        default=False,
+        help="Enable NVIDIA GPU acceleration (requires NVENC-capable GPU).",
+    )
     return parser.parse_args(argv)
 
 
@@ -95,8 +101,14 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
 
+    # Apply --gpu CLI override
+    if args.gpu:
+        if "gpu" not in config:
+            config["gpu"] = {}
+        config["gpu"]["enabled"] = True
+
     # Check dependencies
-    check_all_dependencies()
+    check_all_dependencies(config)
 
     # Validate video file
     video_path = validate_video_path(args.video_path)
