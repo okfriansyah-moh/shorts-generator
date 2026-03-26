@@ -829,7 +829,7 @@ run_agent_pipeline() {
         return 1
     fi
 
-    # ── Step 5: quality gates → refactor if needed (bounded) ──────────────
+    # ── Step 5: quality gates → remediation if needed (bounded) ─────────
     if ! run_quality_gates "${work_dir}"; then
         local qg_attempt=0
         while (( qg_attempt < MAX_REMEDIATION_RETRIES )); do
@@ -838,15 +838,40 @@ run_agent_pipeline() {
             log_agent_start "refactor" "${phase_label}" "${qg_attempt}" "${MAX_REMEDIATION_RETRIES}"
 
             local ref_log="${LOG_DIR}/${phase_label}-refactor-${qg_attempt}.log"
-            copilot \
-                -p "Quality gates failed. Fix all violations: lint errors, test failures, cross-module imports, raw SQL in modules, print statements. CRITICAL: NEVER modify files in database/, docs/, or core/ — only touch contracts/, modules/, and tests/. Do not change architecture. Use skills: ${CORE_SKILLS}, code-quality-fixer. MANDATORY: Use ONLY skills as primary knowledge source. Commit fixes." \
-                --agent=refactor \
-                --model="${model}" \
-                --no-ask-user \
-                --allow-all-tools \
-                --autopilot \
-                2>&1 | tee "${ref_log}"
-            local ref_rc=${PIPESTATUS[0]}
+
+            # Try ruff auto-fix first (handles most lint issues reliably)
+            cd "${work_dir}"
+            local ruff_fixed=false
+            if command -v ruff &>/dev/null; then
+                local lint_targets=""
+                [[ -d "modules" ]] && lint_targets="${lint_targets} modules/"
+                [[ -d "contracts" ]] && lint_targets="${lint_targets} contracts/"
+                [[ -d "tests" ]] && lint_targets="${lint_targets} tests/"
+                if [[ -n "${lint_targets}" ]]; then
+                    log_info "Running ruff auto-fix..."
+                    ruff check ${lint_targets} --fix --unsafe-fixes 2>/dev/null || true
+                    if ! git diff --quiet 2>/dev/null; then
+                        git add -A 2>/dev/null
+                        git commit -m "fix: auto-fix lint errors via ruff (remediation ${qg_attempt})" 2>/dev/null || true
+                        ruff_fixed=true
+                        log_info "Ruff auto-fix applied and committed"
+                    fi
+                fi
+            fi
+
+            # If ruff didn't fix anything, try copilot agent with timeout
+            if [[ "${ruff_fixed}" != "true" ]]; then
+                log_info "Attempting copilot remediation agent (120s timeout)..."
+                run_with_timeout 120 copilot \
+                    -p "Quality gates failed. Fix all violations: lint errors, test failures, cross-module imports, raw SQL in modules, print statements. CRITICAL: NEVER modify files in database/, docs/, or core/ — only touch contracts/, modules/, and tests/. Do not change architecture. Commit fixes." \
+                    --model="${model}" \
+                    --no-ask-user \
+                    --allow-all-tools \
+                    --autopilot \
+                    2>&1 | tee "${ref_log}" || true
+            fi
+
+            local ref_rc=0
             log_agent_end "refactor" "${phase_label}" "${ref_rc}" "${qg_attempt}" "${MAX_REMEDIATION_RETRIES}"
 
             if run_quality_gates "${work_dir}"; then
@@ -1122,9 +1147,22 @@ run_quality_gates() {
         if ruff check ${lint_targets} --quiet 2>/dev/null; then
             log_success "Lint check passed"
         else
-            log_error "Lint check failed"
-            ruff check ${lint_targets} 2>/dev/null | head -30 || true
-            ((failures++))
+            log_info "Lint issues found — attempting auto-fix with ruff..."
+            ruff check ${lint_targets} --fix --unsafe-fixes 2>/dev/null || true
+            # Re-check after auto-fix
+            if ruff check ${lint_targets} --quiet 2>/dev/null; then
+                log_success "Lint check passed (after auto-fix)"
+                # Commit the auto-fix if there are changes
+                if ! git diff --quiet 2>/dev/null; then
+                    git add -A 2>/dev/null
+                    git commit -m "fix: auto-fix lint errors via ruff" 2>/dev/null || true
+                    log_info "Auto-fix committed"
+                fi
+            else
+                log_error "Lint check failed (auto-fix insufficient)"
+                ruff check ${lint_targets} 2>/dev/null | head -30 || true
+                ((failures++))
+            fi
         fi
     elif command -v flake8 &>/dev/null; then
         if flake8 ${lint_targets} --count --select=E9,F63,F7,F82 --show-source --statistics 2>/dev/null; then
