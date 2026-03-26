@@ -323,7 +323,8 @@ def process(
         return CompositeStream(
             clip_id=clip.clip_id,
             video_id=clip.video_id,
-            output_path=output_path,
+            composite_path=output_path,
+            source_audio_path=source_path,
             resolution=(OUTPUT_WIDTH, OUTPUT_HEIGHT),
             layout=layout,
             duration_seconds=clip.duration,
@@ -415,7 +416,8 @@ def process(
     return CompositeStream(
         clip_id=clip.clip_id,
         video_id=clip.video_id,
-        output_path=output_path,
+        composite_path=output_path,
+        source_audio_path=source_path,
         resolution=(OUTPUT_WIDTH, OUTPUT_HEIGHT),
         layout=layout,
         duration_seconds=clip.duration,
