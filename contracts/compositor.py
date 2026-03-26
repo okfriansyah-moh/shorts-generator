@@ -21,7 +21,7 @@ class CompositeStream:
         layout: Composition layout. 'face_gameplay_split' or 'gameplay_only_zoom'.
         duration_seconds: Duration of composite video in seconds. > 0.
         has_face: True if face data was available and visibility >= 0.3.
-        source_fps: Frame rate of composite output. Always 30.0.
+        source_fps: Frame rate of composite output, as configured (e.g., pipeline.output_framerate; typically 30.0).
     """
 
     clip_id: str

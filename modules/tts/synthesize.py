@@ -47,6 +47,7 @@ def _normalize_audio(
     input_path: str,
     output_path: str,
     target_lufs: int = -14,
+    sample_rate: int = 44100,
 ) -> None:
     """Normalise audio to target LUFS using FFmpeg loudnorm."""
     tmp_path = f"{output_path}.tmp"
@@ -54,7 +55,7 @@ def _normalize_audio(
         [
             "ffmpeg", "-y", "-i", input_path,
             "-af", f"loudnorm=I={target_lufs}:TP=-1.5:LRA=11",
-            "-ar", "44100", "-ac", "1",
+            "-ar", str(sample_rate), "-ac", "1",
             tmp_path,
         ],
         capture_output=True,
@@ -91,6 +92,7 @@ def _synthesize_edge_tts(
         word_timings: list[TTSWordTiming] = []
         prev_start_ms: Optional[int] = None
         prev_text: Optional[str] = None
+        duration_ms: int = 0
 
         with open(output_path, "wb") as f:
             async for chunk in communicate.stream():
@@ -243,8 +245,9 @@ def process(
             ) from fallback_err
 
     # Normalise volume
+    sample_rate = tts_config.get("sample_rate", 44100)
     try:
-        _normalize_audio(raw_path, normalized_path, target_lufs)
+        _normalize_audio(raw_path, normalized_path, target_lufs, sample_rate)
     except Exception as norm_err:
         logger.warning(
             "Volume normalization failed, using raw audio",

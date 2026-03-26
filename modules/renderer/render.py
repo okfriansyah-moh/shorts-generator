@@ -19,7 +19,7 @@ from contracts.tts import TTSResult
 
 logger = logging.getLogger(__name__)
 
-_MAX_FILE_SIZE_BYTES = 100 * 1024 * 1024  # 100 MB
+
 
 
 def _run_ffmpeg(args: list[str], timeout: int = 300) -> subprocess.CompletedProcess:
@@ -176,6 +176,7 @@ def _validate_output(
     file_path: str,
     min_duration: float = 30.0,
     max_duration: float = 60.0,
+    max_file_size: int = 300 * 1024 * 1024,
 ) -> tuple[float, tuple[int, int], str, int, int]:
     """Validate rendered output meets specifications.
 
@@ -193,6 +194,17 @@ def _validate_output(
 
     if (width, height) != (1080, 1920):
         raise RuntimeError(f"Resolution {width}x{height} != 1080x1920")
+
+    if codec.lower() != "h264":
+        raise RuntimeError(f"Codec {codec!r} != 'h264'")
+
+    if abs(float(fps) - 30.0) > 0.5:
+        raise RuntimeError(f"Frame rate {fps} != 30fps")
+
+    if file_size > max_file_size:
+        raise RuntimeError(
+            f"File size {file_size} bytes exceeds max {max_file_size} bytes"
+        )
 
     return duration, (width, height), codec, fps, file_size
 
@@ -220,15 +232,27 @@ def process(
     os.makedirs(clip_dir, exist_ok=True)
     output_path = os.path.join(clip_dir, "final.mp4")
 
+    renderer_config = config.get("renderer", {})
+    max_size = renderer_config.get("max_file_size_mb", 300) * 1024 * 1024
+
     # Idempotent: skip if already rendered
     if os.path.exists(output_path):
         try:
             duration, resolution, codec, fps, file_size = _validate_output(
-                output_path,
+                output_path, max_file_size=max_size,
             )
             logger.info(
                 "Render cache hit",
                 extra={"clip_id": composite.clip_id, "path": output_path},
+            )
+            cached_has_narration = (
+                tts_result is not None
+                and os.path.exists(tts_result.audio_path)
+            )
+            cached_has_subtitles = (
+                subtitle_result is not None
+                and os.path.exists(subtitle_result.ass_path)
+                and subtitle_result.subtitle_count > 0
             )
             return RenderedClip(
                 clip_id=composite.clip_id,
@@ -239,8 +263,8 @@ def process(
                 codec=codec,
                 fps=fps,
                 file_size_bytes=file_size,
-                has_narration=tts_result is not None,
-                has_subtitles=subtitle_result is not None,
+                has_narration=cached_has_narration,
+                has_subtitles=cached_has_subtitles,
             )
         except (RuntimeError, Exception) as err:
             logger.warning(
@@ -248,9 +272,7 @@ def process(
                 extra={"clip_id": composite.clip_id, "error": str(err)[:100]},
             )
 
-    renderer_config = config.get("renderer", {})
     timeout = config.get("pipeline", {}).get("ffmpeg_timeout", 300)
-    max_size = renderer_config.get("max_file_size_mb", 100) * 1024 * 1024
 
     # Render with default CRF
     tmp_path = f"{output_path}.tmp"
@@ -273,7 +295,9 @@ def process(
         _run_ffmpeg(args, timeout=timeout)
 
     # Validate output
-    duration, resolution, codec, fps, file_size = _validate_output(tmp_path)
+    duration, resolution, codec, fps, file_size = _validate_output(
+        tmp_path, max_file_size=max_size,
+    )
 
     # Re-encode if file too large
     if file_size > max_size:
@@ -304,7 +328,9 @@ def process(
             _run_ffmpeg(args, timeout=timeout)
             file_size = _get_file_size(re_tmp)
 
-        duration, resolution, codec, fps, file_size = _validate_output(re_tmp)
+        duration, resolution, codec, fps, file_size = _validate_output(
+            re_tmp, max_file_size=max_size,
+        )
 
         # Clean up previous tmp and use re-encoded version
         if os.path.exists(tmp_path):
@@ -333,6 +359,16 @@ def process(
         },
     )
 
+    rendered_has_narration = (
+        tts_result is not None
+        and os.path.exists(tts_result.audio_path)
+    )
+    rendered_has_subtitles = (
+        subtitle_result is not None
+        and os.path.exists(subtitle_result.ass_path)
+        and subtitle_result.subtitle_count > 0
+    )
+
     return RenderedClip(
         clip_id=composite.clip_id,
         video_id=composite.video_id,
@@ -342,6 +378,6 @@ def process(
         codec=codec,
         fps=fps,
         file_size_bytes=file_size,
-        has_narration=tts_result is not None,
-        has_subtitles=subtitle_result is not None and subtitle_result.subtitle_count > 0,
+        has_narration=rendered_has_narration,
+        has_subtitles=rendered_has_subtitles,
     )

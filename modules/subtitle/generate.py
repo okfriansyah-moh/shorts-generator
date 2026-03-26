@@ -54,7 +54,7 @@ def _generate_ass_header(config: dict) -> str:
         "Alignment, MarginL, MarginR, MarginV, Encoding\n"
         f"Style: Transcript,{font_name},{font_size},&H00FFFFFF,&H000000FF,"
         f"&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,{outline_width},1,"
-        f"2,20,20,{margin_bottom},1\n"
+        f"8,20,20,{margin_bottom},1\n"
         f"Style: Narration,{font_name},42,&H0000FFFF,&H000000FF,"
         f"&H00000000,&H80000000,-1,0,0,0,100,100,0,0,1,{outline_width},1,"
         "8,20,20,200,1\n"
