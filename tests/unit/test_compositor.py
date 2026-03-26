@@ -194,7 +194,8 @@ def test_composite_stream_is_frozen():
     stream = CompositeStream(
         clip_id=CLIP_ID,
         video_id=VIDEO_ID,
-        output_path="/tmp/composite.mp4",
+        composite_path="/tmp/composite.mp4",
+        source_audio_path="/tmp/source.mp4",
         resolution=(1080, 1920),
         layout="gameplay_only_zoom",
         duration_seconds=35.0,
@@ -209,7 +210,7 @@ def test_composite_stream_fields():
     """CompositeStream has the required fields."""
     field_names = {f.name for f in fields(CompositeStream)}
     required = {
-        "clip_id", "video_id", "output_path", "resolution",
+        "clip_id", "video_id", "composite_path", "source_audio_path", "resolution",
         "layout", "duration_seconds", "has_face", "source_fps",
     }
     assert required.issubset(field_names)
@@ -306,7 +307,7 @@ def test_process_idempotent_skips_ffmpeg(tmp_path):
         result = process(clip, face_result, ingestion, config)
         mock_run.assert_not_called()
 
-    assert result.output_path == str(composite_path)
+    assert result.composite_path == str(composite_path)
 
 
 def test_process_idempotent_twice_same_result(tmp_path):
@@ -334,7 +335,7 @@ def test_process_idempotent_twice_same_result(tmp_path):
 
     assert result1.clip_id == result2.clip_id
     assert result1.layout == result2.layout
-    assert result1.output_path == result2.output_path
+    assert result1.composite_path == result2.composite_path
     assert result1.has_face == result2.has_face
 
 
@@ -592,7 +593,7 @@ def test_process_output_path_structure(tmp_path):
         result = process(clip, face_result, ingestion, config)
 
     expected_suffix = os.path.join(VIDEO_ID, "clips", CLIP_ID, "composite.mp4")
-    assert result.output_path.endswith(expected_suffix)
+    assert result.composite_path.endswith(expected_suffix)
 
 
 # ---------------------------------------------------------------------------
