@@ -20,7 +20,7 @@ class RenderedClip:
         resolution: (width, height) in pixels. Must be (1080, 1920).
         codec: Video codec used. Must be "h264".
         fps: Frame rate. Must be 30.
-        file_size_bytes: Output file size in bytes. > 0. Max governed by renderer.max_file_size_mb config (default 300MB).
+        file_size_bytes: Output file size in bytes. > 0. Max governed by renderer.max_file_size_mb config (default 100MB).
         has_narration: True if TTS narration audio was mixed in.
         has_subtitles: True if ASS subtitles were burned in.
     """

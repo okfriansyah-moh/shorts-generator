@@ -103,7 +103,11 @@ def _build_render_command(
     # Input 0: composite video
     args.extend(["-i", composite.composite_path])
 
-    # Input 1: gameplay audio
+    # Input 1: gameplay audio — trim to clip time range
+    if composite.start_time_ms > 0:
+        start_sec = composite.start_time_ms / 1000.0
+        args.extend(["-ss", str(start_sec)])
+    args.extend(["-t", str(composite.duration_seconds)])
     args.extend(["-i", composite.source_audio_path])
 
     has_narration = (
@@ -176,7 +180,7 @@ def _validate_output(
     file_path: str,
     min_duration: float = 30.0,
     max_duration: float = 60.0,
-    max_file_size: int = 300 * 1024 * 1024,
+    max_file_size: int = 100 * 1024 * 1024,
 ) -> tuple[float, tuple[int, int], str, int, int]:
     """Validate rendered output meets specifications.
 
@@ -233,7 +237,7 @@ def process(
     output_path = os.path.join(clip_dir, "final.mp4")
 
     renderer_config = config.get("renderer", {})
-    max_size = renderer_config.get("max_file_size_mb", 300) * 1024 * 1024
+    max_size = renderer_config.get("max_file_size_mb", 100) * 1024 * 1024
 
     # Idempotent: skip if already rendered
     if os.path.exists(output_path):

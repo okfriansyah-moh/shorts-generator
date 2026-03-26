@@ -330,6 +330,7 @@ def process(
             duration_seconds=clip.duration,
             has_face=has_face,
             source_fps=float(fps),
+            start_time_ms=clip.start_time,
         )
 
     logger.info(
@@ -423,4 +424,5 @@ def process(
         duration_seconds=clip.duration,
         has_face=has_face,
         source_fps=float(fps),
+        start_time_ms=clip.start_time,
     )

@@ -22,6 +22,7 @@ class CompositeStream:
         duration_seconds: Duration of composite video in seconds. > 0.
         has_face: True if face data was available and visibility >= 0.3.
         source_fps: Frame rate of composite output, as configured (e.g., pipeline.output_framerate; typically 30.0).
+        start_time_ms: Clip start offset in the source video, in milliseconds. >= 0.
     """
 
     clip_id: str
@@ -33,3 +34,4 @@ class CompositeStream:
     duration_seconds: float
     has_face: bool
     source_fps: float
+    start_time_ms: int = 0

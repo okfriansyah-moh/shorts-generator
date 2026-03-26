@@ -200,7 +200,7 @@ class TestTTSProcess:
                 f.write(b"\x00" * 100)
             return path, 3.5, mock_timings
 
-        def mock_normalize(inp, out, lufs=-14):
+        def mock_normalize(inp, out, lufs=-14, sr=44100):
             with open(out, "wb") as f:
                 f.write(b"\x00" * 50)
 
@@ -232,7 +232,7 @@ class TestTTSProcess:
                 f.write(b"\x00" * 100)
             return path, 3.0
 
-        def mock_normalize(inp, out, lufs=-14):
+        def mock_normalize(inp, out, lufs=-14, sr=44100):
             with open(out, "wb") as f:
                 f.write(b"\x00" * 50)
 
