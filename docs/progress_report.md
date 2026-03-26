@@ -1,8 +1,8 @@
 # Shorts Factory — Progress Report
 
 **Last Updated:** 2026-03-26
-**Active Phase:** Phase 6 — Rendering Pipeline
-**Phase Status:** ⚠️ PARTIAL (Merged Phase 5/6 code audited; orchestrator integration pending)
+**Active Phase:** Phase 8 — Storage & Scheduling
+**Phase Status:** ⚠️ PARTIAL (Merged Phase 7/8 code audited; orchestrator integration pending)
 
 ---
 
@@ -17,8 +17,8 @@
 | Phase 4  | Clip Builder           | ✅ COMPLETE |
 | Phase 5  | Composition Engine     | ⚠️ PARTIAL |
 | Phase 6  | Rendering Pipeline     | ⚠️ PARTIAL |
-| Phase 7  | Metadata & Thumbnail   | ⏳ Pending  |
-| Phase 8  | Storage & Scheduling   | ⏳ Pending  |
+| Phase 7  | Metadata & Thumbnail   | ⚠️ PARTIAL |
+| Phase 8  | Storage & Scheduling   | ⚠️ PARTIAL |
 | Phase 9  | Publisher              | ⏳ Pending  |
 | Phase 10 | Observability & Analytics | ⏳ Pending  |
 
@@ -479,3 +479,120 @@
   - `tests/unit/test_subtitle.py`
   - `tests/unit/test_renderer.py`
 - Included in full suite: **381 tests passing**, **0 lint errors**
+
+---
+
+## Phase 7 — Metadata & Thumbnail Generation
+
+**Status:** ⚠️ PARTIAL (Core module implementations and unit tests exist; roadmap-specific file split and orchestrator/integration wiring pending)
+
+### Completed Tasks
+
+- [x] Define `ThumbnailResult` DTO in `contracts/thumbnail.py`
+- [x] Define `MetadataResult` DTO in `contracts/metadata.py`
+- [ ] Implement `modules/thumbnail/frame_scorer.py` with multi-factor frame scoring
+- [ ] Implement `modules/thumbnail/generate.py` with layout, text overlay, post-processing
+- [ ] Implement `modules/metadata/templates.py` with title and description templates
+- [ ] Implement `modules/metadata/generate.py` with title, description, tags logic
+- [ ] Update `core/orchestrator.py` to wire per-clip: [thumbnail, metadata] (parallel, independent)
+- [x] Write unit tests for frame scoring (face present, no face, blurry frame)
+- [x] Write unit tests for text overlay (word count, positioning, font fallback)
+- [x] Write unit tests for title generation (normal, duplicate, truncation, emoji)
+- [x] Write unit tests for tag generation (static + dynamic, deduplication)
+- [ ] Write integration test: clip → thumbnail.jpg (correct resolution) + metadata.json (valid schema)
+
+### Files Created
+
+| File Path | Purpose |
+| --- | --- |
+| `contracts/thumbnail.py` | `ThumbnailResult` frozen DTO |
+| `contracts/metadata.py` | `MetadataResult` frozen DTO |
+| `modules/thumbnail/__init__.py` | Public module API |
+| `modules/thumbnail/thumbnail.py` | Thumbnail extraction, enhancement, text overlay, idempotent output |
+| `modules/metadata/__init__.py` | Public module API |
+| `modules/metadata/metadata.py` | Deterministic title, description, and tag generation |
+| `tests/unit/test_thumbnail.py` | Unit tests for timestamping, filters, text overlay, idempotency |
+| `tests/unit/test_metadata.py` | Unit tests for title/description/tag constraints and determinism |
+
+### Open Gaps
+
+- [ ] Roadmap deliverable file split (`frame_scorer.py`, `generate.py`, `templates.py`) not present; implementation is consolidated into `thumbnail.py` and `metadata.py`
+- [ ] Per-clip orchestrator wiring for thumbnail/metadata not yet implemented in `core/orchestrator.py`
+- [ ] Phase integration test for rendered clip → thumbnail + metadata outputs not yet present
+
+### Exit Criteria
+
+- [x] `ThumbnailResult` and `MetadataResult` DTOs defined
+- [ ] Thumbnail is 1280x720 JPEG with quality 95
+- [ ] Thumbnail prioritizes face-containing frames
+- [ ] Text overlay is max 2–3 words, bold, high contrast
+- [ ] Titles are 40–60 characters with 1–2 emojis
+- [ ] No duplicate titles within a batch
+- [x] Tags combine static + dynamic, 10–15 total
+- [x] Description follows template with hashtags
+- [x] Metadata is deterministic (same clip → same output)
+- [ ] Integration test: rendered clip → thumbnail + metadata generation → valid outputs
+
+### Test Results
+
+- Phase 7 unit test files present and passing:
+  - `tests/unit/test_thumbnail.py`
+  - `tests/unit/test_metadata.py`
+- Focused run: **56 tests passing** (Phase 7 unit tests)
+- Included in full suite: **469 tests passing**, **0 lint errors**
+
+---
+
+## Phase 8 — Storage & Scheduling
+
+**Status:** ⚠️ PARTIAL (Storage/scheduler modules and unit tests exist; DB/orchestrator integration tasks remain)
+
+### Completed Tasks
+
+- [x] Define `StorageRecord` DTO in `contracts/storage.py`
+- [x] Implement `modules/storage/store.py` with file verification and atomic file writes
+- [x] Implement `modules/scheduler/schedule.py` with daily slot assignment
+- [x] Implement orphaned file cleanup on pipeline startup (`cleanup_orphaned_temp_files`)
+- [ ] Implement pipeline run tracking (start, progress, completion in `pipeline_runs`)
+- [ ] Update `core/orchestrator.py` to wire per-clip: [render + thumbnail + metadata] → storage → scheduler
+- [x] Write unit tests for storage (normal, missing files, duplicate/idempotent rerun behavior)
+- [x] Write unit tests for scheduler (empty queue, existing schedule, conflict resolution)
+- [x] Write unit test for orphaned file cleanup
+- [ ] Write integration test: full clip → storage → scheduling → verified DB state
+
+### Files Created
+
+| File Path | Purpose |
+| --- | --- |
+| `contracts/storage.py` | `StorageRecord` frozen DTO |
+| `modules/storage/__init__.py` | Public module API |
+| `modules/storage/store.py` | Artifact verification, metadata persistence, relative path normalization |
+| `modules/scheduler/__init__.py` | Public module API |
+| `modules/scheduler/schedule.py` | Deterministic score-ordered one-per-day scheduling |
+| `tests/unit/test_storage.py` | Unit tests for storage behavior, idempotency, cleanup |
+| `tests/unit/test_scheduler.py` | Unit tests for scheduler ordering, conflicts, determinism |
+
+### Open Gaps
+
+- [ ] Storage module currently returns DTOs but does not perform DB `INSERT ... ON CONFLICT DO NOTHING` writes directly (orchestrator/adapter integration pending)
+- [ ] Pipeline run tracking in `pipeline_runs` for this stage is not implemented in orchestrator wiring
+- [ ] End-to-end integration test for render outputs → storage → scheduler is not present
+
+### Exit Criteria
+
+- [x] `StorageRecord` DTO defined
+- [x] All stored artifact paths are normalized to relative paths from `output_dir`
+- [ ] Clip lifecycle follows: generated → queued → scheduled → published | failed
+- [ ] `INSERT ... ON CONFLICT DO NOTHING` prevents duplicate storage
+- [x] Scheduler assigns one clip per day, ordered by score
+- [x] Scheduler skips dates with existing scheduled/published clips
+- [ ] Pipeline run status recorded in `pipeline_runs` table
+- [ ] Integration test: render outputs → storage → scheduling → 10+ days of scheduled clips
+
+### Test Results
+
+- Phase 8 unit test files present and passing:
+  - `tests/unit/test_storage.py`
+  - `tests/unit/test_scheduler.py`
+- Focused run: **32 tests passing** (Phase 8 unit tests)
+- Included in full suite: **469 tests passing**, **0 lint errors**
