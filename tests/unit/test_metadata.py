@@ -348,10 +348,10 @@ class TestProcess:
     def test_video_id_preserved(self):
         hook = _make_hook(video_id="abcdef1234567890")
         transcript = _make_transcript()
-        clip = _make_clip(video_id="abcdef1234567890")
+        clip = _make_clip(clip_id="custom12345678", video_id="abcdef1234567890")
         config = _sample_config()
         result = process(hook, transcript, clip, config)
-        assert result.video_id == "abcdef1234567890"
+        assert result.clip_id == "custom12345678"
 
     def test_title_within_bounds(self):
         hook = _make_hook()

@@ -54,8 +54,8 @@ def _has_face(face_result: FaceDetectionResult | None) -> bool:
     if face_result is None:
         return False
     return any(
-        sd.clip_id == sd.clip_id and len(sd.bboxes) > 0
-        for sd in face_result.scenes
+        len(sd.bounding_boxes) > 0
+        for sd in face_result.scene_data
     )
 
 

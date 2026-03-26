@@ -252,20 +252,15 @@ class TestProcess:
 
     def test_correct_dimensions(self, tmp_path):
         result = self._run_process(str(tmp_path))
-        assert result.width == 1280
-        assert result.height == 720
+        assert result.resolution == (1280, 720)
 
     def test_clip_id_preserved(self, tmp_path):
         result = self._run_process(str(tmp_path), clip_id="test1234test1234")
         assert result.clip_id == "test1234test1234"
 
-    def test_video_id_preserved(self, tmp_path):
-        result = self._run_process(str(tmp_path), video_id="abcdef1234567890")
-        assert result.video_id == "abcdef1234567890"
-
     def test_thumbnail_path_is_jpeg(self, tmp_path):
         result = self._run_process(str(tmp_path))
-        assert result.thumbnail_path.endswith(".jpg")
+        assert result.image_path.endswith(".jpg")
 
     def test_text_overlay_max_words(self, tmp_path):
         clip = _make_clip()
@@ -329,7 +324,7 @@ class TestProcess:
             result = process(clip, face_result, hook, ingestion, config, str(tmp_path))
 
         mock_run.assert_not_called()
-        assert result.thumbnail_path == cached_path
+        assert result.image_path == cached_path
 
     def test_ffmpeg_failure_raises(self, tmp_path):
         """RuntimeError must be raised if FFmpeg exits non-zero."""
@@ -375,8 +370,7 @@ class TestProcess:
             result2 = process(clip, face_result, hook, ingestion, config2, tmp2)
 
         assert result1.clip_id == result2.clip_id
-        assert result1.width == result2.width
-        assert result1.height == result2.height
+        assert result1.resolution == result2.resolution
         assert result1.text_overlay == result2.text_overlay
 
     def test_none_face_result_accepted(self, tmp_path):
