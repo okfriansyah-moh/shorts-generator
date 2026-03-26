@@ -49,7 +49,6 @@ def process(scored_scene_list: ScoredSceneList, config: dict) -> ClipList:
 
     min_duration = float(cb_config.get("target_duration_min", 30))
     max_duration = float(cb_config.get("target_duration_max", 60))
-    max_clips = int(cb_config.get("max_clips_per_video", 15))
     min_clips = int(cb_config.get("min_clips_per_video", 1))
     max_overlap_ratio = float(cb_config.get("max_overlap_ratio", 0.5))
     min_composite_score = float(
