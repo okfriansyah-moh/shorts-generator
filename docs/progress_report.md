@@ -640,7 +640,7 @@
 
 - Phase 9 unit test file present and passing:
   - `tests/unit/test_publisher.py`
-- Focused run: **30 tests passing** (Phase 9 unit tests)
+- Focused run: **29 tests passing** (Phase 9 unit tests)
 - Included in full suite: **517 tests passing**, **0 lint errors**
 
 ---
@@ -684,5 +684,5 @@
 
 - Phase 10 unit test file present and passing:
   - `tests/unit/test_analytics.py`
-- Focused run: **17 tests passing** (Phase 10 unit tests)
+- Focused run: **18 tests passing** (Phase 10 unit tests)
 - Included in full suite: **517 tests passing**, **0 lint errors**

@@ -119,7 +119,19 @@ shorts-generator/
 │   ├── scene.py                 # SceneSegment, SceneList (Phase 1)
 │   ├── transcript.py            # Word, TranscriptSegment, Transcript (Phase 2)
 │   ├── face.py                  # FaceBBox, SceneFaceData, FaceDetectionResult (Phase 2)
-│   └── audio.py                 # SceneAudioEnergy, AudioEnergyData (Phase 2)
+│   ├── audio.py                 # SceneAudioEnergy, AudioEnergyData (Phase 2)
+│   ├── scoring.py               # ScoredScene, ScoreBreakdown (Phase 3)
+│   ├── clip.py                  # ClipCandidate, ClipBatch (Phase 4)
+│   ├── compositor.py            # CompositorLayout, CompositorResult (Phase 5)
+│   ├── hook.py                  # HookScript, HookScriptList (Phase 6)
+│   ├── tts.py                   # TTSAudio, TTSResult (Phase 6)
+│   ├── subtitle.py              # SubtitleFile, SubtitleResult (Phase 6)
+│   ├── render.py                # RenderResult (Phase 6)
+│   ├── thumbnail.py             # ThumbnailResult (Phase 7)
+│   ├── metadata.py              # MetadataResult (Phase 7)
+│   ├── storage.py               # StorageRecord, StorageBatch (Phase 8)
+│   ├── analytics.py             # ScoreBin, QualityMetrics, PublishReport, PipelineReport (Phase 10)
+│   └── errors.py                # PipelineError base classes
 ├── modules/
 │   ├── ingestion/               # Video validation + SHA-256 fingerprinting [Phase 1]
 │   ├── scene_splitter/          # Scene boundary detection [Phase 1]
@@ -153,7 +165,7 @@ shorts-generator/
 ├── scripts/
 │   ├── run_parallel.sh          # Parallel development orchestrator
 │   └── publish_cron.py          # Standalone YouTube publish cron job
-├── tests/                       # Unit + integration tests (120 passing)
+├── tests/                       # Unit + integration tests (517 passing)
 │   ├── unit/                    # Module unit tests
 │   └── integration/             # Pipeline integration tests
 ├── output/                      # Generated clips (gitignored)
