@@ -1,8 +1,8 @@
 # Shorts Factory — Progress Report
 
 **Last Updated:** 2026-03-26
-**Active Phase:** Phase 4 — Clip Builder
-**Phase Status:** ✅ COMPLETE (Verified & Audited — Post-Merge Review)
+**Active Phase:** Phase 6 — Rendering Pipeline
+**Phase Status:** ⚠️ PARTIAL (Merged Phase 5/6 code audited; orchestrator integration pending)
 
 ---
 
@@ -15,12 +15,12 @@
 | Phase 2  | Signal Extraction      | ✅ COMPLETE |
 | Phase 3  | Scoring Engine         | ✅ COMPLETE |
 | Phase 4  | Clip Builder           | ✅ COMPLETE |
-| Phase 5  | Hook Generator         | ⏳ Pending  |
-| Phase 6  | TTS & Subtitles        | ⏳ Pending  |
-| Phase 7  | Compositor & Renderer  | ⏳ Pending  |
-| Phase 8  | Thumbnail & Metadata   | ⏳ Pending  |
-| Phase 9  | Storage & Scheduler    | ⏳ Pending  |
-| Phase 10 | Observability          | ⏳ Pending  |
+| Phase 5  | Composition Engine     | ⚠️ PARTIAL |
+| Phase 6  | Rendering Pipeline     | ⚠️ PARTIAL |
+| Phase 7  | Metadata & Thumbnail   | ⏳ Pending  |
+| Phase 8  | Storage & Scheduling   | ⏳ Pending  |
+| Phase 9  | Publisher              | ⏳ Pending  |
+| Phase 10 | Observability & Analytics | ⏳ Pending  |
 
 ---
 
@@ -367,3 +367,115 @@
 - ✅ Deterministic: same input + same config = identical ClipList
 - ✅ Content-addressable clip IDs via SHA256
 - ✅ Duration constraints enforced at build time, not validated post-hoc
+
+
+---
+
+## Phase 5 — Composition Engine
+
+**Status:** ⚠️ PARTIAL (Core module implemented; orchestrator/integration wiring pending)
+
+### Completed Tasks
+
+- [x] Define `CompositeStream` DTO (`contracts/compositor.py`)
+- [x] Implement `modules/compositor/gameplay_crop.py` (center-crop to 9:16 + scale)
+- [x] Implement `modules/compositor/face_crop.py` (bbox crop with 1.2× zoom + clamping)
+- [x] Implement `modules/compositor/compose.py` (split/fallback layout decision + FFmpeg pipeline)
+- [x] Implement `modules/compositor/fallback.py` (gameplay-only fallback with Ken Burns filter)
+- [x] Implement atomic `.tmp` → final rename for compositor output
+- [x] Add unit tests for crop builders, layout selection, idempotency, retry path, and boundaries
+
+### Open Gaps
+
+- [ ] Wire `clip_builder -> compositor` in `core/orchestrator.py`
+- [ ] Add integration tests with real composite output validation at 1080×1920
+
+### Files Created
+
+| File Path | Purpose |
+| --- | --- |
+| `contracts/compositor.py` | `CompositeStream` frozen DTO |
+| `modules/compositor/__init__.py` | Public module API (`process`) |
+| `modules/compositor/compose.py` | Main composition entrypoint and FFmpeg execution |
+| `modules/compositor/gameplay_crop.py` | Gameplay crop filter builder |
+| `modules/compositor/face_crop.py` | Face crop parameter/filter builder |
+| `modules/compositor/fallback.py` | Fallback full-gameplay filter builders |
+| `tests/unit/test_compositor.py` | Unit coverage for module behavior and boundaries |
+
+### Exit Criteria
+
+- [x] `CompositeStream` DTO defined with required fields
+- [x] 65/35 split layout logic present for face-visible clips
+- [x] Face crop uses 1.2× zoom around representative bbox with bounds clamping
+- [x] Fallback layout used for low face visibility
+- [x] Atomic file write pattern (`.tmp` -> final) implemented
+- [ ] No-letterbox output validated via integration tests
+- [ ] End-to-end compositor integration test coverage
+
+### Test Results
+
+- `tests/unit/test_compositor.py` present and passing
+- Included in full suite: **381 tests passing**, **0 lint errors**
+
+
+---
+
+## Phase 6 — Rendering Pipeline
+
+**Status:** ⚠️ PARTIAL (Hook/TTS/subtitle/renderer modules implemented; per-clip orchestrator flow pending)
+
+### Completed Tasks
+
+- [x] Define DTOs: `HookResult`, `TTSResult`, `SubtitleResult`, `RenderedClip`
+- [x] Implement deterministic template-based hook generation (`modules/hook_generator/`)
+- [x] Implement TTS synthesis with Edge TTS + pyttsx3 fallback and text-hash cache (`modules/tts/`)
+- [x] Implement ASS subtitle generation with word-level timing (`modules/subtitle/`)
+- [x] Implement final renderer with FFmpeg composition, validation, and re-encode path (`modules/renderer/`)
+- [x] Add unit tests for hook generator, TTS, subtitle generation, and renderer validation logic
+
+### Open Gaps
+
+- [ ] Wire per-clip `hook -> tts -> subtitle -> renderer` in `core/orchestrator.py`
+- [ ] Add integration test that validates full composite-to-final MP4 flow
+- [ ] Implement explicit gameplay ducking behavior (current implementation mixes at fixed 70/30)
+
+### Files Created
+
+| File Path | Purpose |
+| --- | --- |
+| `contracts/hook.py` | `HookResult` frozen DTO |
+| `contracts/tts.py` | `TTSWordTiming`, `TTSResult` frozen DTOs |
+| `contracts/subtitle.py` | `SubtitleResult` frozen DTO |
+| `contracts/render.py` | `RenderedClip` frozen DTO |
+| `modules/hook_generator/__init__.py` | Public module API |
+| `modules/hook_generator/templates.py` | 30+ deterministic template pairs |
+| `modules/hook_generator/generate.py` | Keyword extraction + template filling |
+| `modules/tts/__init__.py` | Public module API |
+| `modules/tts/synthesize.py` | TTS synthesis, normalization, caching |
+| `modules/subtitle/__init__.py` | Public module API |
+| `modules/subtitle/generate.py` | ASS subtitle generation |
+| `modules/renderer/__init__.py` | Public module API |
+| `modules/renderer/render.py` | Final render/mix/validation pipeline |
+| `tests/unit/test_hook_generator.py` | Hook generation tests |
+| `tests/unit/test_tts.py` | TTS tests |
+| `tests/unit/test_subtitle.py` | Subtitle tests |
+| `tests/unit/test_renderer.py` | Renderer tests |
+
+### Exit Criteria
+
+- [x] DTOs for hook/TTS/subtitle/render are implemented as frozen dataclasses
+- [x] Hook template pool has 30+ patterns with deterministic selection
+- [x] TTS normalization path targets -14 LUFS
+- [x] Subtitle generation supports word-level timing in ASS format
+- [x] Renderer enforces output resolution/duration constraints
+- [ ] Per-clip orchestrator wiring completed
+- [ ] Full render integration test completed
+
+### Test Results
+
+- Phase 6 unit test files present and passing:
+  - `tests/unit/test_hook_generator.py`
+  - `tests/unit/test_tts.py`
+  - `tests/unit/test_subtitle.py`
+  - `tests/unit/test_renderer.py`
+- Included in full suite: **381 tests passing**, **0 lint errors**
