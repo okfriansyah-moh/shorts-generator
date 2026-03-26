@@ -133,3 +133,25 @@ channel:
 retry:
   max_attempts: 3
   per_stage_max: 2
+
+# GPU acceleration (NVIDIA only) — optional, defaults to CPU-only mode.
+# Enable with gpu.enabled: true or CLI --gpu flag.
+# Requires: NVIDIA GPU, nvidia-smi, FFmpeg compiled with --enable-nvenc.
+# For transcription CUDA mode, PyTorch with CUDA support is also required.
+gpu:
+  enabled: false
+  encoder: "h264_nvenc"
+  preset: "p4" # p1 (fastest) to p7 (slowest/best quality)
+  rc: "vbr" # rate control mode
+  cq: 20 # constant quality (lower = better, 0-51)
+  cq_fallback: 28 # fallback quality for retries
+  spatial_aq: 1 # spatial adaptive quantization (0 or 1)
+  temporal_aq: 1 # temporal adaptive quantization (0 or 1)
+  aq_strength: 8 # AQ strength (1-15)
+  rc_lookahead: 20 # lookahead frames for rate control
+  maxrate: "10M" # max bitrate
+  bufsize: "20M" # VBV buffer size
+  profile: "high" # H.264 profile
+  pix_fmt: "yuv420p" # pixel format
+  transcription_device: "cuda"
+  transcription_compute_type: "float16"
