@@ -28,13 +28,55 @@ if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
 from core.config import load_config  # noqa: E402
-from core.logging import setup_logging  # noqa: E402
+from core.logging import configure_logging  # noqa: E402
+from contracts.storage import StorageRecord  # noqa: E402
 from database.adapter import DatabaseAdapter  # noqa: E402
+from database.connection import initialize_database  # noqa: E402
 from modules.publisher import process  # noqa: E402
 from modules.publisher.youtube_client import YouTubeClient  # noqa: E402
 from modules.publisher.visibility import check_visibility_transitions  # noqa: E402
 
 logger = logging.getLogger(__name__)
+
+
+def _row_to_storage_record(row: dict) -> StorageRecord:
+    """Convert a raw database row dict to a StorageRecord DTO."""
+    import json as _json
+
+    tags_raw = row.get("tags", "")
+    if isinstance(tags_raw, str) and tags_raw:
+        try:
+            tags = tuple(_json.loads(tags_raw))
+        except (ValueError, TypeError):
+            tags = tuple(t.strip() for t in tags_raw.split(",") if t.strip())
+    elif isinstance(tags_raw, (list, tuple)):
+        tags = tuple(tags_raw)
+    else:
+        tags = ()
+
+    return StorageRecord(
+        clip_id=row["clip_id"],
+        video_id=row["video_id"],
+        status=row.get("status", "generated"),
+        composite_score=float(row.get("composite_score", 0.0) or 0.0),
+        file_paths={
+            "video": row.get("video_path", "") or "",
+            "thumbnail": row.get("thumbnail_path", "") or "",
+            "metadata": "",
+            "subtitles": "",
+            "narration": "",
+        },
+        title=row.get("title", "") or "",
+        description=row.get("description", "") or "",
+        tags=tags,
+        category=row.get("category", "Gaming") if "category" in row else "Gaming",
+        created_at=row.get("created_at", "") or "",
+        scheduled_at=row.get("scheduled_at"),
+        published_at=row.get("published_at"),
+        youtube_id=row.get("youtube_id"),
+        error_message=row.get("error_message"),
+        retry_count=int(row.get("retry_count", 0) or 0),
+    )
 
 
 def _build_client(config: dict) -> YouTubeClient:
@@ -71,8 +113,14 @@ def _load_scheduled_records(adapter: DatabaseAdapter, video_id: str | None) -> l
         List of StorageRecord DTOs.
     """
     if video_id:
-        return list(adapter.get_clips_by_video(video_id))
-    return list(adapter.get_clips_by_status(["scheduled", "published"]))
+        rows = adapter.get_clips_for_video(video_id)
+        return [
+            _row_to_storage_record(r)
+            for r in rows
+            if r.get("status") in ("scheduled", "published")
+        ]
+    rows = adapter.get_clips_by_status(["scheduled", "published"])
+    return [_row_to_storage_record(r) for r in rows]
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -98,7 +146,9 @@ def main(argv: list[str] | None = None) -> int:
         print(f"[publish_cron] FATAL: failed to load config: {exc}", file=sys.stderr)
         return 2
 
-    setup_logging(config)
+    log_level = config.get("logging", {}).get("level", "INFO")
+    log_file = config.get("logging", {}).get("log_file")
+    configure_logging(level=log_level, log_file=log_file)
 
     logger.info(
         "publish_cron: starting",
@@ -107,7 +157,9 @@ def main(argv: list[str] | None = None) -> int:
 
     # ── Database ───────────────────────────────────────────────────────────
     try:
-        adapter = DatabaseAdapter(config)
+        db_path = config.get("database", {}).get("path", "shorts.db")
+        conn = initialize_database(db_path)
+        adapter = DatabaseAdapter(conn)
     except Exception as exc:
         logger.error(
             "publish_cron: database initialisation failed",
@@ -168,11 +220,17 @@ def main(argv: list[str] | None = None) -> int:
         try:
             adapter.update_clip_status(
                 clip_id=record.clip_id,
-                status=record.status,
-                youtube_id=record.youtube_id,
-                published_at=record.published_at,
+                new_status=record.status,
+                valid_from=(original.status,),
                 error_message=record.error_message,
             )
+            # Persist youtube_id and published_at if the clip was published
+            if record.youtube_id and record.status == "published":
+                adapter.update_clip_publish_info(
+                    clip_id=record.clip_id,
+                    youtube_id=record.youtube_id,
+                    published_at=record.published_at,
+                )
         except Exception as exc:
             logger.error(
                 "publish_cron: failed to persist status for clip",

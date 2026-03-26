@@ -269,7 +269,7 @@ class TestPublishSingle:
         assert client.upload_video.call_count == 3
 
     def test_quota_exceeded_stops_retries(self) -> None:
-        """Quota exceeded stops retrying immediately."""
+        """Quota exceeded stops retrying immediately without marking failed."""
         config = _make_publisher_config()
         record = _make_storage_record()
 
@@ -285,7 +285,10 @@ class TestPublishSingle:
             reference_time=_fixed_now(),
         )
 
-        assert result.status == "failed"
+        # Clip stays in its original status (scheduled) — not marked failed
+        assert result.status == "scheduled"
+        assert result.retry_count == 1
+        assert result.error_message == "Quota exceeded"
         # Should only attempt once on quota exceeded
         assert client.upload_video.call_count == 1
 
