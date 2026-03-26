@@ -14,16 +14,18 @@ class ThumbnailResult:
 
     Fields:
         clip_id: Reference to parent clip. 16 lowercase hex chars.
-        video_id: Parent video reference. 16 lowercase hex chars.
-        thumbnail_path: Absolute path to the generated JPEG file. Non-empty.
-        width: Thumbnail width in pixels. Must be 1280.
-        height: Thumbnail height in pixels. Must be 720.
-        text_overlay: Text used as overlay (hook words). Max 3 words.
+        image_path: Path to thumbnail JPEG. Relative path.
+        resolution: Thumbnail resolution. Must be (1280, 720).
+        text_overlay: Text rendered on the thumbnail. 2-3 words max. Non-empty.
+        face_visible: Whether a face is present in the thumbnail.
+        frame_timestamp_ms: Source frame timestamp used. >= clip start_time.
+        frame_score: Frame selection score. >= 0.0.
     """
 
     clip_id: str
-    video_id: str
-    thumbnail_path: str
-    width: int
-    height: int
+    image_path: str
+    resolution: tuple[int, int]
     text_overlay: str
+    face_visible: bool
+    frame_timestamp_ms: int
+    frame_score: float
