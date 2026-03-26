@@ -17,7 +17,7 @@ import hashlib
 
 import pytest
 
-from contracts.clip import ClipDefinition, ClipList
+from contracts.clip import ClipList
 from contracts.scoring import ScoredScene, ScoredSceneList
 from modules.clip_builder import process
 
