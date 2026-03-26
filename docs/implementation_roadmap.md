@@ -1586,26 +1586,26 @@ shorts_factory/
 
 ### Exit Criteria
 
-- [ ] Publisher queries only `scheduled` clips with `scheduled_at <= now`
-- [ ] Video uploaded as unlisted with correct title, description, tags
-- [ ] Thumbnail uploaded separately after video confirmation
-- [ ] Privacy transitions to public after configurable delay
-- [ ] Retry strategy: 3 attempts, exponential backoff
-- [ ] Failed clips logged with reason, do not block queue
-- [ ] Cron script is standalone (does not import pipeline modules)
-- [ ] Integration test: mock YouTube API → publish flow → status updated to published
+- [x] Publisher queries only `scheduled` clips with `scheduled_at <= now`
+- [x] Video uploaded as unlisted with correct title, description, tags
+- [x] Thumbnail uploaded separately after video confirmation
+- [x] Privacy transitions to public after configurable delay
+- [x] Retry strategy: 3 attempts, exponential backoff
+- [x] Failed clips logged with reason, do not block queue
+- [x] Cron script is standalone (does not import pipeline modules)
+- [x] Integration test: mock YouTube API → publish flow → status updated to published
 
 ### Tasks
 
-- [ ] Implement `modules/publisher/youtube_client.py` with OAuth2 authentication and upload methods
-- [ ] Implement `modules/publisher/publish.py` with upload orchestration, retry, and status tracking
-- [ ] Implement `modules/publisher/visibility.py` with delayed unlisted → public transition
-- [ ] Create `scripts/publish_cron.py` as standalone entry point
+- [x] Implement `modules/publisher/youtube_client.py` with OAuth2 authentication and upload methods
+- [x] Implement `modules/publisher/publish.py` with upload orchestration, retry, and status tracking
+- [x] Implement `modules/publisher/visibility.py` with delayed unlisted → public transition
+- [x] Create `scripts/publish_cron.py` as standalone entry point
 - [ ] Implement cron scheduling documentation (crontab example)
-- [ ] Write unit tests for YouTube client (mock API responses: success, failure, quota)
-- [ ] Write unit tests for retry logic (1st, 2nd, 3rd failure, dead letter)
-- [ ] Write unit tests for visibility transition timing
-- [ ] Write integration test with mocked YouTube API: scheduled clip → published
+- [x] Write unit tests for YouTube client (mock API responses: success, failure, quota)
+- [x] Write unit tests for retry logic (1st, 2nd, 3rd failure, dead letter)
+- [x] Write unit tests for visibility transition timing
+- [x] Write integration test with mocked YouTube API: scheduled clip → published
 
 ---
 
@@ -1670,19 +1670,19 @@ shorts_factory/
 
 ### Exit Criteria
 
-- [ ] Post-pipeline summary printed with clips generated, scores, durations, timing
-- [ ] JSON report written to output directory
-- [ ] Quality metrics queryable (score distribution, face visibility, rejection rates)
-- [ ] Publishing report shows queue depth and upload status
-- [ ] Analytics do not affect pipeline determinism
+- [x] Post-pipeline summary printed with clips generated, scores, durations, timing
+- [x] JSON report written to output directory
+- [x] Quality metrics queryable (score distribution, face visibility, rejection rates)
+- [x] Publishing report shows queue depth and upload status
+- [x] Analytics do not affect pipeline determinism
 
 ### Tasks
 
-- [ ] Implement `modules/analytics/pipeline_report.py` with run summary aggregation
-- [ ] Implement `modules/analytics/quality_metrics.py` with score and face visibility stats
-- [ ] Implement `modules/analytics/publish_report.py` with publishing status tracking
+- [x] Implement `modules/analytics/pipeline_report.py` with run summary aggregation
+- [x] Implement `modules/analytics/quality_metrics.py` with score and face visibility stats
+- [x] Implement `modules/analytics/publish_report.py` with publishing status tracking
 - [ ] Add report generation as final step in `core/orchestrator.py`
-- [ ] Write unit tests for report aggregation (various clip counts, edge cases)
+- [x] Write unit tests for report aggregation (various clip counts, edge cases)
 - [ ] Write CLI command for on-demand quality and publishing reports
 
 ---

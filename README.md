@@ -137,7 +137,8 @@ shorts-generator/
 │   ├── metadata/                # Title/description/tags [Phase 7]
 │   ├── storage/                 # Filesystem persistence [Phase 8]
 │   ├── scheduler/               # Publish date assignment [Phase 8]
-│   └── publisher/               # YouTube upload [Phase 9+]
+│   ├── publisher/               # YouTube upload [Phase 9]
+│   └── analytics/               # Observability & reports [Phase 10]
 ├── core/
 │   ├── config.py                # YAML config loader + env overrides
 │   ├── logging.py               # Structured JSON logging
@@ -150,7 +151,8 @@ shorts-generator/
 ├── config/
 │   └── config.yaml              # All default configuration values
 ├── scripts/
-│   └── run_parallel.sh          # Parallel development orchestrator
+│   ├── run_parallel.sh          # Parallel development orchestrator
+│   └── publish_cron.py          # Standalone YouTube publish cron job
 ├── tests/                       # Unit + integration tests (120 passing)
 │   ├── unit/                    # Module unit tests
 │   └── integration/             # Pipeline integration tests
@@ -183,7 +185,8 @@ shorts-generator/
 | 6     | Rendering Pipeline       | ⚠️ Partial   | Hook/TTS/subtitle/renderer modules + DTOs + unit tests         |
 | 7     | Metadata & Thumbnail      | ⚠️ Partial | Thumbnail/metadata modules + DTOs + unit tests (orchestrator/integration pending) |
 | 8     | Storage & Scheduling      | ⚠️ Partial | Storage/scheduler modules + DTO + unit tests (DB/orchestrator integration pending) |
-| 9–10  | Publisher through Analytics | ⏳ Pending | Remaining downstream pipeline stages                             |
+| 9     | Publisher                 | ✅ Complete | YouTube upload, OAuth2, retry, visibility transition, cron entry point |
+| 10    | Observability & Analytics | ✅ Complete | Pipeline report, quality metrics, publish status, JSON report output |
 
 ## Development System
 
