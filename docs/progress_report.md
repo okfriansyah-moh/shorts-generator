@@ -1,6 +1,6 @@
 # Shorts Factory — Progress Report
 
-**Last Updated:** 2026-03-26
+**Last Updated:** 2026-03-27
 **Active Phase:** All Phases — Full Pipeline Wiring Complete + NVIDIA GPU Mode + Production Certified
 **Phase Status:** ✅ COMPLETE — All 16 stages wired in orchestrator, 535 tests passing
 
@@ -73,6 +73,22 @@ Full 12-part production certification audit performed. Two critical runtime bugs
 | 10   | Performance + Resource            | ✅ PASS — no memory blowup, streaming used                              |
 | 11   | Security                          | ✅ PASS — no eval/exec, parameterized queries, list-form subprocess     |
 | 12   | Document Consistency              | ⚠️ NOTE — DTO filenames in dto_contracts.md differ from code (cosmetic) |
+
+---
+
+## PR Review Remediation (2026-03-27)
+
+**Status:** ✅ COMPLETE — 5/5 review items applied
+
+Copilot PR review flagged 5 issues across 4 files. All validated as in-phase and applied.
+
+| #   | File                                  | Issue                                                                                            | Classification | Decision |
+| --- | ------------------------------------- | ------------------------------------------------------------------------------------------------ | -------------- | -------- |
+| 1   | `core/orchestrator.py`                | Unconditional `update_pipeline_status("analyzing")` regresses resumed runs already in "building" | BUG            | APPLIED  |
+| 2   | `modules/transcription/transcribe.py` | `compute_type` defaults to "float16" even when device resolves to "cpu"                          | BUG            | APPLIED  |
+| 3   | `core/dependencies.py`                | NVENC encoder check ignores `result.returncode` from `ffmpeg -encoders`                          | BUG            | APPLIED  |
+| 4   | `core/dependencies.py`                | NVENC check hardcoded to `h264_nvenc` ignoring `gpu.encoder` config                              | IMPROVEMENT    | APPLIED  |
+| 5   | `core/gpu.py`                         | `logger.info("GPU mode enabled")` in hot path (per-clip) creates noisy logs                      | IMPROVEMENT    | APPLIED  |
 
 ---
 
