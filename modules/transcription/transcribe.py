@@ -57,6 +57,16 @@ def transcribe(
     video_id = ingestion_result.video_id
     video_path = ingestion_result.path
 
+    # Resolve transcription device from GPU config
+    gpu_cfg = config.get("gpu", {})
+    gpu_enabled = bool(gpu_cfg.get("enabled", False))
+    device = gpu_cfg.get("transcription_device", "cuda") if gpu_enabled else "cpu"
+    # Derive compute_type from the resolved device to avoid float16-on-CPU footgun
+    if device == "cpu":
+        compute_type = "int8"
+    else:
+        compute_type = gpu_cfg.get("transcription_compute_type", "float16") if gpu_enabled else "int8"
+
     logger.info(
         "Transcription stage started",
         extra={
@@ -64,13 +74,16 @@ def transcribe(
             "video_id": video_id,
             "model_size": model_size,
             "language": language,
+            "device": device,
+            "compute_type": compute_type,
         },
     )
 
     wav_path = _extract_audio_to_wav(video_path, video_id, config)
     try:
         transcript = _run_faster_whisper(
-            wav_path, video_id, model_size, language, beam_size
+            wav_path, video_id, model_size, language, beam_size,
+            device=device, compute_type=compute_type,
         )
     finally:
         _cleanup_temp_file(wav_path)
@@ -153,10 +166,12 @@ def _run_faster_whisper(
     model_size: str,
     language: str,
     beam_size: int,
+    device: str = "cpu",
+    compute_type: str = "int8",
 ) -> Transcript:
     """Run faster-whisper transcription and return a Transcript DTO.
 
-    Uses deterministic settings: fixed model size, fixed beam size, CPU mode,
+    Uses deterministic settings: fixed model size, fixed beam size,
     no VAD filter to ensure reproducibility across runs.
 
     Args:
@@ -165,6 +180,8 @@ def _run_faster_whisper(
         model_size: faster-whisper model name (e.g. "small", "base").
         language: Language code (e.g. "en").
         beam_size: Beam search width for deterministic decoding.
+        device: Compute device ("cpu" or "cuda").
+        compute_type: Model precision ("int8" for CPU, "float16" for GPU).
 
     Returns:
         Transcript DTO.
@@ -182,15 +199,33 @@ def _run_faster_whisper(
 
     logger.debug(
         "Loading faster-whisper model",
-        extra={"stage": "transcription", "video_id": video_id, "model_size": model_size},
+        extra={
+            "stage": "transcription",
+            "video_id": video_id,
+            "model_size": model_size,
+            "device": device,
+            "compute_type": compute_type,
+        },
     )
 
     try:
-        model = WhisperModel(model_size, device="cpu", compute_type="int8")
+        model = WhisperModel(model_size, device=device, compute_type=compute_type)
     except Exception as exc:
-        raise RuntimeError(
-            f"Failed to load faster-whisper model '{model_size}': {exc}"
-        ) from exc
+        # Fall back to CPU if CUDA fails
+        if device != "cpu":
+            logger.warning(
+                "GPU model load failed, falling back to CPU",
+                extra={
+                    "stage": "transcription",
+                    "video_id": video_id,
+                    "error": str(exc)[:200],
+                },
+            )
+            model = WhisperModel(model_size, device="cpu", compute_type="int8")
+        else:
+            raise RuntimeError(
+                f"Failed to load faster-whisper model '{model_size}': {exc}"
+            ) from exc
 
     segments_raw, info = model.transcribe(
         wav_path,

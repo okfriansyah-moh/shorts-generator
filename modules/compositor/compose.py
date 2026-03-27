@@ -21,6 +21,8 @@ from contracts.compositor import CompositeStream
 from contracts.face import FaceBBox, FaceDetectionResult, SceneFaceData
 from contracts.ingestion import IngestionResult
 
+from core.gpu import resolve_gpu_settings
+
 from .face_crop import build_face_crop_filter
 from .fallback import build_fallback_filter, build_fallback_filter_simple
 from .gameplay_crop import build_gameplay_crop_filter
@@ -123,6 +125,7 @@ def _compose_split_layout(
     src_height: int,
     fps: int,
     timeout: int,
+    config: dict,
 ) -> None:
     """Produce split gameplay/face composite with face zoom via FFmpeg."""
     start_sec = clip.start_time / 1000.0
@@ -140,6 +143,7 @@ def _compose_split_layout(
         f"[gameplay][face]vstack=inputs=2[v]"
     )
 
+    gpu_settings = resolve_gpu_settings(config)
     args = [
         "-ss", str(start_sec),
         "-to", str(end_sec),
@@ -147,9 +151,7 @@ def _compose_split_layout(
         "-filter_complex", filter_complex,
         "-map", "[v]",
         "-an",
-        "-c:v", "libx264",
-        "-crf", "20",
-        "-preset", "medium",
+    ] + gpu_settings["ffmpeg_encode_args"] + [
         "-r", str(fps),
         output_path,
     ]
@@ -164,6 +166,7 @@ def _compose_split_layout_simple(
     src_height: int,
     fps: int,
     timeout: int,
+    config: dict,
 ) -> None:
     """Simplified split layout without zoom used on first retry."""
     start_sec = clip.start_time / 1000.0
@@ -189,6 +192,7 @@ def _compose_split_layout_simple(
         f"[gameplay][face]vstack=inputs=2[v]"
     )
 
+    gpu_settings = resolve_gpu_settings(config)
     args = [
         "-ss", str(start_sec),
         "-to", str(end_sec),
@@ -196,9 +200,7 @@ def _compose_split_layout_simple(
         "-filter_complex", filter_complex,
         "-map", "[v]",
         "-an",
-        "-c:v", "libx264",
-        "-crf", "28",
-        "-preset", "fast",
+    ] + gpu_settings["ffmpeg_encode_args_fallback"] + [
         "-r", str(fps),
         output_path,
     ]
@@ -211,6 +213,7 @@ def _compose_fallback_layout(
     clip: ClipDefinition,
     fps: int,
     timeout: int,
+    config: dict,
 ) -> None:
     """Produce full-gameplay fallback layout with Ken Burns effect."""
     start_sec = clip.start_time / 1000.0
@@ -218,6 +221,7 @@ def _compose_fallback_layout(
 
     filter_complex = build_fallback_filter("[0:v]", "[v]", clip.duration, fps)
 
+    gpu_settings = resolve_gpu_settings(config)
     args = [
         "-ss", str(start_sec),
         "-to", str(end_sec),
@@ -225,9 +229,7 @@ def _compose_fallback_layout(
         "-filter_complex", filter_complex,
         "-map", "[v]",
         "-an",
-        "-c:v", "libx264",
-        "-crf", "20",
-        "-preset", "medium",
+    ] + gpu_settings["ffmpeg_encode_args"] + [
         "-r", str(fps),
         output_path,
     ]
@@ -240,6 +242,7 @@ def _compose_fallback_layout_simple(
     clip: ClipDefinition,
     fps: int,
     timeout: int,
+    config: dict,
 ) -> None:
     """Simplified fallback layout (no zoompan) used on first retry."""
     start_sec = clip.start_time / 1000.0
@@ -247,6 +250,7 @@ def _compose_fallback_layout_simple(
 
     filter_complex = build_fallback_filter_simple("[0:v]", "[v]")
 
+    gpu_settings = resolve_gpu_settings(config)
     args = [
         "-ss", str(start_sec),
         "-to", str(end_sec),
@@ -254,9 +258,7 @@ def _compose_fallback_layout_simple(
         "-filter_complex", filter_complex,
         "-map", "[v]",
         "-an",
-        "-c:v", "libx264",
-        "-crf", "28",
-        "-preset", "fast",
+    ] + gpu_settings["ffmpeg_encode_args_fallback"] + [
         "-r", str(fps),
         output_path,
     ]
@@ -355,6 +357,7 @@ def process(
                 _compose_split_layout(
                     source_path, output_path, clip,
                     bbox, src_width, src_height, fps, ffmpeg_timeout,
+                    config,
                 )
             except RuntimeError:
                 logger.warning(
@@ -372,6 +375,7 @@ def process(
                 _compose_split_layout_simple(
                     source_path, output_path, clip,
                     src_width, src_height, fps, ffmpeg_timeout,
+                    config,
                 )
         else:
             # has_face=True but no valid bbox found; fall through to fallback
@@ -381,7 +385,8 @@ def process(
     if not has_face:
         try:
             _compose_fallback_layout(
-                source_path, output_path, clip, fps, ffmpeg_timeout
+                source_path, output_path, clip, fps, ffmpeg_timeout,
+                config,
             )
         except RuntimeError:
             logger.warning(
@@ -397,7 +402,8 @@ def process(
                 },
             )
             _compose_fallback_layout_simple(
-                source_path, output_path, clip, fps, ffmpeg_timeout
+                source_path, output_path, clip, fps, ffmpeg_timeout,
+                config,
             )
 
     logger.info(

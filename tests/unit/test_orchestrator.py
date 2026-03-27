@@ -11,6 +11,7 @@ from core.orchestrator import (
     BATCH_LEVEL_STAGES,
     PIPELINE_STATES,
     CLIP_STATES,
+    Orchestrator,
     get_stage_index,
     get_resume_stage_index,
 )
@@ -94,3 +95,68 @@ class TestStateConstants:
         assert "generated" in CLIP_STATES
         assert "published" in CLIP_STATES
         assert "failed" in CLIP_STATES
+
+
+class TestRunTranscriptionSignature:
+    """Verify run_transcription calls transcribe() with correct arity."""
+
+    def test_transcribe_accepts_two_args(self):
+        """transcribe() must accept exactly 2 positional params."""
+        import inspect
+        from modules.transcription.transcribe import transcribe
+
+        sig = inspect.signature(transcribe)
+        params = [
+            p for p in sig.parameters.values()
+            if p.default is inspect.Parameter.empty
+        ]
+        assert len(params) == 2, (
+            f"transcribe() should take exactly 2 required params, got {len(params)}"
+        )
+
+    def test_run_transcription_forwards_two_args(self):
+        """run_transcription must NOT pass scene_list to transcribe()."""
+        import inspect
+        import ast
+        import textwrap
+
+        src = inspect.getsource(Orchestrator.run_transcription)
+        src = textwrap.dedent(src)
+        tree = ast.parse(src)
+
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                func = node.func
+                if isinstance(func, ast.Name) and func.id == "transcribe":
+                    assert len(node.args) == 2, (
+                        f"transcribe() called with {len(node.args)} args, expected 2"
+                    )
+
+
+class TestResumeLogic:
+    """Verify the orchestrator checks for active runs before creating new ones."""
+
+    def test_run_method_calls_get_active_run(self):
+        """The run() method must call get_active_run before create_pipeline_run."""
+        import inspect
+
+        src = inspect.getsource(Orchestrator.run)
+        active_run_pos = src.find("get_active_run")
+        create_run_pos = src.find("create_pipeline_run")
+        assert active_run_pos != -1, "run() must call get_active_run"
+        assert create_run_pos != -1, "run() must call create_pipeline_run"
+        assert active_run_pos < create_run_pos, (
+            "get_active_run must be called BEFORE create_pipeline_run"
+        )
+
+    def test_run_method_uses_get_active_run_for_resume(self):
+        """run() must use get_active_run (not get_last_completed_stage) for resume."""
+        import inspect
+
+        src = inspect.getsource(Orchestrator.run)
+        assert "get_active_run" in src, (
+            "run() must use get_active_run for resume detection"
+        )
+        assert "get_last_completed_stage(self._run_id)" not in src, (
+            "run() must not pass run_id to get_last_completed_stage"
+        )

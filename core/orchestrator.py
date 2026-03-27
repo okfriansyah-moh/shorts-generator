@@ -336,7 +336,7 @@ class Orchestrator:
         """
         from modules.transcription.transcribe import transcribe
 
-        return transcribe(ingestion_result, self._config, scene_list)
+        return transcribe(ingestion_result, self._config)
 
     # ------------------------------------------------------------------
     # Stage: face_detection
@@ -717,25 +717,49 @@ class Orchestrator:
 
         try:
             # ── Stage 0: ingestion ──────────────────────────────────────
+            # Ingestion runs unconditionally: we need video_id (derived from
+            # file content hash) to look up any active pipeline run.  The
+            # stage is idempotent — duplicate DB inserts are guarded by
+            # ON CONFLICT DO NOTHING, and ffprobe + hashing is fast (<10s).
             ingestion_result = self._run_stage_with_retry(
                 "ingestion", self.run_ingestion,
             )
             self._current_video_id = ingestion_result.video_id
             video_id = ingestion_result.video_id
 
-            # Create pipeline_run (requires video to exist for FK)
-            self._adapter.create_pipeline_run(
-                run_id=self._run_id,
-                video_id=video_id,
-                config_snapshot=config_snapshot,
-            )
-            self._adapter.update_pipeline_status(self._run_id, "analyzing")
-            self._adapter.update_checkpoint(self._run_id, "ingestion")
+            # Check for an active (non-terminal) pipeline run to resume
+            active_run = self._adapter.get_active_run(video_id)
+            if active_run is not None:
+                # Resume existing run
+                self._run_id = active_run["run_id"]
+                last_completed = active_run.get("last_completed_stage")
+                logger.info(
+                    "Resuming pipeline run from checkpoint",
+                    extra={
+                        "video_id": video_id,
+                        "run_id": self._run_id,
+                        "checkpoint": last_completed,
+                    },
+                )
+            else:
+                # Create fresh pipeline run
+                self._adapter.create_pipeline_run(
+                    run_id=self._run_id,
+                    video_id=video_id,
+                    config_snapshot=config_snapshot,
+                )
+                last_completed = None
+
+            # Only set "analyzing" for fresh runs or runs still in early stages.
+            # A resumed run past clip_builder is already "building" — don't regress.
+            if last_completed is None:
+                self._adapter.update_pipeline_status(self._run_id, "analyzing")
+                self._adapter.update_checkpoint(self._run_id, "ingestion")
+            elif get_stage_index(last_completed) < get_stage_index("clip_builder"):
+                self._adapter.update_pipeline_status(self._run_id, "analyzing")
 
             _reconfigure_logging_for_run(self._config, video_id)
 
-            # Check for resume
-            last_completed = self._adapter.get_last_completed_stage(self._run_id)
             resume_idx = get_resume_stage_index(last_completed)
 
             # ── Stage 1: scene_splitter ─────────────────────────────────

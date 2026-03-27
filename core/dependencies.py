@@ -1,7 +1,9 @@
 """External dependency checker for Shorts Factory.
 
 Verifies that FFmpeg, FFprobe, and the correct Python version are available
-at startup. Exits with code 1 and human-readable instructions on failure.
+at startup. When GPU mode is enabled, also checks for nvidia-smi and
+FFmpeg NVENC encoder support. Exits with code 1 and human-readable
+instructions on failure.
 """
 
 from __future__ import annotations
@@ -10,6 +12,7 @@ import logging
 import shutil
 import subprocess
 import sys
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -129,8 +132,14 @@ def check_ffprobe() -> bool:
     return True
 
 
-def check_all_dependencies() -> bool:
+def check_all_dependencies(config: dict[str, Any] | None = None) -> bool:
     """Run all dependency checks.
+
+    When config is provided and gpu.enabled is True, also verifies
+    NVIDIA GPU availability and FFmpeg NVENC encoder support.
+
+    Args:
+        config: Optional pipeline configuration dict.
 
     Returns:
         True if all checks pass.
@@ -141,8 +150,136 @@ def check_all_dependencies() -> bool:
     check_python_version()
     check_ffmpeg()
     check_ffprobe()
+
+    gpu_enabled = (
+        config is not None
+        and config.get("gpu", {}).get("enabled", False)
+    )
+    if gpu_enabled:
+        gpu_encoder = config.get("gpu", {}).get("encoder", "h264_nvenc")
+        check_nvidia_gpu(encoder=gpu_encoder)
+        check_cuda_for_whisper()
+
     logger.info(
         "All dependencies verified",
-        extra={"stage": "startup", "video_id": ""},
+        extra={"stage": "startup", "video_id": "", "gpu_enabled": gpu_enabled},
     )
     return True
+
+
+def check_nvidia_gpu(encoder: str = "h264_nvenc") -> bool:
+    """Verify NVIDIA GPU is available via nvidia-smi and FFmpeg encoder support.
+
+    Args:
+        encoder: The NVENC encoder name to verify (default: h264_nvenc).
+
+    Returns:
+        True if GPU and encoder are available.
+
+    Raises:
+        SystemExit: If nvidia-smi is missing or FFmpeg lacks the encoder.
+    """
+    if not shutil.which("nvidia-smi"):
+        logger.critical(
+            "nvidia-smi not found. GPU mode requires NVIDIA drivers. "
+            "Install from: https://www.nvidia.com/Download/index.aspx",
+            extra={"stage": "startup", "video_id": ""},
+        )
+        sys.exit(1)
+
+    try:
+        result = subprocess.run(
+            ["nvidia-smi", "--query-gpu=name,driver_version", "--format=csv,noheader"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode != 0:
+            logger.critical(
+                "nvidia-smi returned non-zero exit code",
+                extra={"stage": "startup", "video_id": "", "returncode": result.returncode},
+            )
+            sys.exit(1)
+        gpu_info = result.stdout.strip().split("\n")[0] if result.stdout else "unknown"
+        logger.info(
+            "NVIDIA GPU found",
+            extra={"stage": "startup", "video_id": "", "gpu_info": gpu_info},
+        )
+    except (subprocess.SubprocessError, OSError) as exc:
+        logger.critical(
+            "nvidia-smi check failed",
+            extra={"stage": "startup", "video_id": "", "error": str(exc)},
+        )
+        sys.exit(1)
+
+    # Verify FFmpeg has the configured NVENC encoder
+    try:
+        result = subprocess.run(
+            ["ffmpeg", "-encoders"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode != 0:
+            logger.critical(
+                "ffmpeg -encoders returned non-zero exit code",
+                extra={
+                    "stage": "startup", "video_id": "",
+                    "returncode": result.returncode,
+                    "stderr": (result.stderr or "")[:200],
+                },
+            )
+            sys.exit(1)
+        if encoder not in result.stdout:
+            logger.critical(
+                f"FFmpeg does not support {encoder}. Rebuild FFmpeg with --enable-nvenc.",
+                extra={"stage": "startup", "video_id": "", "encoder": encoder},
+            )
+            sys.exit(1)
+        logger.info(
+            "FFmpeg NVENC encoder available",
+            extra={"stage": "startup", "video_id": "", "encoder": encoder},
+        )
+    except (subprocess.SubprocessError, OSError) as exc:
+        logger.critical(
+            "FFmpeg encoder check failed",
+            extra={"stage": "startup", "video_id": "", "error": str(exc)},
+        )
+        sys.exit(1)
+
+    return True
+
+
+def check_cuda_for_whisper() -> bool:
+    """Verify PyTorch CUDA support is available for GPU transcription.
+
+    This is a soft check — logs a warning but does not exit, since
+    the transcription module can fall back to CPU mode.
+
+    Returns:
+        True if CUDA is available, False otherwise.
+    """
+    try:
+        import torch  # type: ignore[import]
+        if torch.cuda.is_available():
+            device_name = torch.cuda.get_device_name(0)
+            logger.info(
+                "CUDA available for transcription",
+                extra={"stage": "startup", "video_id": "", "device": device_name},
+            )
+            return True
+        else:
+            logger.warning(
+                "PyTorch CUDA not available — transcription will fall back to CPU. "
+                "Install PyTorch with CUDA: pip install torch --index-url "
+                "https://download.pytorch.org/whl/cu121",
+                extra={"stage": "startup", "video_id": ""},
+            )
+            return False
+    except ImportError:
+        logger.warning(
+            "PyTorch not installed — transcription CUDA check skipped. "
+            "GPU transcription will fall back to CPU.",
+            extra={"stage": "startup", "video_id": ""},
+        )
+        return False

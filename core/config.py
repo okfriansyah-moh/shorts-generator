@@ -52,6 +52,8 @@ ENV_OVERRIDES: dict[str, tuple[str, ...]] = {
     "SF_TRANSCRIPTION_MODEL": ("transcription", "model_size"),
     "SF_TRANSCRIPTION_LANGUAGE": ("transcription", "language"),
     "SF_FFMPEG_TIMEOUT": ("pipeline", "ffmpeg_timeout"),
+    "SF_GPU_ENABLED": ("gpu", "enabled"),
+    "SF_GPU_ENCODER": ("gpu", "encoder"),
 }
 
 

@@ -1,8 +1,94 @@
 # Shorts Factory — Progress Report
 
 **Last Updated:** 2026-03-27
-**Active Phase:** All Phases — Full Pipeline Wiring Complete
-**Phase Status:** ✅ COMPLETE — All 16 stages wired in orchestrator, 517 tests passing
+**Active Phase:** All Phases — Full Pipeline Wiring Complete + NVIDIA GPU Mode + Production Certified
+**Phase Status:** ✅ COMPLETE — All 16 stages wired in orchestrator, 535 tests passing
+
+---
+
+## NVIDIA Optimized Mode (Non-Breaking Enhancement)
+
+**Status:** ✅ COMPLETE
+
+Dual execution mode — default CPU-only and optional NVIDIA GPU acceleration (RTX 3080 Ti target).
+
+### Summary
+
+- **CLI:** `python run_pipeline.py --gpu input.mp4` or `gpu.enabled: true` in config.yaml
+- **NVENC encoding:** h264_nvenc replaces libx264 in compositor + renderer when GPU mode active
+- **CUDA transcription:** faster-whisper uses `device=cuda, compute_type=float16` with automatic CPU fallback
+- **Non-breaking:** GPU section is optional; absent or `enabled: false` preserves exact CPU behavior
+- **Dependency checks:** nvidia-smi + FFmpeg NVENC encoder verified at startup when GPU enabled
+- **Architecture compliance:** No new DTOs, no cross-module imports, config-driven only
+
+### Files Created/Modified
+
+| File                                  | Change                                                                                           |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `core/gpu.py`                         | NEW — GPU configuration resolver (`resolve_gpu_settings()`)                                      |
+| `config/config.yaml`                  | Added optional `gpu:` section with NVENC params                                                  |
+| `core/config.py`                      | Added `SF_GPU_ENABLED`, `SF_GPU_ENCODER` env overrides                                           |
+| `run_pipeline.py`                     | Added `--gpu` CLI flag, passes config to dependency check                                        |
+| `core/dependencies.py`                | Added `check_nvidia_gpu()`, `check_cuda_for_whisper()`, updated `check_all_dependencies(config)` |
+| `modules/transcription/transcribe.py` | Parameterized device/compute_type from GPU config with CPU fallback                              |
+| `modules/renderer/render.py`          | GPU-aware encoding in `_build_render_command()` via `resolve_gpu_settings()`                     |
+| `modules/compositor/compose.py`       | All 4 layout functions use `resolve_gpu_settings()` for encoding args                            |
+| `tests/unit/test_gpu.py`              | NEW — 14 tests covering CPU/GPU settings resolution                                              |
+
+---
+
+## Production Certification Audit (2026-03-26)
+
+**Status:** ✅ CERTIFIED
+
+Full 12-part production certification audit performed. Two critical runtime bugs discovered and fixed.
+
+### Critical Bugs Fixed
+
+| Bug                                                                                                | Root Cause                                             | Fix                                                                             |
+| -------------------------------------------------------------------------------------------------- | ------------------------------------------------------ | ------------------------------------------------------------------------------- |
+| `run_transcription()` passes 3 args to `transcribe()` which only accepts 2                         | `scene_list` forwarded to function that doesn't use it | Removed `scene_list` from `transcribe()` call                                   |
+| Resume never activates: `get_last_completed_stage(run_id)` passes `run_id` to `video_id` parameter | Parameter mismatch + no active run reuse               | Replaced with `get_active_run(video_id)` check before creating new pipeline run |
+
+### Files Modified
+
+| File                              | Change                                                                          |
+| --------------------------------- | ------------------------------------------------------------------------------- |
+| `core/orchestrator.py`            | Fixed transcribe() call arity; rewrote resume logic to check for active runs    |
+| `tests/unit/test_orchestrator.py` | Added 4 regression tests (transcribe signature, resume logic, active run check) |
+
+### Audit Results (12 Parts)
+
+| Part | Area                              | Verdict                                                                 |
+| ---- | --------------------------------- | ----------------------------------------------------------------------- |
+| 1    | Pipeline Completeness (16 stages) | ✅ PASS — all stages wired and executable                               |
+| 2    | Output Correctness                | ✅ PASS — artifact generation verified                                  |
+| 3    | CPU vs GPU Parity                 | ✅ PASS — config-driven, identical pipeline                             |
+| 4    | Architecture Compliance           | ✅ PASS — zero violations                                               |
+| 5    | Determinism + Idempotency         | ✅ PASS — content-addressable IDs, ON CONFLICT DO NOTHING               |
+| 6    | Orchestrator Correctness          | ✅ PASS (after fix) — resume logic correct                              |
+| 7    | Database Consistency              | ✅ PASS — state transitions guarded                                     |
+| 8    | Failure Handling                  | ✅ PASS — graceful degradation, bounded retries                         |
+| 9    | Test Coverage                     | ⚠️ NOTE — 535 tests, no E2E integration test                            |
+| 10   | Performance + Resource            | ✅ PASS — no memory blowup, streaming used                              |
+| 11   | Security                          | ✅ PASS — no eval/exec, parameterized queries, list-form subprocess     |
+| 12   | Document Consistency              | ⚠️ NOTE — DTO filenames in dto_contracts.md differ from code (cosmetic) |
+
+---
+
+## PR Review Remediation (2026-03-27)
+
+**Status:** ✅ COMPLETE — 5/5 review items applied
+
+Copilot PR review flagged 5 issues across 4 files. All validated as in-phase and applied.
+
+| #   | File                                  | Issue                                                                                            | Classification | Decision |
+| --- | ------------------------------------- | ------------------------------------------------------------------------------------------------ | -------------- | -------- |
+| 1   | `core/orchestrator.py`                | Unconditional `update_pipeline_status("analyzing")` regresses resumed runs already in "building" | BUG            | APPLIED  |
+| 2   | `modules/transcription/transcribe.py` | `compute_type` defaults to "float16" even when device resolves to "cpu"                          | BUG            | APPLIED  |
+| 3   | `core/dependencies.py`                | NVENC encoder check ignores `result.returncode` from `ffmpeg -encoders`                          | BUG            | APPLIED  |
+| 4   | `core/dependencies.py`                | NVENC check hardcoded to `h264_nvenc` ignoring `gpu.encoder` config                              | IMPROVEMENT    | APPLIED  |
+| 5   | `core/gpu.py`                         | `logger.info("GPU mode enabled")` in hot path (per-clip) creates noisy logs                      | IMPROVEMENT    | APPLIED  |
 
 ---
 
