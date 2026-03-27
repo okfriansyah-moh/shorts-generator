@@ -61,7 +61,11 @@ def transcribe(
     gpu_cfg = config.get("gpu", {})
     gpu_enabled = bool(gpu_cfg.get("enabled", False))
     device = gpu_cfg.get("transcription_device", "cuda") if gpu_enabled else "cpu"
-    compute_type = gpu_cfg.get("transcription_compute_type", "float16") if gpu_enabled else "int8"
+    # Derive compute_type from the resolved device to avoid float16-on-CPU footgun
+    if device == "cpu":
+        compute_type = "int8"
+    else:
+        compute_type = gpu_cfg.get("transcription_compute_type", "float16") if gpu_enabled else "int8"
 
     logger.info(
         "Transcription stage started",

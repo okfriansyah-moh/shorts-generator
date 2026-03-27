@@ -750,9 +750,13 @@ class Orchestrator:
                 )
                 last_completed = None
 
-            self._adapter.update_pipeline_status(self._run_id, "analyzing")
+            # Only set "analyzing" for fresh runs or runs still in early stages.
+            # A resumed run past clip_builder is already "building" — don't regress.
             if last_completed is None:
+                self._adapter.update_pipeline_status(self._run_id, "analyzing")
                 self._adapter.update_checkpoint(self._run_id, "ingestion")
+            elif get_stage_index(last_completed) < get_stage_index("clip_builder"):
+                self._adapter.update_pipeline_status(self._run_id, "analyzing")
 
             _reconfigure_logging_for_run(self._config, video_id)
 

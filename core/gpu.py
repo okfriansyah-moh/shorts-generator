@@ -131,7 +131,7 @@ def _gpu_settings(gpu_cfg: dict[str, Any], config: dict[str, Any]) -> dict[str, 
         "-pix_fmt", pix_fmt,
     ]
 
-    logger.info(
+    logger.debug(
         "GPU mode enabled",
         extra={
             "stage": "startup",

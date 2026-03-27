@@ -156,7 +156,8 @@ def check_all_dependencies(config: dict[str, Any] | None = None) -> bool:
         and config.get("gpu", {}).get("enabled", False)
     )
     if gpu_enabled:
-        check_nvidia_gpu()
+        gpu_encoder = config.get("gpu", {}).get("encoder", "h264_nvenc")
+        check_nvidia_gpu(encoder=gpu_encoder)
         check_cuda_for_whisper()
 
     logger.info(
@@ -166,14 +167,17 @@ def check_all_dependencies(config: dict[str, Any] | None = None) -> bool:
     return True
 
 
-def check_nvidia_gpu() -> bool:
-    """Verify NVIDIA GPU is available via nvidia-smi and FFmpeg NVENC support.
+def check_nvidia_gpu(encoder: str = "h264_nvenc") -> bool:
+    """Verify NVIDIA GPU is available via nvidia-smi and FFmpeg encoder support.
+
+    Args:
+        encoder: The NVENC encoder name to verify (default: h264_nvenc).
 
     Returns:
-        True if GPU and NVENC are available.
+        True if GPU and encoder are available.
 
     Raises:
-        SystemExit: If nvidia-smi is missing or FFmpeg lacks NVENC support.
+        SystemExit: If nvidia-smi is missing or FFmpeg lacks the encoder.
     """
     if not shutil.which("nvidia-smi"):
         logger.critical(
@@ -208,7 +212,7 @@ def check_nvidia_gpu() -> bool:
         )
         sys.exit(1)
 
-    # Verify FFmpeg has NVENC encoder support
+    # Verify FFmpeg has the configured NVENC encoder
     try:
         result = subprocess.run(
             ["ffmpeg", "-encoders"],
@@ -216,15 +220,25 @@ def check_nvidia_gpu() -> bool:
             text=True,
             timeout=10,
         )
-        if "h264_nvenc" not in result.stdout:
+        if result.returncode != 0:
             logger.critical(
-                "FFmpeg does not support h264_nvenc. Rebuild FFmpeg with --enable-nvenc.",
-                extra={"stage": "startup", "video_id": ""},
+                "ffmpeg -encoders returned non-zero exit code",
+                extra={
+                    "stage": "startup", "video_id": "",
+                    "returncode": result.returncode,
+                    "stderr": (result.stderr or "")[:200],
+                },
+            )
+            sys.exit(1)
+        if encoder not in result.stdout:
+            logger.critical(
+                f"FFmpeg does not support {encoder}. Rebuild FFmpeg with --enable-nvenc.",
+                extra={"stage": "startup", "video_id": "", "encoder": encoder},
             )
             sys.exit(1)
         logger.info(
             "FFmpeg NVENC encoder available",
-            extra={"stage": "startup", "video_id": ""},
+            extra={"stage": "startup", "video_id": "", "encoder": encoder},
         )
     except (subprocess.SubprocessError, OSError) as exc:
         logger.critical(
