@@ -21,6 +21,15 @@ from modules.thumbnail.thumbnail import (
     _select_timestamp,
     process,
 )
+import modules.thumbnail.thumbnail as _thumb_mod
+
+
+@pytest.fixture(autouse=True)
+def _reset_drawtext_cache():
+    """Reset drawtext filter availability cache between tests."""
+    _thumb_mod._drawtext_available = None
+    yield
+    _thumb_mod._drawtext_available = None
 
 
 # ---------------------------------------------------------------------------
@@ -301,8 +310,9 @@ class TestProcess:
              patch("os.path.getsize", return_value=99):
             process(clip, face_result, hook, ingestion, config, str(tmp_path))
 
-        mock_run.assert_called_once()
-        cmd = mock_run.call_args[0][0]
+        # 2 calls: drawtext availability check + actual FFmpeg thumbnail
+        assert mock_run.call_count == 2
+        cmd = mock_run.call_args_list[1][0][0]
         assert "ffmpeg" in cmd[0]
 
     def test_idempotent_returns_cached(self, tmp_path):

@@ -8,7 +8,7 @@ paths:
   database: "output/shorts_factory.db"
 
 pipeline:
-  min_clip_duration: 30
+  min_clip_duration: 45
   max_clip_duration: 60
   max_clips_per_run: 20
   min_clips_per_run: 5
@@ -54,7 +54,7 @@ scoring:
   min_composite_score: 0.2
 
 clip_builder:
-  target_duration_min: 30
+  target_duration_min: 45
   target_duration_max: 60
   max_clips_per_video: 15
   min_clips_per_video: 1

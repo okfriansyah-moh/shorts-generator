@@ -247,12 +247,12 @@ def _scan_pip_region(
     if not frame_paths:
         return None
 
-    scores: dict[str, float] = {name: 0.0 for name, *_ in _PIP_CANDIDATES}
+    per_frame: dict[str, list[float]] = {name: [] for name, *_ in _PIP_CANDIDATES}
 
     try:
         for fp in frame_paths:
             try:
-                img = Image.open(fp).resize((320, 240)).convert("HSV")
+                img = Image.open(fp).resize((640, 480)).convert("HSV")
             except Exception:
                 continue
             w, h = img.size
@@ -263,12 +263,13 @@ def _scan_pip_region(
                 pixels = list(region.getdata())
                 if not pixels:
                     continue
-                # Skin-tone in PIL HSV: H in [0,36] or [240,255], S>=30, V>=50
+                # Skin-tone in PIL HSV: H in [0,28] or [245,255], S>=50, V>=70
+                # Tighter than before to avoid orange/yellow game UI elements
                 skin = sum(
                     1 for hue, sat, val in pixels
-                    if (hue <= 36 or hue >= 240) and sat >= 30 and val >= 50
+                    if (hue <= 28 or hue >= 245) and sat >= 50 and val >= 70
                 )
-                scores[name] += skin / len(pixels)
+                per_frame[name].append(skin / len(pixels))
     finally:
         for fp in frame_paths:
             try:
@@ -277,8 +278,13 @@ def _scan_pip_region(
             except OSError:
                 pass
 
-    if not scores:
+    if not per_frame:
         return None
+    # Use minimum density across frames — PiP face cam must be consistently present
+    scores = {
+        name: min(densities) if densities else 0.0
+        for name, densities in per_frame.items()
+    }
     best_name = max(scores, key=lambda k: scores[k])
     if scores[best_name] < _MIN_SKIN_DENSITY:
         return None

@@ -156,11 +156,11 @@ def _run_ffmpeg(args: list[str], timeout: int = 300) -> None:
                 "stage": "compositor",
                 "video_id": "",
                 "exit_code": result.returncode,
-                "stderr": result.stderr[:300],
+                "stderr": result.stderr[-1500:],
             },
         )
         raise RuntimeError(
-            f"FFmpeg failed (exit {result.returncode}): {result.stderr[:500]}"
+            f"FFmpeg failed (exit {result.returncode}): {result.stderr[-1500:]}"
         )
 
 
@@ -199,15 +199,16 @@ def _compose_split_layout(
     end_sec = clip.end_time / 1000.0
 
     gameplay_filter = build_gameplay_crop_filter(
-        "[0:v]", "[gameplay]", OUTPUT_WIDTH, GAMEPLAY_HEIGHT
+        "[gp_in]", "[gameplay]", OUTPUT_WIDTH, GAMEPLAY_HEIGHT
     )
     face_filter = build_face_crop_filter(
-        "[0:v]", "[face]", bbox, src_width, src_height, ZOOM_FACTOR
+        "[fc_in]", "[face]", bbox, src_width, src_height, ZOOM_FACTOR
     )
     filter_complex = (
+        f"[0:v]split=2[gp_in][fc_in];"
         f"{gameplay_filter};"
         f"{face_filter};"
-        f"[gameplay][face]vstack=inputs=2[v]"
+        f"[gameplay][face]vstack=inputs=2,scale={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}[v]"
     )
 
     gpu_settings = resolve_gpu_settings(config)
@@ -240,7 +241,7 @@ def _compose_split_layout_simple(
     end_sec = clip.end_time / 1000.0
 
     gameplay_filter = build_gameplay_crop_filter(
-        "[0:v]", "[gameplay]", OUTPUT_WIDTH, GAMEPLAY_HEIGHT
+        "[gp_in]", "[gameplay]", OUTPUT_WIDTH, GAMEPLAY_HEIGHT
     )
     # Center-crop to 1080×672 aspect without bbox zoom
     face_crop_w = min(src_width, int(src_height * OUTPUT_WIDTH / FACE_HEIGHT))
@@ -248,15 +249,16 @@ def _compose_split_layout_simple(
     face_x = max(0, (src_width - face_crop_w) // 2)
     face_y = max(0, (src_height - face_crop_h) // 2)
     face_filter = (
-        f"[0:v]"
+        f"[fc_in]"
         f"crop={face_crop_w}:{face_crop_h}:{face_x}:{face_y},"
         f"scale={OUTPUT_WIDTH}:{FACE_HEIGHT}"
         f"[face]"
     )
     filter_complex = (
+        f"[0:v]split=2[gp_in][fc_in];"
         f"{gameplay_filter};"
         f"{face_filter};"
-        f"[gameplay][face]vstack=inputs=2[v]"
+        f"[gameplay][face]vstack=inputs=2,scale={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}[v]"
     )
 
     gpu_settings = resolve_gpu_settings(config)

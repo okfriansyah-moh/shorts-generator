@@ -28,9 +28,37 @@ def _run_ffmpeg(args: list[str], timeout: int = 60) -> subprocess.CompletedProce
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     if result.returncode != 0:
         raise RuntimeError(
-            f"FFmpeg error (exit {result.returncode}): {result.stderr[:300]}"
+            f"FFmpeg error (exit {result.returncode}): {result.stderr[-1500:]}"
         )
     return result
+
+
+_drawtext_available: bool | None = None
+
+
+def _check_drawtext_filter() -> bool:
+    """Check if FFmpeg was compiled with the drawtext filter (requires libfreetype)."""
+    global _drawtext_available
+    if _drawtext_available is not None:
+        return _drawtext_available
+    try:
+        result = subprocess.run(
+            ["ffmpeg", "-filters"],
+            capture_output=True, text=True, timeout=10,
+        )
+        _drawtext_available = any(
+            len(parts) >= 2 and parts[1] == "drawtext"
+            for line in result.stdout.splitlines()
+            if (parts := line.split())
+        )
+    except Exception:
+        _drawtext_available = False
+    if not _drawtext_available:
+        logger.warning(
+            "drawtext filter not available — thumbnails will be generated without text overlay",
+            extra={"stage": "thumbnail", "video_id": ""},
+        )
+    return _drawtext_available
 
 
 def _select_timestamp(clip: ClipDefinition) -> float:
@@ -79,6 +107,18 @@ def _build_vf_filter(
         f"drawtext=textfile={text_file}:fontsize={font_size}:"
         "fontcolor=white:bordercolor=black:borderw=4:"
         "x=(w-text_w)/2:y=h-text_h-40"
+    )
+
+
+def _build_vf_filter_no_text(
+    saturation: float,
+    contrast: float,
+) -> str:
+    """Build FFmpeg -vf filter chain without text overlay (drawtext unavailable)."""
+    return (
+        "scale=1280:720:force_original_aspect_ratio=decrease,"
+        "pad=1280:720:(ow-iw)/2:(oh-ih)/2:black,"
+        f"eq=saturation={saturation:.4f}:contrast={contrast:.4f}"
     )
 
 
@@ -161,14 +201,16 @@ def process(
     text_overlay = _build_text_overlay(hook_result, max_words)
     q_scale = _jpeg_quality_to_qscale(quality)
 
+    use_drawtext = _check_drawtext_filter()
     tmp_text_file = None
     try:
-        # Write text to a temp file to avoid shell-escaping issues in drawtext.
-        fd, tmp_text_file = tempfile.mkstemp(suffix=".txt", prefix="thumb_text_")
-        with os.fdopen(fd, "w") as fh:
-            fh.write(text_overlay)
-
-        vf = _build_vf_filter(tmp_text_file, saturation, contrast, font_size)
+        if use_drawtext:
+            fd, tmp_text_file = tempfile.mkstemp(suffix=".txt", prefix="thumb_text_")
+            with os.fdopen(fd, "w") as fh:
+                fh.write(text_overlay)
+            vf = _build_vf_filter(tmp_text_file, saturation, contrast, font_size)
+        else:
+            vf = _build_vf_filter_no_text(saturation, contrast)
 
         _run_ffmpeg([
             "-ss", f"{timestamp:.3f}",
