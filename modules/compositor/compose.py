@@ -91,8 +91,25 @@ def _run_ffmpeg(args: list[str], timeout: int = 300) -> None:
     """Execute an FFmpeg command, raising RuntimeError on failure."""
     cmd = ["ffmpeg", "-y"] + args
     logger.debug("FFmpeg command: %s", " ".join(cmd))
+    logger.info(
+        "Running FFmpeg compositor",
+        extra={
+            "stage": "compositor",
+            "video_id": "",
+            "timeout": timeout,
+        },
+    )
     result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
     if result.returncode != 0:
+        logger.error(
+            "FFmpeg compositor exited with error",
+            extra={
+                "stage": "compositor",
+                "video_id": "",
+                "exit_code": result.returncode,
+                "stderr": result.stderr[:300],
+            },
+        )
         raise RuntimeError(
             f"FFmpeg failed (exit {result.returncode}): {result.stderr[:500]}"
         )

@@ -33,7 +33,10 @@ def build_fallback_filter(
     """
     total_frames = max(1, int(duration_seconds * fps))
     # Progressive zoom: starts at 1.0 and reaches 1.05 at the last frame.
-    # 'on' is the current output frame number (1-based in zoompan).
+    # 'on' is the current output frame number (0-based in zoompan).
+    # CRITICAL: d=1 means one output frame per input frame.  Setting d to
+    # total_frames would generate total_frames outputs *per* input frame,
+    # causing an exponential blowup that always exceeds the timeout.
     zoom_expr = f"'1+0.05*on/{total_frames}'"
     return (
         f"{input_label}"
@@ -41,7 +44,7 @@ def build_fallback_filter(
         f"scale={OUTPUT_WIDTH}:{OUTPUT_HEIGHT},"
         f"zoompan="
         f"z={zoom_expr}:"
-        f"d={total_frames}:"
+        f"d=1:"
         f"x='iw/2-(iw/zoom/2)':"
         f"y='ih/2-(ih/zoom/2)':"
         f"s={OUTPUT_WIDTH}x{OUTPUT_HEIGHT}:"

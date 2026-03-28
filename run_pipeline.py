@@ -67,6 +67,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         dest="no_face_detection",
         help="Skip face detection and use gameplay-only compositor layout.",
     )
+    parser.add_argument(
+        "--local-only",
+        action="store_true",
+        default=False,
+        dest="local_only",
+        help="Generate clips locally without scheduling or publishing to YouTube.",
+    )
     return parser.parse_args(argv)
 
 
@@ -134,6 +141,12 @@ def main(argv: list[str] | None = None) -> int:
         if "face_detection" not in config:
             config["face_detection"] = {}
         config["face_detection"]["skip"] = True
+
+    # Apply --local-only CLI override
+    if args.local_only:
+        if "pipeline" not in config:
+            config["pipeline"] = {}
+        config["pipeline"]["local_only"] = True
 
     # Check dependencies
     check_all_dependencies(config)

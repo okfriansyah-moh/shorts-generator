@@ -841,7 +841,16 @@ class Orchestrator:
             used_template_ids: frozenset[int] = frozenset()
             clips_failed = 0
 
-            for clip in clip_list.clips:
+            for clip_idx, clip in enumerate(clip_list.clips, 1):
+                logger.info(
+                    f"Processing clip {clip_idx}/{len(clip_list.clips)}",
+                    extra={
+                        "clip_id": clip.clip_id,
+                        "video_id": video_id,
+                        "clip_index": clip_idx,
+                        "total_clips": len(clip_list.clips),
+                    },
+                )
                 try:
                     record, used_template_ids = self._process_single_clip(
                         clip, transcript, face_result, ingestion_result,
@@ -858,10 +867,35 @@ class Orchestrator:
                             duration=clip.duration,
                             composite_score=record.composite_score,
                         )
+                        self._adapter.update_clip_status(
+                            clip_id=record.clip_id,
+                            new_status="queued",
+                            valid_from=("generated",),
+                        )
+                        logger.info(
+                            f"Clip {clip_idx}/{len(clip_list.clips)} completed",
+                            extra={
+                                "clip_id": clip.clip_id,
+                                "video_id": video_id,
+                                "status": "queued",
+                            },
+                        )
                     else:
                         clips_failed += 1
+                        self._adapter.update_clip_status(
+                            clip_id=clip.clip_id,
+                            new_status="failed",
+                            valid_from=("generated",),
+                            error_message="Clip processing returned None",
+                        )
                 except Exception as exc:
                     clips_failed += 1
+                    self._adapter.update_clip_status(
+                        clip_id=clip.clip_id,
+                        new_status="failed",
+                        valid_from=("generated",),
+                        error_message=str(exc)[:500],
+                    )
                     logger.error(
                         f"Clip {clip.clip_id} failed entirely, skipping",
                         extra={
@@ -875,25 +909,33 @@ class Orchestrator:
             self._adapter.update_checkpoint(self._run_id, "storage")
 
             # ── Stage 14: scheduler ─────────────────────────────────────
-            existing_clips = self._adapter.get_clips_for_video(video_id)
-            existing_scheduled_records: list[StorageRecord] = []
-            # Existing scheduled clips are only relevant for date-conflict avoidance;
-            # we pass an empty list here since storage_records are all fresh "queued".
+            local_only = self._config.get("pipeline", {}).get("local_only", False)
+            if local_only:
+                logger.info(
+                    "Local-only mode: skipping scheduler and publisher stages",
+                    extra={"video_id": video_id, "run_id": self._run_id},
+                )
+                scheduled_records = storage_records
+            else:
+                existing_clips = self._adapter.get_clips_for_video(video_id)
+                existing_scheduled_records: list[StorageRecord] = []
+                # Existing scheduled clips are only relevant for date-conflict avoidance;
+                # we pass an empty list here since storage_records are all fresh "queued".
 
-            scheduled_records = self._run_stage_with_retry(
-                "scheduler", self.run_scheduler,
-                storage_records, existing_scheduled_records,
-            )
-            self._adapter.update_checkpoint(self._run_id, "scheduler")
+                scheduled_records = self._run_stage_with_retry(
+                    "scheduler", self.run_scheduler,
+                    storage_records, existing_scheduled_records,
+                )
+                self._adapter.update_checkpoint(self._run_id, "scheduler")
 
-            # Update scheduled clips in DB
-            for rec in scheduled_records:
-                if rec.status == "scheduled" and rec.scheduled_at:
-                    self._adapter.update_clip_status(
-                        clip_id=rec.clip_id,
-                        new_status="scheduled",
-                        valid_from=("generated", "queued"),
-                    )
+                # Update scheduled clips in DB
+                for rec in scheduled_records:
+                    if rec.status == "scheduled" and rec.scheduled_at:
+                        self._adapter.update_clip_status(
+                            clip_id=rec.clip_id,
+                            new_status="scheduled",
+                            valid_from=("generated", "queued"),
+                        )
 
             # ── Analytics (non-fatal) ───────────────────────────────────
             try:

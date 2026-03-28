@@ -460,12 +460,15 @@ def test_fallback_filter_contains_9_16_crop():
 
 
 def test_fallback_filter_frame_count():
-    """build_fallback_filter encodes correct total frame count."""
+    """build_fallback_filter uses d=1 and encodes total frame count in zoom expression."""
     duration = 35.0
     fps = 30
     f = build_fallback_filter("[0:v]", "[v]", duration_seconds=duration, fps=fps)
     expected_frames = int(duration * fps)  # 1050
-    assert f"d={expected_frames}" in f
+    # d=1: one output frame per input frame (NOT d=total_frames which causes blowup)
+    assert "d=1" in f
+    # The total frame count appears in the zoom expression denominator
+    assert f"on/{expected_frames}" in f
 
 
 def test_fallback_filter_simple_no_zoompan():
