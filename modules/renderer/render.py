@@ -21,6 +21,37 @@ from core.gpu import resolve_gpu_settings
 
 logger = logging.getLogger(__name__)
 
+# Cache the result of the ass filter availability check
+_ass_filter_available: bool | None = None
+
+
+def _check_ass_filter() -> bool:
+    """Check if FFmpeg has the 'ass' subtitle filter compiled in (requires libass)."""
+    global _ass_filter_available
+    if _ass_filter_available is not None:
+        return _ass_filter_available
+    try:
+        result = subprocess.run(
+            ["ffmpeg", "-filters"],
+            capture_output=True, text=True, timeout=10,
+        )
+        # Look for the 'ass' filter as a standalone word in the filter list
+        for line in result.stdout.splitlines():
+            parts = line.split()
+            if len(parts) >= 2 and parts[1] == "ass":
+                _ass_filter_available = True
+                return True
+        _ass_filter_available = False
+        logger.warning(
+            "FFmpeg 'ass' filter not available (libass not compiled in). "
+            "Subtitles will NOT be burned into rendered clips. "
+            "Install FFmpeg with libass to enable subtitle burn-in."
+        )
+        return False
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        _ass_filter_available = False
+        return False
+
 
 
 
@@ -34,10 +65,10 @@ def _run_ffmpeg(args: list[str], timeout: int = 300) -> subprocess.CompletedProc
     if result.returncode != 0:
         logger.error(
             "FFmpeg failed",
-            extra={"stderr": result.stderr[:500], "returncode": result.returncode},
+            extra={"stderr": result.stderr[-2000:], "returncode": result.returncode},
         )
         raise RuntimeError(
-            f"FFmpeg error (exit {result.returncode}): {result.stderr[:200]}"
+            f"FFmpeg error (exit {result.returncode}): {result.stderr[-1000:]}"
         )
     return result
 
@@ -131,6 +162,7 @@ def _build_render_command(
         subtitle_result is not None
         and os.path.exists(subtitle_result.ass_path)
         and subtitle_result.subtitle_count > 0
+        and _check_ass_filter()
     )
     if has_subtitles:
         # Escape path for FFmpeg filter

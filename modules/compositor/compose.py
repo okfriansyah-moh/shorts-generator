@@ -52,9 +52,10 @@ def _get_output_path(clip: ClipDefinition, config: dict) -> str:
     ``clip.clip_index`` for user-friendly output folders.
     """
     output_dir = config.get("paths", {}).get("output_dir", "output")
+    video_dir_name = config.get("_runtime", {}).get("video_dir_name", clip.video_id)
     folder_name = f"shorts-{clip.clip_index + 1}"
     clip_dir = os.path.join(
-        os.path.abspath(output_dir), clip.video_id, "clips", folder_name
+        os.path.abspath(output_dir), video_dir_name, "clips", folder_name
     )
     os.makedirs(clip_dir, exist_ok=True)
     return os.path.join(clip_dir, "composite.mp4")
@@ -85,6 +86,7 @@ def _infer_face_bbox(
     region_map = {
         "bottom_left": (0.0, 0.65, 0.25, 0.35),
         "bottom_center": (0.375, 0.65, 0.25, 0.35),
+        "bottom_middle": (0.375, 0.65, 0.25, 0.35),
         "bottom_right": (0.75, 0.65, 0.25, 0.35),
         "middle_left": (0.0, 0.325, 0.25, 0.35),
         "middle_right": (0.75, 0.325, 0.25, 0.35),

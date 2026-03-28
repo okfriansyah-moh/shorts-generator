@@ -32,8 +32,8 @@ def _report_to_dict(report: PipelineReport) -> dict:
     return asdict(report)
 
 
-def _write_json_report(report: PipelineReport, output_dir: str) -> str:
-    """Write the JSON report to ``{output_dir}/{video_id}/report.json``.
+def _write_json_report(report: PipelineReport, output_dir: str, config: dict | None = None) -> str:
+    """Write the JSON report to ``{output_dir}/{video_dir_name}/report.json``.
 
     Creates intermediate directories if they do not exist.
 
@@ -43,7 +43,11 @@ def _write_json_report(report: PipelineReport, output_dir: str) -> str:
     Raises:
         OSError: If the file cannot be written. Caller handles this gracefully.
     """
-    video_dir = os.path.join(output_dir, report.video_id)
+    video_dir_name = (
+        config.get("_runtime", {}).get("video_dir_name", report.video_id)
+        if config else report.video_id
+    )
+    video_dir = os.path.join(output_dir, video_dir_name)
     os.makedirs(video_dir, exist_ok=True)
     report_path = os.path.join(video_dir, "report.json")
     with open(report_path, "w", encoding="utf-8") as fh:
@@ -161,7 +165,7 @@ def process(
     # ── Write JSON to disk ────────────────────────────────────────────────────
     report_path = ""
     try:
-        report_path = _write_json_report(report, output_dir)
+        report_path = _write_json_report(report, output_dir, config)
         logger.debug("analytics: report written to %s", report_path)
     except OSError as exc:
         logger.warning(

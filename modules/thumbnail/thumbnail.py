@@ -130,7 +130,8 @@ def process(
     font_size = thumb_cfg.get("font_size", 72)
     quality = thumb_cfg.get("quality", 90)
 
-    thumbnail_dir = os.path.join(output_dir, clip.video_id, "thumbnails")
+    video_dir_name = config.get("_runtime", {}).get("video_dir_name", clip.video_id)
+    thumbnail_dir = os.path.join(output_dir, video_dir_name, "thumbnails")
     os.makedirs(thumbnail_dir, exist_ok=True)
     output_path = os.path.join(thumbnail_dir, f"shorts-{clip.clip_index + 1}.jpg")
 

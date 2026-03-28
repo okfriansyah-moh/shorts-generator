@@ -727,6 +727,17 @@ class Orchestrator:
             self._current_video_id = ingestion_result.video_id
             video_id = ingestion_result.video_id
 
+            # Compute a human-friendly video directory name:
+            # {video_id}_{sanitized_filename_stem}
+            input_stem = os.path.splitext(os.path.basename(ingestion_result.path))[0]
+            # Keep only alphanumeric, hyphens, underscores; replace others
+            safe_stem = "".join(
+                c if (c.isalnum() or c in "-_") else "_"
+                for c in input_stem
+            ).strip("_")[:80]
+            video_dir_name = f"{video_id}_{safe_stem}" if safe_stem else video_id
+            self._config.setdefault("_runtime", {})["video_dir_name"] = video_dir_name
+
             # Check for an active (non-terminal) pipeline run to resume
             active_run = self._adapter.get_active_run(video_id)
             if active_run is not None:
@@ -758,7 +769,7 @@ class Orchestrator:
             elif get_stage_index(last_completed) < get_stage_index("clip_builder"):
                 self._adapter.update_pipeline_status(self._run_id, "analyzing")
 
-            _reconfigure_logging_for_run(self._config, video_id)
+            _reconfigure_logging_for_run(self._config, video_dir_name)
 
             resume_idx = get_resume_stage_index(last_completed)
 
@@ -834,7 +845,7 @@ class Orchestrator:
             self._adapter.update_pipeline_status(self._run_id, "building")
 
             # ── Stages 6-13: per-clip processing ────────────────────────
-            video_output_dir = os.path.join(output_dir, video_id)
+            video_output_dir = os.path.join(output_dir, video_dir_name)
             os.makedirs(video_output_dir, exist_ok=True)
 
             storage_records: list[StorageRecord] = []
@@ -1013,14 +1024,14 @@ def _empty_tts_result(clip_id: str) -> "TTSResult":
     )
 
 
-def _reconfigure_logging_for_run(config: dict[str, Any], video_id: str) -> None:
+def _reconfigure_logging_for_run(config: dict[str, Any], video_dir_name: str) -> None:
     """Add a per-run file handler after video_id is known."""
     import os
 
     from core.logging import JSONFormatter
 
     output_dir = config.get("paths", {}).get("output_dir", "output")
-    log_dir = os.path.join(output_dir, video_id)
+    log_dir = os.path.join(output_dir, video_dir_name)
     os.makedirs(log_dir, exist_ok=True)
     log_path = os.path.join(log_dir, "pipeline.log")
 

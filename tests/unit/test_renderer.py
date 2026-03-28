@@ -16,6 +16,15 @@ from modules.renderer.render import (
     _validate_output,
     process,
 )
+import modules.renderer.render as _render_mod
+
+
+@pytest.fixture(autouse=True)
+def _reset_ass_filter_cache():
+    """Reset the cached ass filter check between tests."""
+    _render_mod._ass_filter_available = None
+    yield
+    _render_mod._ass_filter_available = None
 
 
 # ---------------------------------------------------------------------------
@@ -154,9 +163,10 @@ class TestBuildRenderCommand:
 
         composite = _make_composite()
         sub = _make_subtitle_result(ass_path=ass_path)
-        args = _build_render_command(
-            composite, None, sub, "/tmp/out.mp4", _make_config(),
-        )
+        with patch("modules.renderer.render._check_ass_filter", return_value=True):
+            args = _build_render_command(
+                composite, None, sub, "/tmp/out.mp4", _make_config(),
+            )
         filter_str = " ".join(args)
         assert "ass=" in filter_str
 

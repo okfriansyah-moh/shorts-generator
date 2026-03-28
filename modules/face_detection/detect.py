@@ -209,6 +209,7 @@ def _compute_video_level_bbox(
 _PIP_CANDIDATES: list[tuple[str, float, float, float, float]] = [
     ("bottom_left", 0.0, 0.65, 0.30, 0.35),
     ("bottom_center", 0.35, 0.65, 0.30, 0.35),
+    ("bottom_middle", 0.35, 0.65, 0.30, 0.35),
     ("bottom_right", 0.70, 0.65, 0.30, 0.35),
     ("middle_left", 0.0, 0.325, 0.30, 0.35),
     ("middle_right", 0.70, 0.325, 0.30, 0.35),
