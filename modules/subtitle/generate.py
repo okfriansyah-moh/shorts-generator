@@ -191,7 +191,8 @@ def process(
     Returns:
         SubtitleResult with path to the generated .ass file.
     """
-    clip_dir = os.path.join(output_dir, "clips", clip.clip_id)
+    folder_name = f"shorts-{clip.clip_index + 1}"
+    clip_dir = os.path.join(output_dir, "clips", folder_name)
     os.makedirs(clip_dir, exist_ok=True)
     ass_path = os.path.join(clip_dir, "subtitles.ass")
 

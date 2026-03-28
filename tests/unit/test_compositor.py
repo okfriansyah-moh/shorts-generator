@@ -229,7 +229,7 @@ def test_process_split_layout_when_face_visible(tmp_path):
     config = _make_config(str(tmp_path))
 
     # Pre-create the expected output file to bypass FFmpeg
-    output_dir = tmp_path / VIDEO_ID / "clips" / CLIP_ID
+    output_dir = tmp_path / VIDEO_ID / "clips" / f"shorts-{clip.clip_index + 1}"
     output_dir.mkdir(parents=True)
     (output_dir / "composite.mp4").write_bytes(b"")
 
@@ -249,8 +249,9 @@ def test_process_fallback_layout_when_no_face(tmp_path):
     face_result = _make_face_result(clip, face_visible_ratio=0.1)
     ingestion = _make_ingestion_result()
     config = _make_config(str(tmp_path))
+    config["compositor"] = {"default_layout": "gameplay_only"}
 
-    output_dir = tmp_path / VIDEO_ID / "clips" / CLIP_ID
+    output_dir = tmp_path / VIDEO_ID / "clips" / f"shorts-{clip.clip_index + 1}"
     output_dir.mkdir(parents=True)
     (output_dir / "composite.mp4").write_bytes(b"")
 
@@ -261,7 +262,7 @@ def test_process_fallback_layout_when_no_face(tmp_path):
 
 
 def test_process_fallback_when_face_visible_but_no_bbox(tmp_path):
-    """process() falls back when visibility >= 0.3 but no bbox available."""
+    """process() uses inferred face region when no bbox available (default split layout)."""
     clip = _make_clip()
     face_result = _make_face_result(clip, face_visible_ratio=0.8, has_bbox=False)
     ingestion = _make_ingestion_result()
@@ -280,9 +281,52 @@ def test_process_fallback_when_face_visible_but_no_bbox(tmp_path):
     with patch("subprocess.run", side_effect=fake_run):
         result = process(clip, face_result, ingestion, config)
 
-    # No bbox → fallback layout even though visibility is high
-    assert result.layout == "gameplay_only_zoom"
-    assert result.has_face is False
+    # Default split layout uses inferred face region when no bbox detected
+    assert result.layout == "face_gameplay_split"
+    assert result.has_face is True
+
+
+def test_process_auto_uses_estimated_pip_bbox(tmp_path):
+    """process() uses estimated_pip_bbox from face_result when face_region=auto."""
+    clip = _make_clip()
+    # Face result with no per-scene bboxes but with an estimated PiP position
+    scene_data = tuple(
+        SceneFaceData(
+            scene_id=s.scene_id,
+            face_visible_ratio=0.0,
+            bounding_boxes=(),
+            average_bbox=None,
+            sample_count=10,
+        )
+        for s in clip.scenes
+    )
+    pip_bbox = _make_face_bbox(x=0.35, y=0.65, width=0.3, height=0.35)
+    face_result = FaceDetectionResult(
+        video_id=VIDEO_ID,
+        scene_data=scene_data,
+        average_visibility=0.0,
+        faceless_scene_count=1,
+        estimated_pip_bbox=pip_bbox,
+    )
+    ingestion = _make_ingestion_result()
+    config = _make_config(str(tmp_path))
+    config["compositor"] = {"face_region": "auto"}
+
+    mock_proc = _mock_subprocess_success()
+
+    def fake_run(*args, **kwargs):
+        cmd = args[0]
+        for arg in cmd:
+            if ".tmp." in arg:
+                os.makedirs(os.path.dirname(arg), exist_ok=True)
+                open(arg, "wb").close()
+        return mock_proc
+
+    with patch("subprocess.run", side_effect=fake_run):
+        result = process(clip, face_result, ingestion, config)
+
+    assert result.layout == "face_gameplay_split"
+    assert result.has_face is True
 
 
 # ---------------------------------------------------------------------------
@@ -298,7 +342,7 @@ def test_process_idempotent_skips_ffmpeg(tmp_path):
     config = _make_config(str(tmp_path))
 
     # Pre-create composite
-    output_dir = tmp_path / VIDEO_ID / "clips" / CLIP_ID
+    output_dir = tmp_path / VIDEO_ID / "clips" / f"shorts-{clip.clip_index + 1}"
     output_dir.mkdir(parents=True)
     composite_path = output_dir / "composite.mp4"
     composite_path.write_bytes(b"existing")
@@ -352,7 +396,7 @@ def test_process_deterministic(tmp_path):
     config = _make_config(str(tmp_path))
 
     # Pre-create output to bypass FFmpeg
-    output_dir = tmp_path / VIDEO_ID / "clips" / CLIP_ID
+    output_dir = tmp_path / VIDEO_ID / "clips" / f"shorts-{clip.clip_index + 1}"
     output_dir.mkdir(parents=True)
     (output_dir / "composite.mp4").write_bytes(b"")
 
@@ -451,32 +495,32 @@ def test_face_crop_output_dimensions_in_filter():
 # ---------------------------------------------------------------------------
 
 
-def test_fallback_filter_contains_9_16_crop():
-    """build_fallback_filter includes 9:16 center crop and 1080×1920 scale."""
+def test_fallback_filter_contains_blurred_bg():
+    """build_fallback_filter includes blurred background with overlay."""
     f = build_fallback_filter("[0:v]", "[v]", duration_seconds=35.0, fps=30)
-    assert "crop=ih*9/16:ih" in f
-    assert "scale=1080:1920" in f
-    assert "zoompan" in f
+    assert "boxblur" in f
+    assert "overlay" in f
+    assert "split=2" in f
+    assert f"scale={1080}:{1920}" in f
 
 
 def test_fallback_filter_frame_count():
-    """build_fallback_filter uses d=1 and encodes total frame count in zoom expression."""
+    """build_fallback_filter produces a blurred background layout."""
     duration = 35.0
     fps = 30
     f = build_fallback_filter("[0:v]", "[v]", duration_seconds=duration, fps=fps)
-    expected_frames = int(duration * fps)  # 1050
-    # d=1: one output frame per input frame (NOT d=total_frames which causes blowup)
-    assert "d=1" in f
-    # The total frame count appears in the zoom expression denominator
-    assert f"on/{expected_frames}" in f
+    # No zoompan — replaced with blurred background
+    assert "zoompan" not in f
+    assert "boxblur" in f
 
 
 def test_fallback_filter_simple_no_zoompan():
-    """build_fallback_filter_simple excludes zoompan."""
+    """build_fallback_filter_simple uses blurred background, no zoompan."""
     f = build_fallback_filter_simple("[0:v]", "[v]")
     assert "zoompan" not in f
+    assert "boxblur" in f
+    assert "overlay" in f
     assert "crop=ih*9/16:ih" in f
-    assert "scale=1080:1920" in f
 
 
 # ---------------------------------------------------------------------------
@@ -511,11 +555,12 @@ def test_process_calls_ffmpeg_for_split_layout(tmp_path):
 
 
 def test_process_calls_ffmpeg_for_fallback_layout(tmp_path):
-    """process() invokes FFmpeg for fallback layout when face invisible."""
+    """process() invokes FFmpeg for fallback layout when gameplay_only is set."""
     clip = _make_clip()
     face_result = _make_face_result(clip, face_visible_ratio=0.1)
     ingestion = _make_ingestion_result()
     config = _make_config(str(tmp_path))
+    config["compositor"] = {"default_layout": "gameplay_only"}
 
     mock_proc = _mock_subprocess_success()
 
@@ -574,7 +619,7 @@ def test_process_retries_with_simpler_filters_on_failure(tmp_path):
 
 
 def test_process_output_path_structure(tmp_path):
-    """process() writes to output/{video_id}/clips/{clip_id}/composite.mp4."""
+    """process() writes to output/{video_id}/clips/shorts-{N}/composite.mp4."""
     clip = _make_clip()
     face_result = _make_face_result(clip, face_visible_ratio=0.5)
     ingestion = _make_ingestion_result()
@@ -595,7 +640,7 @@ def test_process_output_path_structure(tmp_path):
     with patch("subprocess.run", side_effect=fake_run):
         result = process(clip, face_result, ingestion, config)
 
-    expected_suffix = os.path.join(VIDEO_ID, "clips", CLIP_ID, "composite.mp4")
+    expected_suffix = os.path.join(VIDEO_ID, "clips", f"shorts-{clip.clip_index + 1}", "composite.mp4")
     assert result.composite_path.endswith(expected_suffix)
 
 

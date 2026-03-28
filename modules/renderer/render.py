@@ -97,6 +97,7 @@ def _build_render_command(
     crf = crf_override if crf_override is not None else renderer_config.get("crf", 20)
     preset = renderer_config.get("preset", "medium")
     fps = renderer_config.get("fps", 30)
+    audio_source = renderer_config.get("audio_source", "original")
     gameplay_vol = renderer_config.get("audio_mix_gameplay", 0.7)
     narration_vol = renderer_config.get("audio_mix_narration", 0.3)
 
@@ -117,7 +118,7 @@ def _build_render_command(
         and os.path.exists(tts_result.audio_path)
     )
 
-    if has_narration:
+    if has_narration and audio_source == "mixed":
         # Input 2: TTS narration audio
         args.extend(["-i", tts_result.audio_path])
 
@@ -137,13 +138,18 @@ def _build_render_command(
         video_filters.append(f"ass={escaped_path}")
 
     # Audio mixing
-    if has_narration:
+    # "original" mode: use source audio at full volume, ignore TTS
+    # "mixed" mode: mix gameplay audio + TTS narration
+    use_narration = has_narration and audio_source == "mixed"
+
+    if use_narration:
         filters.append(f"[1:a]volume={gameplay_vol}[game]")
         filters.append(f"[2:a]volume={narration_vol}[narr]")
         filters.append("[game][narr]amix=inputs=2:duration=first[aout]")
         audio_map = "[aout]"
     else:
-        filters.append(f"[1:a]volume={gameplay_vol}[aout]")
+        # Original audio at full volume (no reduction)
+        filters.append("[1:a]anull[aout]")
         audio_map = "[aout]"
 
     # Combine video and audio filter complex
@@ -246,7 +252,9 @@ def process(
     Returns:
         RenderedClip with path to the final publish-ready MP4.
     """
-    clip_dir = os.path.join(output_dir, "clips", composite.clip_id)
+    # Derive clip directory from composite_path (e.g. .../shorts-1/composite.mp4)
+    # This ensures renderer uses the same folder name the compositor created.
+    clip_dir = os.path.dirname(composite.composite_path)
     os.makedirs(clip_dir, exist_ok=True)
     output_path = os.path.join(clip_dir, "final.mp4")
 

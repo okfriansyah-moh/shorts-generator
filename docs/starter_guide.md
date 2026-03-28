@@ -18,14 +18,14 @@ It does everything: scene detection, speech transcription, scoring, clip selecti
 
 ### System
 
-| Requirement | Minimum       | Recommended                               |
-| ----------- | ------------- | ----------------------------------------- |
-| OS          | macOS / Linux | macOS / Linux                             |
-| Python      | 3.10+         | 3.11+                                     |
-| RAM         | 8 GB          | 16 GB                                     |
-| Disk (free) | 5 GB          | 20 GB                                     |
-| CPU         | 4 cores       | 8 cores                                   |
-| GPU         | Not required  | NVIDIA (optional, for NVENC acceleration) |
+| Requirement | Minimum                 | Recommended                               |
+| ----------- | ----------------------- | ----------------------------------------- |
+| OS          | Windows / macOS / Linux | Windows 10+ / macOS 12+ / Ubuntu 22.04+   |
+| Python      | 3.10+                   | 3.11+                                     |
+| RAM         | 8 GB                    | 16 GB                                     |
+| Disk (free) | 5 GB                    | 20 GB                                     |
+| CPU         | 4 cores                 | 8 cores                                   |
+| GPU         | Not required            | NVIDIA (optional, for NVENC acceleration) |
 
 ### External Tools
 
@@ -34,11 +34,37 @@ It does everything: scene detection, speech transcription, scoring, clip selecti
 
 #### Install FFmpeg
 
+**Windows (winget — recommended):**
+
+```powershell
+winget install Gyan.FFmpeg
+```
+
+After installing, restart your terminal. FFmpeg is added to PATH automatically.
+
+**Windows (Chocolatey):**
+
+```powershell
+choco install ffmpeg
+```
+
+**Windows (manual):**
+
+1. Download from https://www.gyan.dev/ffmpeg/builds/ (get the "full" release build)
+2. Extract the zip to `C:\ffmpeg`
+3. Add `C:\ffmpeg\bin` to your system PATH:
+   - Search "Environment Variables" in Start menu
+   - Edit `Path` under System variables
+   - Add `C:\ffmpeg\bin`
+4. Restart your terminal
+
 **macOS (Homebrew):**
 
 ```bash
 brew install ffmpeg
 ```
+
+If you don't have Homebrew: visit https://brew.sh and run the install command first.
 
 **Ubuntu/Debian:**
 
@@ -46,7 +72,19 @@ brew install ffmpeg
 sudo apt update && sudo apt install ffmpeg
 ```
 
-**Verify installation:**
+**Fedora:**
+
+```bash
+sudo dnf install ffmpeg
+```
+
+**Arch Linux:**
+
+```bash
+sudo pacman -S ffmpeg
+```
+
+**Verify installation (all platforms):**
 
 ```bash
 ffmpeg -version
@@ -68,12 +106,31 @@ cd shorts-generator
 
 ### 2. Create a Virtual Environment
 
+**macOS / Linux:**
+
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 ```
 
-> On every new terminal session, run `source .venv/bin/activate` to activate the environment.
+**Windows (PowerShell):**
+
+```powershell
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+```
+
+**Windows (Command Prompt):**
+
+```cmd
+python -m venv .venv
+.venv\Scripts\activate.bat
+```
+
+> **Tip:** On every new terminal session, re-run the activate command to enter the virtual environment.
+>
+> **Windows note:** If you get a "running scripts is disabled" error in PowerShell, run:
+> `Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser` and try again.
 
 ### 3. Install Python Dependencies
 
@@ -93,7 +150,7 @@ pip install pyyaml scenedetect faster-whisper mediapipe edge-tts pyttsx3 pillow
 python3 -m pytest tests/ -x -q
 ```
 
-You should see something like `535 passed`. All tests run without a GPU, without network, and without real video files.
+You should see something like `537 passed`. All tests run without a GPU, without network, and without real video files.
 
 ---
 
@@ -106,21 +163,32 @@ Put a video file (MP4, MKV, AVI, MOV, or WebM) somewhere accessible. The video s
 ### 2. Run the pipeline
 
 ```bash
-# Default CPU mode
+# Basic — generates clips with original audio and split layout (face + gameplay)
 python3 run_pipeline.py /path/to/your/video.mp4
+
+# Local only — skip scheduling and publishing (recommended for first run)
+python3 run_pipeline.py --local-only /path/to/your/video.mp4
+
+# Gameplay-only layout — blurred background, no face cam split
+python3 run_pipeline.py --gameplay-only /path/to/your/video.mp4
+
+# With TTS narration mixed into original audio
+python3 run_pipeline.py --tts /path/to/your/video.mp4
 
 # Custom output directory
 python3 run_pipeline.py --output /path/to/output /path/to/your/video.mp4
 
-# Skip face detection (gameplay-only layout, no face cam)
+# Skip face detection (faster, but defaults to inferred face region)
 python3 run_pipeline.py --no-face-detection /path/to/your/video.mp4
 
 # With NVIDIA GPU acceleration (optional — requires NVENC-capable GPU)
 python3 run_pipeline.py --gpu /path/to/your/video.mp4
 
-# Combined: GPU + custom output + no face detection
-python3 run_pipeline.py --gpu --no-face-detection --output /path/to/output /path/to/your/video.mp4
+# Combined: local + GPU + gameplay-only
+python3 run_pipeline.py --local-only --gpu --gameplay-only /path/to/your/video.mp4
 ```
+
+**Windows users:** Replace `python3` with `python` in all commands above.
 
 That's it. The pipeline will:
 
@@ -128,10 +196,10 @@ That's it. The pipeline will:
 2. Score each scene on engagement potential
 3. Build the best clips (30–60 seconds each)
 4. Generate hooks, narration, and subtitles for each clip
-5. Composite into vertical 1080×1920 format
-6. Render final MP4s with mixed audio
+5. Composite into vertical 1080×1920 format (split face+gameplay or gameplay-only with blurred background)
+6. Render final MP4s with original audio (or mixed with TTS if `--tts` is used)
 7. Create thumbnails and metadata
-8. Schedule clips for publishing (one per day)
+8. Schedule clips for publishing (one per day) — skipped with `--local-only`
 
 ### 3. Find your output
 
@@ -140,21 +208,25 @@ All generated clips are saved in:
 ```
 output/<video_id>/
 ├── clips/
-│   ├── <clip_id_1>/
+│   ├── shorts-1/
 │   │   ├── final.mp4          # The finished Short
+│   │   ├── composite.mp4      # Intermediate composite (silent)
 │   │   ├── thumbnail.jpg      # YouTube thumbnail
 │   │   ├── metadata.json      # Title, description, tags
 │   │   └── subtitles.ass      # Embedded subtitle file
-│   ├── <clip_id_2>/
+│   ├── shorts-2/
 │   │   └── ...
-│   └── ...
+│   └── shorts-N/
+│       └── ...
 ├── thumbnails/                 # All thumbnails in one place
+│   ├── shorts-1.jpg
+│   └── shorts-2.jpg
 ├── tts_cache/                  # Cached narration audio
 ├── pipeline.log               # Detailed run log (JSON)
 └── report.json                # Analytics summary
 ```
 
-The `video_id` is a deterministic hash derived from your video file. Running the same video twice produces the **exact same output** (idempotent).
+Clips are numbered `shorts-1`, `shorts-2`, etc. for easy browsing. The `video_id` is a deterministic hash derived from your video file. Running the same video twice produces the **exact same output** (idempotent).
 
 ---
 
@@ -193,6 +265,31 @@ scoring:
     scene_activity: 1 # Visual motion/action
     sentence_density: 1 # Natural speech pace
 ```
+
+### Compositor Layout
+
+Control the default video layout and face cam position:
+
+```yaml
+compositor:
+  default_layout: "split" # "split" = face + gameplay (default), "gameplay_only" = blurred bg
+  face_region:
+    "bottom_left" # Where to crop the face cam from the source video
+    # Options: bottom_left, bottom_right, top_left, top_right, center
+```
+
+> **Tip**: If your source video has a face cam PiP in a specific corner, set `face_region` to match. The compositor will crop that area for the face panel even if MediaPipe face detection is unavailable.
+
+### Audio Source
+
+```yaml
+renderer:
+  audio_source:
+    "original" # "original" = keep game/mic audio (default)
+    # "mixed" = blend original (70%) + TTS narration (30%)
+```
+
+You can also toggle this per-run with `--tts` (sets `audio_source` to `"mixed"`).
 
 ### TTS Voice
 
@@ -237,7 +334,7 @@ You can also enable it per-run via CLI (`--gpu`) or environment variable (`SF_GP
 
 ### Face Detection (Optional)
 
-Face detection requires a MediaPipe `.task` model file. If the model file is missing or MediaPipe is not installed, face detection is **automatically skipped** — the pipeline continues with gameplay-only layout (no face cam overlay).
+Face detection requires a MediaPipe `.task` model file. If the model file is missing or MediaPipe is not installed, face detection is **automatically skipped** — the pipeline still uses the split layout by default, cropping the face cam from the region specified by `compositor.face_region` (default: `bottom_left`).
 
 **Setup:**
 
@@ -378,7 +475,7 @@ Make sure you're in the virtual environment (`source .venv/bin/activate`) and al
 
 ### "Face detection skipped" warning
 
-The pipeline can't find the MediaPipe model file or the `mediapipe` package isn't installed. This is non-fatal — clips will use gameplay-only layout without face cam. To fix: run `pip install mediapipe` and download the model file (see the Face Detection section above).
+The pipeline can't find the MediaPipe model file or the `mediapipe` package isn't installed. This is non-fatal — clips still use the split layout by default, using the `compositor.face_region` config to crop the face cam area. To get better face tracking: run `pip install mediapipe` and download the model file (see the Face Detection section above).
 
 ---
 

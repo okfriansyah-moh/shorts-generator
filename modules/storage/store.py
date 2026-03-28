@@ -121,7 +121,9 @@ def process(
     output_dir = config["paths"]["output_dir"]
     video_id = rendered_clip.video_id
     clip_id = rendered_clip.clip_id
-    clip_dir = os.path.join(output_dir, video_id, "clips", clip_id)
+    # Derive clip directory from the rendered output path (e.g. .../shorts-1/final.mp4)
+    # This ensures storage uses the same folder name the compositor/renderer created.
+    clip_dir = os.path.dirname(rendered_clip.output_path)
 
     logger.info(
         "Storing clip artifacts",
@@ -171,9 +173,7 @@ def process(
     if subtitle_result is not None and os.path.isfile(subtitle_result.ass_path):
         subtitles_path = subtitle_result.ass_path
     else:
-        subtitles_path = os.path.join(
-            output_dir, video_id, "clips", clip_id, "subtitles.ass"
-        )
+        subtitles_path = os.path.join(clip_dir, "subtitles.ass")
 
     if tts_result is not None and os.path.isfile(tts_result.audio_path):
         narration_path = tts_result.audio_path

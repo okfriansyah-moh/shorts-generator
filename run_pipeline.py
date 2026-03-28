@@ -8,6 +8,9 @@ Usage:
     python3 run_pipeline.py <video_file_path>
     python3 run_pipeline.py --output /path/to/output <video_file_path>
     python3 run_pipeline.py --no-face-detection <video_file_path>
+    python3 run_pipeline.py --local-only <video_file_path>
+    python3 run_pipeline.py --tts <video_file_path>
+    python3 run_pipeline.py --gameplay-only <video_file_path>
     python3 run_pipeline.py --config config/config.yaml <video_file_path>
 """
 
@@ -73,6 +76,19 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=False,
         dest="local_only",
         help="Generate clips locally without scheduling or publishing to YouTube.",
+    )
+    parser.add_argument(
+        "--tts",
+        action="store_true",
+        default=False,
+        help="Mix TTS narration audio with original gameplay audio (default: original audio only).",
+    )
+    parser.add_argument(
+        "--gameplay-only",
+        action="store_true",
+        default=False,
+        dest="gameplay_only",
+        help="Use gameplay-only layout with blurred background (default: split face+gameplay).",
     )
     return parser.parse_args(argv)
 
@@ -147,6 +163,18 @@ def main(argv: list[str] | None = None) -> int:
         if "pipeline" not in config:
             config["pipeline"] = {}
         config["pipeline"]["local_only"] = True
+
+    # Apply --tts CLI override
+    if args.tts:
+        if "renderer" not in config:
+            config["renderer"] = {}
+        config["renderer"]["audio_source"] = "mixed"
+
+    # Apply --gameplay-only CLI override
+    if args.gameplay_only:
+        if "compositor" not in config:
+            config["compositor"] = {}
+        config["compositor"]["default_layout"] = "gameplay_only"
 
     # Check dependencies
     check_all_dependencies(config)

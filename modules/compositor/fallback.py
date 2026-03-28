@@ -1,8 +1,11 @@
-"""Full-gameplay fallback layout with Ken Burns zoom effect.
+"""Full-gameplay fallback layout with blurred background fill.
 
-Used when face visibility ratio < 0.3 for a clip.
-Applies a slow progressive zoom (Ken Burns) from 1.0× to 1.05×
-over the clip duration, centered on the frame.
+Used when the compositor.default_layout is set to "gameplay_only"
+or when all other layout options fail.
+
+Creates a 9:16 output by scaling the source to fill the full frame
+(blurred), then overlaying the properly-cropped gameplay centered
+on top. This avoids black bars.
 """
 
 from __future__ import annotations
@@ -17,38 +20,31 @@ def build_fallback_filter(
     duration_seconds: float,
     fps: int = 30,
 ) -> str:
-    """Build FFmpeg filter chain for full-gameplay fallback layout.
+    """Build FFmpeg filter chain for gameplay-only with blurred background.
 
-    Center-crops source to 9:16 aspect ratio, scales to 1080×1920, then
-    applies a gentle zoom-in from 1.0× to 1.05× (Ken Burns effect).
+    Layers:
+      1. Background: source scaled to fill 1080×1920, heavily blurred
+      2. Foreground: source center-cropped to 9:16, scaled to fit
 
     Args:
         input_label: FFmpeg filter input stream label (e.g. '[0:v]').
         output_label: FFmpeg filter output stream label (e.g. '[v]').
-        duration_seconds: Clip duration in seconds (used for frame count).
+        duration_seconds: Clip duration in seconds (unused but kept for API compat).
         fps: Output frame rate (default 30).
 
     Returns:
         FFmpeg filtergraph fragment string (no trailing semicolon).
     """
-    total_frames = max(1, int(duration_seconds * fps))
-    # Progressive zoom: starts at 1.0 and reaches 1.05 at the last frame.
-    # 'on' is the current output frame number (0-based in zoompan).
-    # CRITICAL: d=1 means one output frame per input frame.  Setting d to
-    # total_frames would generate total_frames outputs *per* input frame,
-    # causing an exponential blowup that always exceeds the timeout.
-    zoom_expr = f"'1+0.05*on/{total_frames}'"
+    # Background: scale source to fill 1080×1920, blur heavily
+    # Foreground: center-crop to 9:16 aspect, scale to 1080×1920
     return (
-        f"{input_label}"
-        f"crop=ih*9/16:ih,"
-        f"scale={OUTPUT_WIDTH}:{OUTPUT_HEIGHT},"
-        f"zoompan="
-        f"z={zoom_expr}:"
-        f"d=1:"
-        f"x='iw/2-(iw/zoom/2)':"
-        f"y='ih/2-(ih/zoom/2)':"
-        f"s={OUTPUT_WIDTH}x{OUTPUT_HEIGHT}:"
-        f"fps={fps}"
+        f"{input_label}split=2[bg_in][fg_in];"
+        f"[bg_in]scale={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}:force_original_aspect_ratio=increase,"
+        f"crop={OUTPUT_WIDTH}:{OUTPUT_HEIGHT},"
+        f"boxblur=20:20[bg];"
+        f"[fg_in]crop=ih*9/16:ih,"
+        f"scale={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}[fg];"
+        f"[bg][fg]overlay=(W-w)/2:(H-h)/2"
         f"{output_label}"
     )
 
@@ -57,9 +53,9 @@ def build_fallback_filter_simple(
     input_label: str,
     output_label: str,
 ) -> str:
-    """Build a simplified fallback filter without zoompan (retry path).
+    """Build a simplified fallback filter with blurred background (retry path).
 
-    Used when the full Ken Burns filter fails. Simple center-crop and scale.
+    Same blurred background approach but without any extra effects.
 
     Args:
         input_label: FFmpeg filter input stream label.
@@ -69,8 +65,12 @@ def build_fallback_filter_simple(
         FFmpeg filtergraph fragment string.
     """
     return (
-        f"{input_label}"
-        f"crop=ih*9/16:ih,"
-        f"scale={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}"
+        f"{input_label}split=2[bg_in][fg_in];"
+        f"[bg_in]scale={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}:force_original_aspect_ratio=increase,"
+        f"crop={OUTPUT_WIDTH}:{OUTPUT_HEIGHT},"
+        f"boxblur=20:20[bg];"
+        f"[fg_in]crop=ih*9/16:ih,"
+        f"scale={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}[fg];"
+        f"[bg][fg]overlay=(W-w)/2:(H-h)/2"
         f"{output_label}"
     )

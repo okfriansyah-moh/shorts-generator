@@ -132,7 +132,7 @@ def process(
 
     thumbnail_dir = os.path.join(output_dir, clip.video_id, "thumbnails")
     os.makedirs(thumbnail_dir, exist_ok=True)
-    output_path = os.path.join(thumbnail_dir, f"{clip.clip_id}.jpg")
+    output_path = os.path.join(thumbnail_dir, f"shorts-{clip.clip_index + 1}.jpg")
 
     # Idempotency: return cached result if already generated.
     if os.path.isfile(output_path) and os.path.getsize(output_path) > 0:

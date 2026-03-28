@@ -59,9 +59,13 @@ class FaceDetectionResult:
         scene_data: Per-scene face detection. One entry per scene, same order as SceneList.
         average_visibility: Mean face_visible_ratio across all scenes. 0.0–1.0.
         faceless_scene_count: Number of scenes with face_visible_ratio == 0.0. >= 0.
+        estimated_pip_bbox: Video-level estimated PiP face cam position, aggregated
+            from all per-scene detections or inferred via skin-tone scan.
+            None when no face cam position could be determined.
     """
 
     video_id: str
     scene_data: tuple[SceneFaceData, ...]
     average_visibility: float
     faceless_scene_count: int
+    estimated_pip_bbox: Optional[FaceBBox] = None

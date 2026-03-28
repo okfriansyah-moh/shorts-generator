@@ -87,10 +87,17 @@ def detect_faces(
     detector = _load_mediapipe_detector(min_confidence, model_path)
     if detector is None:
         logger.warning(
-            "MediaPipe unavailable — returning empty face detection result",
+            "MediaPipe unavailable — attempting PiP region scan fallback",
             extra={"stage": "face_detection", "video_id": video_id},
         )
-        return _empty_result(video_id, scene_list.scenes)
+        pip_bbox = _scan_pip_region(video_path, config)
+        if pip_bbox is not None:
+            logger.info(
+                "PiP region detected via skin-tone scan at (%.2f, %.2f)",
+                pip_bbox.x, pip_bbox.y,
+                extra={"stage": "face_detection", "video_id": video_id},
+            )
+        return _empty_result(video_id, scene_list.scenes, estimated_pip=pip_bbox)
 
     scene_results: list[SceneFaceData] = []
     try:
@@ -114,11 +121,17 @@ def detect_faces(
         1 for s in scene_data_tuple if s.face_visible_ratio == 0.0
     )
 
+    # Aggregate a video-level PiP bbox from ALL per-scene bounding boxes.
+    # Since the face cam PiP barely moves between scenes, averaging all
+    # detected positions gives a stable video-level estimate.
+    estimated_pip = _compute_video_level_bbox(scene_data_tuple)
+
     result = FaceDetectionResult(
         video_id=video_id,
         scene_data=scene_data_tuple,
         average_visibility=average_visibility,
         faceless_scene_count=faceless_count,
+        estimated_pip_bbox=estimated_pip,
     )
 
     logger.info(
@@ -136,6 +149,7 @@ def detect_faces(
 def _empty_result(
     video_id: str,
     scenes: tuple["SceneSegment", ...],
+    estimated_pip: "FaceBBox | None" = None,
 ) -> FaceDetectionResult:
     """Build a valid empty FaceDetectionResult (no faces in any scene)."""
     empty_scenes = tuple(
@@ -153,7 +167,168 @@ def _empty_result(
         scene_data=empty_scenes,
         average_visibility=0.0,
         faceless_scene_count=len(empty_scenes),
+        estimated_pip_bbox=estimated_pip,
     )
+
+
+def _compute_video_level_bbox(
+    scene_data: tuple[SceneFaceData, ...],
+) -> "FaceBBox | None":
+    """Aggregate all per-scene bounding boxes into a single video-level PiP estimate.
+
+    Since the face cam PiP overlay is in a fixed position across the video,
+    averaging ALL detected bounding boxes (even from low-visibility scenes)
+    gives a stable estimate of where the PiP is located.
+
+    Returns None when no bounding boxes were detected in any scene.
+    """
+    all_bboxes: list[FaceBBox] = []
+    for sd in scene_data:
+        all_bboxes.extend(sd.bounding_boxes)
+    if not all_bboxes:
+        return None
+    n = len(all_bboxes)
+    avg_x = sum(b.x for b in all_bboxes) / n
+    avg_y = sum(b.y for b in all_bboxes) / n
+    avg_w = sum(b.width for b in all_bboxes) / n
+    avg_h = sum(b.height for b in all_bboxes) / n
+    avg_conf = sum(b.confidence for b in all_bboxes) / n
+    return FaceBBox(
+        x=avg_x,
+        y=avg_y,
+        width=min(avg_w, 1.0 - avg_x),
+        height=min(avg_h, 1.0 - avg_y),
+        confidence=avg_conf,
+        timestamp_ms=0,
+    )
+
+
+# PiP scan candidate regions — common face cam overlay positions in
+# gaming stream recordings, expressed as (name, x, y, width, height)
+# in normalized coordinates.
+_PIP_CANDIDATES: list[tuple[str, float, float, float, float]] = [
+    ("bottom_left", 0.0, 0.65, 0.30, 0.35),
+    ("bottom_center", 0.35, 0.65, 0.30, 0.35),
+    ("bottom_right", 0.70, 0.65, 0.30, 0.35),
+    ("middle_left", 0.0, 0.325, 0.30, 0.35),
+    ("middle_right", 0.70, 0.325, 0.30, 0.35),
+    ("upper_middle_left", 0.0, 0.15, 0.30, 0.35),
+    ("top_left", 0.0, 0.0, 0.30, 0.35),
+    ("top_right", 0.70, 0.0, 0.30, 0.35),
+]
+
+# Minimum skin-tone density to consider a region as containing a face cam PiP.
+_MIN_SKIN_DENSITY = 0.03
+
+
+def _scan_pip_region(
+    video_path: str,
+    config: dict[str, Any],
+) -> "FaceBBox | None":
+    """Detect PiP face cam region via skin-tone analysis when MediaPipe is unavailable.
+
+    Extracts a few frames from the first 30 seconds, checks candidate PiP
+    regions for skin-tone pixel density, and returns the region with the
+    highest consistent density across frames.
+
+    Uses Pillow (PIL) for image analysis — optional, returns None if unavailable.
+    """
+    try:
+        from PIL import Image  # type: ignore[import]
+    except ImportError:
+        logger.debug(
+            "Pillow not available for PiP scan fallback",
+            extra={"stage": "face_detection", "video_id": ""},
+        )
+        return None
+
+    frame_paths = _extract_scan_frames(video_path, config)
+    if not frame_paths:
+        return None
+
+    scores: dict[str, float] = {name: 0.0 for name, *_ in _PIP_CANDIDATES}
+
+    try:
+        for fp in frame_paths:
+            try:
+                img = Image.open(fp).resize((320, 240)).convert("HSV")
+            except Exception:
+                continue
+            w, h = img.size
+            for name, cx, cy, cw, ch in _PIP_CANDIDATES:
+                px, py = int(cx * w), int(cy * h)
+                pw, ph = int(cw * w), int(ch * h)
+                region = img.crop((px, py, px + pw, py + ph))
+                pixels = list(region.getdata())
+                if not pixels:
+                    continue
+                # Skin-tone in PIL HSV: H in [0,36] or [240,255], S>=30, V>=50
+                skin = sum(
+                    1 for hue, sat, val in pixels
+                    if (hue <= 36 or hue >= 240) and sat >= 30 and val >= 50
+                )
+                scores[name] += skin / len(pixels)
+    finally:
+        for fp in frame_paths:
+            try:
+                if os.path.exists(fp):
+                    os.unlink(fp)
+            except OSError:
+                pass
+
+    if not scores:
+        return None
+    best_name = max(scores, key=lambda k: scores[k])
+    if scores[best_name] < _MIN_SKIN_DENSITY:
+        return None
+
+    for name, x, y, w, h in _PIP_CANDIDATES:
+        if name == best_name:
+            logger.debug(
+                "PiP scan selected region %s (score=%.3f)",
+                best_name, scores[best_name],
+                extra={"stage": "face_detection", "video_id": ""},
+            )
+            return FaceBBox(
+                x=x, y=y, width=w, height=h,
+                confidence=min(scores[best_name], 1.0),
+                timestamp_ms=0,
+            )
+    return None
+
+
+def _extract_scan_frames(
+    video_path: str,
+    config: dict[str, Any],
+    timestamps_s: tuple[int, ...] = (5, 15, 25),
+) -> list[str]:
+    """Extract a few frames at fixed timestamps for PiP region scanning."""
+    temp_dir = config.get("paths", {}).get("temp_dir", "output/temp")
+    os.makedirs(temp_dir, exist_ok=True)
+    timeout = config.get("pipeline", {}).get("ffmpeg_timeout", 300)
+    paths: list[str] = []
+    for ts in timestamps_s:
+        fd, path = tempfile.mkstemp(
+            suffix=".jpg", prefix=f"pip_scan_{ts}_", dir=temp_dir,
+        )
+        os.close(fd)
+        cmd = [
+            "ffmpeg", "-y", "-ss", str(ts), "-i", video_path,
+            "-vframes", "1", "-q:v", "2", "-loglevel", "error", path,
+        ]
+        try:
+            result = subprocess.run(
+                cmd, capture_output=True, text=True, timeout=timeout,
+            )
+            if result.returncode == 0 and os.path.getsize(path) > 0:
+                paths.append(path)
+            else:
+                if os.path.exists(path):
+                    os.unlink(path)
+        except (subprocess.TimeoutExpired, OSError):
+            if os.path.exists(path):
+                os.unlink(path)
+    return paths
 
 
 def _load_mediapipe_detector(min_confidence: float, model_path: str) -> Any | None:

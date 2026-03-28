@@ -140,8 +140,10 @@ class TestBuildRenderCommand:
 
         composite = _make_composite()
         tts = _make_tts_result(audio_path=tts_path)
+        config = _make_config()
+        config["renderer"]["audio_source"] = "mixed"
         args = _build_render_command(
-            composite, tts, None, "/tmp/out.mp4", _make_config(),
+            composite, tts, None, "/tmp/out.mp4", config,
         )
         assert tts_path in args
 
@@ -247,13 +249,14 @@ class TestRenderProcess:
 
     def test_idempotent_cache_hit(self, tmp_path) -> None:
         """When final.mp4 exists and is valid, skip rendering."""
-        composite = _make_composite(clip_id="cached_clip_1234")
+        clip_dir = tmp_path / "clips" / "shorts-1"
+        clip_dir.mkdir(parents=True)
+        composite_path = str(clip_dir / "composite.mp4")
+        composite = _make_composite(clip_id="cached_clip_1234", composite_path=composite_path)
         config = _make_config()
         output_dir = str(tmp_path)
 
         # Create the expected output file
-        clip_dir = tmp_path / "clips" / "cached_clip_1234"
-        clip_dir.mkdir(parents=True)
         final_path = clip_dir / "final.mp4"
         final_path.write_bytes(b"\x00" * 100)
 
@@ -276,7 +279,10 @@ class TestRenderProcess:
 
     def test_render_without_narration_or_subs(self, tmp_path) -> None:
         """Render with only composite and gameplay audio."""
-        composite = _make_composite()
+        clip_dir = tmp_path / "clips" / "shorts-1"
+        clip_dir.mkdir(parents=True)
+        composite_path = str(clip_dir / "composite.mp4")
+        composite = _make_composite(composite_path=composite_path)
         config = _make_config()
         output_dir = str(tmp_path)
 

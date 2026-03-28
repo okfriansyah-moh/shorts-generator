@@ -315,7 +315,7 @@ class TestProcess:
 
         thumbnail_dir = os.path.join(str(tmp_path), clip.video_id, "thumbnails")
         os.makedirs(thumbnail_dir, exist_ok=True)
-        cached_path = os.path.join(thumbnail_dir, f"{clip.clip_id}.jpg")
+        cached_path = os.path.join(thumbnail_dir, f"shorts-{clip.clip_index + 1}.jpg")
         # Create a non-empty fake thumbnail.
         with open(cached_path, "wb") as fh:
             fh.write(b"\xff\xd8\xff" + b"\x00" * 100)

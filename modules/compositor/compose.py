@@ -4,9 +4,12 @@ Receives ClipDefinition, FaceDetectionResult, and IngestionResult.
 Determines layout mode, builds FFmpeg filter chain, and produces
 a silent intermediate composite video at 1080×1920.
 
-Layout rules:
-  - avg face_visible_ratio >= 0.3 across clip's scenes → face_gameplay_split
-  - avg face_visible_ratio <  0.3                      → gameplay_only_zoom
+Layout rules (configurable via compositor.default_layout):
+  - "split" (default): gameplay top (65%) + face cam bottom (35%)
+    Uses detected face bbox when available; falls back to a
+    configurable source region (compositor.face_region) when
+    face detection has no valid bbox.
+  - "gameplay_only": full-gameplay with blurred background fill.
 """
 
 from __future__ import annotations
@@ -43,13 +46,57 @@ ZOOM_FACTOR = 1.2
 
 
 def _get_output_path(clip: ClipDefinition, config: dict) -> str:
-    """Construct the output path for the composite video file."""
+    """Construct the output path for the composite video file.
+
+    Uses ``shorts-{N}`` (1-based) directory naming derived from
+    ``clip.clip_index`` for user-friendly output folders.
+    """
     output_dir = config.get("paths", {}).get("output_dir", "output")
+    folder_name = f"shorts-{clip.clip_index + 1}"
     clip_dir = os.path.join(
-        os.path.abspath(output_dir), clip.video_id, "clips", clip.clip_id
+        os.path.abspath(output_dir), clip.video_id, "clips", folder_name
     )
     os.makedirs(clip_dir, exist_ok=True)
     return os.path.join(clip_dir, "composite.mp4")
+
+
+def _infer_face_bbox(
+    compositor_config: dict,
+    face_result: Optional[FaceDetectionResult] = None,
+) -> FaceBBox:
+    """Infer a face bounding box for PiP cropping.
+
+    Resolution order:
+      1. If face_region == "auto" and face_result has an estimated_pip_bbox
+         (video-level aggregate or skin-tone scan), use that.
+      2. If face_region is a named position, use the predefined coordinates.
+      3. If face_region == "auto" with no detection data, fall back to
+         "bottom_left" (most common PiP position in gaming streams).
+    """
+    region = compositor_config.get("face_region", "auto")
+
+    if region == "auto":
+        if face_result is not None and face_result.estimated_pip_bbox is not None:
+            return face_result.estimated_pip_bbox
+        # No detection data — default to bottom_left as most common
+        region = "bottom_left"
+
+    # Named PiP positions covering all common face cam placements
+    region_map = {
+        "bottom_left": (0.0, 0.65, 0.25, 0.35),
+        "bottom_center": (0.375, 0.65, 0.25, 0.35),
+        "bottom_right": (0.75, 0.65, 0.25, 0.35),
+        "middle_left": (0.0, 0.325, 0.25, 0.35),
+        "middle_right": (0.75, 0.325, 0.25, 0.35),
+        "upper_middle_left": (0.0, 0.15, 0.25, 0.35),
+        "center": (0.25, 0.25, 0.5, 0.5),
+        "top_left": (0.0, 0.0, 0.25, 0.35),
+        "top_right": (0.75, 0.0, 0.25, 0.35),
+    }
+    x, y, w, h = region_map.get(region, region_map["bottom_left"])
+    return FaceBBox(
+        x=x, y=y, width=w, height=h, confidence=1.0, timestamp_ms=0,
+    )
 
 
 def _get_clip_scenes_face_data(
@@ -314,6 +361,7 @@ def process(
         RuntimeError: If composition fails after one retry.
     """
     pipeline_config = config.get("pipeline", {})
+    compositor_config = config.get("compositor", {})
     fps = int(pipeline_config.get("output_framerate", 30))
     ffmpeg_timeout = int(pipeline_config.get("ffmpeg_timeout", 300))
 
@@ -321,10 +369,26 @@ def process(
     src_width, src_height = ingestion_result.resolution
     output_path = _get_output_path(clip, config)
 
+    # Layout selection: honour explicit config, then face detection
+    default_layout = compositor_config.get("default_layout", "split")
+
     scene_face_data = _get_clip_scenes_face_data(clip, face_result)
     avg_visibility = _compute_average_face_visibility(scene_face_data)
-    has_face = avg_visibility >= FACE_VISIBILITY_THRESHOLD
-    layout = "face_gameplay_split" if has_face else "gameplay_only_zoom"
+    detected_bbox = _pick_representative_bbox(scene_face_data) if scene_face_data else None
+
+    if default_layout == "gameplay_only":
+        # Explicitly requested gameplay-only mode
+        has_face = False
+        layout = "gameplay_only_zoom"
+    elif avg_visibility >= FACE_VISIBILITY_THRESHOLD and detected_bbox is not None:
+        # Face detection provided a confident bbox
+        has_face = True
+        layout = "face_gameplay_split"
+    else:
+        # Default split: use detected bbox if available, otherwise
+        # infer face region from compositor.face_region config
+        has_face = True
+        layout = "face_gameplay_split"
 
     # Idempotency: return cached result if composite already exists
     if os.path.exists(output_path):
@@ -369,36 +433,34 @@ def process(
     )
 
     if has_face:
-        bbox = _pick_representative_bbox(scene_face_data)
-        if bbox is not None:
-            try:
-                _compose_split_layout(
-                    source_path, output_path, clip,
-                    bbox, src_width, src_height, fps, ffmpeg_timeout,
-                    config,
-                )
-            except RuntimeError:
-                logger.warning(
-                    "Split layout failed; retrying with simpler filters",
-                    extra={
-                        "clip_id": clip.clip_id,
-                        "video_id": clip.video_id,
-                        "stage": "compositor",
-                        "status": "retry",
-                        "duration_ms": 0,
-                        "timestamp": "",
-                        "run_id": "",
-                    },
-                )
-                _compose_split_layout_simple(
-                    source_path, output_path, clip,
-                    src_width, src_height, fps, ffmpeg_timeout,
-                    config,
-                )
-        else:
-            # has_face=True but no valid bbox found; fall through to fallback
-            has_face = False
-            layout = "gameplay_only_zoom"
+        bbox = detected_bbox
+        if bbox is None:
+            # No MediaPipe bbox — use video-level PiP estimate or config fallback
+            bbox = _infer_face_bbox(compositor_config, face_result)
+        try:
+            _compose_split_layout(
+                source_path, output_path, clip,
+                bbox, src_width, src_height, fps, ffmpeg_timeout,
+                config,
+            )
+        except RuntimeError:
+            logger.warning(
+                "Split layout failed; retrying with simpler filters",
+                extra={
+                    "clip_id": clip.clip_id,
+                    "video_id": clip.video_id,
+                    "stage": "compositor",
+                    "status": "retry",
+                    "duration_ms": 0,
+                    "timestamp": "",
+                    "run_id": "",
+                },
+            )
+            _compose_split_layout_simple(
+                source_path, output_path, clip,
+                src_width, src_height, fps, ffmpeg_timeout,
+                config,
+            )
 
     if not has_face:
         try:

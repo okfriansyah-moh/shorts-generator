@@ -188,13 +188,9 @@ class TestStorageProcess:
 
             process(rendered, thumbnail, metadata, config)
 
-            metadata_path = os.path.join(
-                output_dir,
-                "a1b2c3d4e5f67890",
-                "clips",
-                "abcdef0123456789",
-                "metadata.json",
-            )
+            # clip_dir is derived from rendered_clip.output_path
+            clip_dir = os.path.dirname(rendered.output_path)
+            metadata_path = os.path.join(clip_dir, "metadata.json")
             assert os.path.isfile(metadata_path)
 
             with open(metadata_path) as f:
@@ -207,16 +203,14 @@ class TestStorageProcess:
         """Rendered video and thumbnail are copied to the clip directory."""
         with tempfile.TemporaryDirectory() as tmp_dir:
             config = _make_config(tmp_dir)
-            output_dir = config["paths"]["output_dir"]
             rendered = _make_rendered_clip(tmp_dir)
             thumbnail = _make_thumbnail_result(tmp_dir)
             metadata = _make_metadata_result()
 
             process(rendered, thumbnail, metadata, config)
 
-            clip_dir = os.path.join(
-                output_dir, "a1b2c3d4e5f67890", "clips", "abcdef0123456789"
-            )
+            # clip_dir is derived from rendered_clip.output_path
+            clip_dir = os.path.dirname(rendered.output_path)
             assert os.path.isfile(os.path.join(clip_dir, "final.mp4"))
             assert os.path.isfile(os.path.join(clip_dir, "thumbnail.jpg"))
 
@@ -264,20 +258,14 @@ class TestStorageIdempotency:
         """metadata.json is not rewritten on second call."""
         with tempfile.TemporaryDirectory() as tmp_dir:
             config = _make_config(tmp_dir)
-            output_dir = config["paths"]["output_dir"]
             rendered = _make_rendered_clip(tmp_dir)
             thumbnail = _make_thumbnail_result(tmp_dir)
             metadata = _make_metadata_result()
 
             process(rendered, thumbnail, metadata, config)
 
-            metadata_path = os.path.join(
-                output_dir,
-                "a1b2c3d4e5f67890",
-                "clips",
-                "abcdef0123456789",
-                "metadata.json",
-            )
+            clip_dir = os.path.dirname(rendered.output_path)
+            metadata_path = os.path.join(clip_dir, "metadata.json")
             mtime1 = os.path.getmtime(metadata_path)
 
             # Small delay not needed — file already exists, skip-if-exists

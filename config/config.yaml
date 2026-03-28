@@ -85,6 +85,8 @@ compositor:
   facecam_ratio: 0.35
   output_width: 1080
   output_height: 1920
+  default_layout: "split" # "split" (gameplay+face) or "gameplay_only"
+  face_region: "auto" # "auto" (detect from video), or manual: "bottom_left", "bottom_center", "bottom_right", "middle_left", "middle_right", "upper_middle_left", "top_left", "top_right", "center"
 
 renderer:
   codec: "libx264"
@@ -92,6 +94,7 @@ renderer:
   preset: "medium"
   fps: 30
   max_file_size_mb: 100
+  audio_source: "original" # "original" (default) or "mixed" (original + TTS narration)
   audio_mix_gameplay: 0.7
   audio_mix_narration: 0.3
 
