@@ -30,6 +30,8 @@ _DEFAULT_SAMPLE_FPS = 2
 _DEFAULT_MIN_CONFIDENCE = 0.7
 _DEFAULT_EMA_ALPHA = 0.3
 _DEFAULT_MIN_FACE_SIZE = 0.05
+_DEFAULT_MODEL_PATH = "models/blaze_face_short_range.task"
+_DEFAULT_SKIP = False
 
 
 def detect_faces(
@@ -53,18 +55,24 @@ def detect_faces(
 
     Returns:
         FaceDetectionResult DTO with per-scene visibility ratios.
-
-    Raises:
-        RuntimeError: If MediaPipe cannot be loaded (dependency error).
     """
     face_cfg = config.get("face_detection", {})
     sample_fps: int = int(face_cfg.get("sample_fps", _DEFAULT_SAMPLE_FPS))
     min_confidence: float = float(face_cfg.get("min_confidence", _DEFAULT_MIN_CONFIDENCE))
     ema_alpha: float = float(face_cfg.get("ema_alpha", _DEFAULT_EMA_ALPHA))
     min_face_size: float = float(face_cfg.get("min_face_size", _DEFAULT_MIN_FACE_SIZE))
+    model_path: str = str(face_cfg.get("model_path", _DEFAULT_MODEL_PATH))
 
     video_id = ingestion_result.video_id
     video_path = ingestion_result.path
+
+    # Early return when face detection is disabled via config or CLI
+    if bool(face_cfg.get("skip", _DEFAULT_SKIP)):
+        logger.info(
+            "Face detection disabled via config; using gameplay-only layout",
+            extra={"stage": "face_detection", "video_id": video_id},
+        )
+        return _empty_result(video_id, scene_list.scenes)
 
     logger.info(
         "Face detection stage started",
@@ -76,15 +84,25 @@ def detect_faces(
         },
     )
 
-    detector = _load_mediapipe_detector(min_confidence)
+    detector = _load_mediapipe_detector(min_confidence, model_path)
+    if detector is None:
+        logger.warning(
+            "MediaPipe unavailable — returning empty face detection result",
+            extra={"stage": "face_detection", "video_id": video_id},
+        )
+        return _empty_result(video_id, scene_list.scenes)
 
     scene_results: list[SceneFaceData] = []
-    for scene in scene_list.scenes:
-        scene_data = _process_scene(
-            scene, video_path, video_id, detector, sample_fps,
-            min_confidence, ema_alpha, min_face_size, config
-        )
-        scene_results.append(scene_data)
+    try:
+        for scene in scene_list.scenes:
+            scene_data = _process_scene(
+                scene, video_path, video_id, detector, sample_fps,
+                min_confidence, ema_alpha, min_face_size, config
+            )
+            scene_results.append(scene_data)
+    finally:
+        if hasattr(detector, "close"):
+            detector.close()
 
     scene_data_tuple = tuple(scene_results)
     average_visibility = (
@@ -115,33 +133,73 @@ def detect_faces(
     return result
 
 
-def _load_mediapipe_detector(min_confidence: float) -> Any:
-    """Load MediaPipe face detection model.
+def _empty_result(
+    video_id: str,
+    scenes: tuple["SceneSegment", ...],
+) -> FaceDetectionResult:
+    """Build a valid empty FaceDetectionResult (no faces in any scene)."""
+    empty_scenes = tuple(
+        SceneFaceData(
+            scene_id=s.scene_id,
+            face_visible_ratio=0.0,
+            bounding_boxes=(),
+            average_bbox=None,
+            sample_count=0,
+        )
+        for s in scenes
+    )
+    return FaceDetectionResult(
+        video_id=video_id,
+        scene_data=empty_scenes,
+        average_visibility=0.0,
+        faceless_scene_count=len(empty_scenes),
+    )
+
+
+def _load_mediapipe_detector(min_confidence: float, model_path: str) -> Any | None:
+    """Load MediaPipe face detector using the Tasks API.
+
+    Returns None (instead of raising) when mediapipe is missing or the
+    model file does not exist — face detection is optional per architecture.
 
     Args:
         min_confidence: Minimum detection confidence threshold.
+        model_path: Path to the .task model file.
 
     Returns:
-        MediaPipe FaceDetection object.
-
-    Raises:
-        RuntimeError: If MediaPipe is not installed or model load fails.
+        MediaPipe FaceDetector instance, or None on failure.
     """
     try:
         import mediapipe as mp  # type: ignore[import]
     except ImportError:
-        raise RuntimeError(
-            "mediapipe is not installed. Run: pip install mediapipe"
+        logger.warning(
+            "mediapipe is not installed — face detection will be skipped",
+            extra={"stage": "face_detection", "video_id": ""},
         )
+        return None
+
+    if not os.path.isfile(model_path):
+        logger.warning(
+            "MediaPipe model file not found at %s — face detection will be skipped",
+            model_path,
+            extra={"stage": "face_detection", "video_id": ""},
+        )
+        return None
 
     try:
-        face_detection = mp.solutions.face_detection.FaceDetection(
-            model_selection=1,
+        options = mp.tasks.vision.FaceDetectorOptions(
+            base_options=mp.tasks.BaseOptions(model_asset_path=model_path),
+            running_mode=mp.tasks.vision.RunningMode.IMAGE,
             min_detection_confidence=min_confidence,
         )
-        return face_detection
+        return mp.tasks.vision.FaceDetector.create_from_options(options)
     except Exception as exc:
-        raise RuntimeError(f"Failed to load MediaPipe face detection: {exc}") from exc
+        logger.warning(
+            "Failed to create MediaPipe FaceDetector: %s",
+            exc,
+            extra={"stage": "face_detection", "video_id": ""},
+        )
+        return None
 
 
 def _process_scene(
@@ -309,12 +367,12 @@ def _detect_face_in_frame(
 ) -> FaceBBox | None:
     """Detect the highest-confidence face in a single frame.
 
-    Filters out detections below min_confidence and bounding boxes smaller
-    than min_face_size (normalized width/height).
+    Uses the MediaPipe Tasks API. Bounding boxes are returned in pixel
+    coordinates and normalized to [0, 1] for resolution independence.
 
     Args:
         frame_path: Path to the JPEG frame image.
-        detector: MediaPipe FaceDetection instance.
+        detector: MediaPipe FaceDetector (Tasks API) instance.
         timestamp_ms: Frame timestamp in milliseconds.
         min_confidence: Minimum confidence threshold for filtering.
         min_face_size: Minimum normalized face size (0–1) for width and height.
@@ -323,37 +381,41 @@ def _detect_face_in_frame(
         FaceBBox for the highest-confidence detected face, or None if no face found.
     """
     try:
-        import cv2  # type: ignore[import]
+        import mediapipe as mp  # type: ignore[import]
     except ImportError:
-        raise RuntimeError(
-            "opencv-python is not installed. Run: pip install opencv-python-headless"
-        )
-
-    image = cv2.imread(frame_path)
-    if image is None:
         return None
 
-    image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-    results = detector.process(image_rgb)
+    try:
+        mp_image = mp.Image.create_from_file(frame_path)
+    except Exception:
+        return None
 
-    if not results.detections:
+    result = detector.detect(mp_image)
+
+    if not result.detections:
         return None
 
     # Select the highest-confidence detection
     best = max(
-        results.detections,
-        key=lambda d: d.score[0] if d.score else 0.0,
+        result.detections,
+        key=lambda d: d.categories[0].score if d.categories else 0.0,
     )
 
-    confidence = float(best.score[0]) if best.score else 0.0
+    confidence = float(best.categories[0].score) if best.categories else 0.0
     if confidence < min_confidence:
         return None
 
-    bbox = best.location_data.relative_bounding_box
-    x = max(0.0, float(bbox.xmin))
-    y = max(0.0, float(bbox.ymin))
-    width = min(float(bbox.width), 1.0 - x)
-    height = min(float(bbox.height), 1.0 - y)
+    # Tasks API returns pixel coordinates — normalize to [0, 1]
+    bbox = best.bounding_box
+    img_w = mp_image.width
+    img_h = mp_image.height
+    if img_w <= 0 or img_h <= 0:
+        return None
+
+    x = max(0.0, float(bbox.origin_x) / img_w)
+    y = max(0.0, float(bbox.origin_y) / img_h)
+    width = min(float(bbox.width) / img_w, 1.0 - x)
+    height = min(float(bbox.height) / img_h, 1.0 - y)
 
     if width <= 0.0 or height <= 0.0:
         return None

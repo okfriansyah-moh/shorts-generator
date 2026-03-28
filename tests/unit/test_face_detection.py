@@ -301,7 +301,7 @@ class TestDetectFaces:
         assert result.faceless_scene_count == 1
         assert len(result.scene_data) == 2
 
-    def test_mediapipe_not_installed_raises(
+    def test_mediapipe_not_installed_returns_none(
         self,
         mock_ingestion: IngestionResult,
         single_scene: SceneList,
@@ -309,8 +309,41 @@ class TestDetectFaces:
     ) -> None:
         with patch.dict("sys.modules", {"mediapipe": None}):
             from modules.face_detection.detect import _load_mediapipe_detector
-            with pytest.raises(RuntimeError, match="mediapipe is not installed"):
-                _load_mediapipe_detector(0.7)
+            result = _load_mediapipe_detector(0.7, "models/blaze_face_short_range.task")
+            assert result is None
+
+    @patch("modules.face_detection.detect._load_mediapipe_detector")
+    def test_skip_config_returns_empty_result(
+        self,
+        mock_load: MagicMock,
+        mock_ingestion: IngestionResult,
+        single_scene: SceneList,
+        minimal_config: dict[str, Any],
+    ) -> None:
+        minimal_config["face_detection"]["skip"] = True
+        from modules.face_detection.detect import detect_faces
+        result = detect_faces(mock_ingestion, single_scene, minimal_config)
+
+        assert isinstance(result, FaceDetectionResult)
+        assert result.average_visibility == 0.0
+        assert result.faceless_scene_count == 1
+        mock_load.assert_not_called()
+
+    @patch("modules.face_detection.detect._load_mediapipe_detector")
+    def test_detector_none_returns_empty_result(
+        self,
+        mock_load: MagicMock,
+        mock_ingestion: IngestionResult,
+        single_scene: SceneList,
+        minimal_config: dict[str, Any],
+    ) -> None:
+        mock_load.return_value = None
+        from modules.face_detection.detect import detect_faces
+        result = detect_faces(mock_ingestion, single_scene, minimal_config)
+
+        assert isinstance(result, FaceDetectionResult)
+        assert result.average_visibility == 0.0
+        assert result.faceless_scene_count == 1
 
 
 # ---------------------------------------------------------------------------

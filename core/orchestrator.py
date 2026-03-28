@@ -965,9 +965,9 @@ def _empty_tts_result(clip_id: str) -> "TTSResult":
         clip_id=clip_id,
         audio_path="",
         duration_seconds=0.0,
-        engine="none",
-        voice="",
+        sample_rate=44100,
         word_timings=(),
+        engine_used="none",
     )
 
 

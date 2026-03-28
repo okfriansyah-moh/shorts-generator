@@ -124,7 +124,7 @@ class TestNormalizeAudio:
         def mock_run(cmd, **kwargs):
             # Create the tmp output file
             for arg in cmd:
-                if arg.endswith(".tmp"):
+                if ".tmp." in arg:
                     with open(arg, "wb") as f:
                         f.write(b"\x00" * 50)
             result = MagicMock()

@@ -7,6 +7,7 @@ initializes the database, and launches the pipeline.
 Usage:
     python3 run_pipeline.py <video_file_path>
     python3 run_pipeline.py --output /path/to/output <video_file_path>
+    python3 run_pipeline.py --no-face-detection <video_file_path>
     python3 run_pipeline.py --config config/config.yaml <video_file_path>
 """
 
@@ -58,6 +59,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         metavar="DIR",
         help="Output directory for generated clips (default: value from config.yaml).",
+    )
+    parser.add_argument(
+        "--no-face-detection",
+        action="store_true",
+        default=False,
+        dest="no_face_detection",
+        help="Skip face detection and use gameplay-only compositor layout.",
     )
     return parser.parse_args(argv)
 
@@ -120,6 +128,12 @@ def main(argv: list[str] | None = None) -> int:
         config["paths"]["output_dir"] = output_dir
         config["paths"]["temp_dir"] = os.path.join(output_dir, "temp")
         config["paths"]["database"] = os.path.join(output_dir, "shorts_factory.db")
+
+    # Apply --no-face-detection CLI override
+    if args.no_face_detection:
+        if "face_detection" not in config:
+            config["face_detection"] = {}
+        config["face_detection"]["skip"] = True
 
     # Check dependencies
     check_all_dependencies(config)

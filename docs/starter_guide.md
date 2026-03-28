@@ -112,8 +112,14 @@ python3 run_pipeline.py /path/to/your/video.mp4
 # Custom output directory
 python3 run_pipeline.py --output /path/to/output /path/to/your/video.mp4
 
+# Skip face detection (gameplay-only layout, no face cam)
+python3 run_pipeline.py --no-face-detection /path/to/your/video.mp4
+
 # With NVIDIA GPU acceleration (optional — requires NVENC-capable GPU)
 python3 run_pipeline.py --gpu /path/to/your/video.mp4
+
+# Combined: GPU + custom output + no face detection
+python3 run_pipeline.py --gpu --no-face-detection --output /path/to/output /path/to/your/video.mp4
 ```
 
 That's it. The pipeline will:
@@ -229,6 +235,36 @@ You can also enable it per-run via CLI (`--gpu`) or environment variable (`SF_GP
 
 > **Note:** If CUDA is unavailable for transcription, it automatically falls back to CPU. NVENC encoding will hard-fail at startup if the GPU or drivers are missing.
 
+### Face Detection (Optional)
+
+Face detection requires a MediaPipe `.task` model file. If the model file is missing or MediaPipe is not installed, face detection is **automatically skipped** — the pipeline continues with gameplay-only layout (no face cam overlay).
+
+**Setup:**
+
+```bash
+mkdir -p models
+curl -L -o models/blaze_face_short_range.task \
+  https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.task
+```
+
+**Configuration:**
+
+```yaml
+face_detection:
+  model_path: "models/blaze_face_short_range.task" # Path to .task model file
+  skip: false # Set to true to disable face detection entirely
+```
+
+**CLI override:**
+
+```bash
+# Skip face detection via CLI flag
+python3 run_pipeline.py --no-face-detection /path/to/your/video.mp4
+
+# GPU + no face detection + custom output
+python3 run_pipeline.py --gpu --no-face-detection --output /path/to/output /path/to/your/video.mp4
+```
+
 ---
 
 ## Publishing to YouTube
@@ -339,6 +375,10 @@ GPU mode (`--gpu`) requires NVIDIA drivers and an NVENC-capable FFmpeg build. If
 ### Tests fail
 
 Make sure you're in the virtual environment (`source .venv/bin/activate`) and all dependencies are installed. Tests don't need FFmpeg, a GPU, or network access.
+
+### "Face detection skipped" warning
+
+The pipeline can't find the MediaPipe model file or the `mediapipe` package isn't installed. This is non-fatal — clips will use gameplay-only layout without face cam. To fix: run `pip install mediapipe` and download the model file (see the Face Detection section above).
 
 ---
 

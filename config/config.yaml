@@ -20,7 +20,7 @@ pipeline:
   disk_min_free_mb: 500
 
 ingestion:
-  min_duration_seconds: 1800
+  min_duration_seconds: 600
   max_duration_seconds: 7200
   supported_formats: ["mp4", "mkv", "avi", "mov", "webm"]
 
@@ -41,6 +41,8 @@ face_detection:
   min_confidence: 0.7
   min_face_size: 0.05
   ema_alpha: 0.3
+  model_path: "models/blaze_face_short_range.task"
+  skip: false
 
 scoring:
   weights:

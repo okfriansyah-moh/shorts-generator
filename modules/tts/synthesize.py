@@ -50,7 +50,8 @@ def _normalize_audio(
     sample_rate: int = 44100,
 ) -> None:
     """Normalise audio to target LUFS using FFmpeg loudnorm."""
-    tmp_path = f"{output_path}.tmp"
+    base, ext = os.path.splitext(output_path)
+    tmp_path = f"{base}.tmp{ext}"
     result = subprocess.run(
         [
             "ffmpeg", "-y", "-i", input_path,
@@ -73,7 +74,8 @@ def _convert_audio_format(
     sample_rate: int = 44100,
 ) -> None:
     """Convert audio to WAV without loudnorm (fallback for normalization failure)."""
-    tmp_path = f"{output_path}.tmp"
+    base, ext = os.path.splitext(output_path)
+    tmp_path = f"{base}.tmp{ext}"
     result = subprocess.run(
         [
             "ffmpeg", "-y", "-i", input_path,

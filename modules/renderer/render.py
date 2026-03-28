@@ -293,7 +293,8 @@ def process(
     timeout = config.get("pipeline", {}).get("ffmpeg_timeout", 300)
 
     # Render with default CRF
-    tmp_path = f"{output_path}.tmp"
+    base, ext = os.path.splitext(output_path)
+    tmp_path = f"{base}.tmp{ext}"
     args = _build_render_command(
         composite, tts_result, subtitle_result, tmp_path, config,
     )
@@ -326,7 +327,7 @@ def process(
                 "size_mb": round(file_size / 1024 / 1024, 1),
             },
         )
-        re_tmp = f"{output_path}.re.tmp"
+        re_tmp = f"{base}.re.tmp{ext}"
         args = _build_render_command(
             composite, tts_result, subtitle_result, re_tmp, config,
             crf_override=24,
@@ -359,7 +360,7 @@ def process(
     os.replace(tmp_path, output_path)
 
     # Clean intermediate files
-    for leftover in [f"{output_path}.tmp", f"{output_path}.re.tmp"]:
+    for leftover in [f"{base}.tmp{ext}", f"{base}.re.tmp{ext}"]:
         if os.path.exists(leftover):
             try:
                 os.remove(leftover)

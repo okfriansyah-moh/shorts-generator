@@ -1,8 +1,54 @@
 # Shorts Factory — Progress Report
 
-**Last Updated:** 2026-03-27
+**Last Updated:** 2026-03-28
 **Active Phase:** All Phases — Full Pipeline Wiring Complete + NVIDIA GPU Mode + Production Certified
-**Phase Status:** ✅ COMPLETE — All 16 stages wired in orchestrator, 535 tests passing
+**Phase Status:** ✅ COMPLETE — All 16 stages wired in orchestrator, 537 tests passing
+
+---
+
+## FFmpeg Atomic Write & TTSResult Constructor Fixes (2026-03-28)
+
+**Status:** ✅ COMPLETE — 3 bugs fixed, 537 tests passing
+
+Three confirmed runtime bugs that prevented stages 7–13 from completing. All clips failed at compositor/renderer/TTS with FFmpeg exit code 234 or TypeError.
+
+### Bugs Fixed
+
+| Bug                                                          | Root Cause                                                                                                    | Fix                                                                                     | Files                                                         |
+| ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
+| FFmpeg `.tmp` extension breaks muxer (compositor + renderer) | `output_path + ".tmp"` → `composite.mp4.tmp` — FFmpeg 8.x can't detect container format from `.tmp` extension | Use `os.path.splitext()` to produce `composite.tmp.mp4` preserving the `.mp4` extension | `modules/compositor/compose.py`, `modules/renderer/render.py` |
+| FFmpeg `.tmp` extension breaks TTS normalization             | Same pattern in `_normalize_audio()` and `_convert_audio_format()` — `abc123.wav.tmp` unrecognized            | Same `os.path.splitext()` fix for `.wav` files                                          | `modules/tts/synthesize.py`                                   |
+| `_empty_tts_result()` wrong constructor fields               | Used `engine="none"` and `voice=""` but actual DTO has `engine_used` and `sample_rate` — causes `TypeError`   | Aligned constructor to actual `TTSResult` frozen dataclass fields                       | `core/orchestrator.py`                                        |
+
+### Files Modified
+
+| File                            | Change                                                                                 |
+| ------------------------------- | -------------------------------------------------------------------------------------- |
+| `modules/compositor/compose.py` | `_atomic_ffmpeg()`: `base, ext = os.path.splitext(output_path)` → `f"{base}.tmp{ext}"` |
+| `modules/renderer/render.py`    | `tmp_path`, `re_tmp`, and cleanup loop: same `splitext` pattern (3 locations)          |
+| `modules/tts/synthesize.py`     | `_normalize_audio()` and `_convert_audio_format()`: same `splitext` pattern            |
+| `core/orchestrator.py`          | `_empty_tts_result()`: `engine=` → `engine_used=`, `voice=` → `sample_rate=44100`      |
+| `tests/unit/test_compositor.py` | 6 mock helpers: `endswith(".tmp")` → `".tmp." in arg`                                  |
+| `tests/unit/test_renderer.py`   | 1 mock helper: same pattern update                                                     |
+| `tests/unit/test_tts.py`        | 1 mock helper: same pattern update                                                     |
+
+### Expected Pipeline Outcome
+
+```
+tts        → Edge TTS synthesizes → loudnorm to abc123.tmp.wav → os.replace → abc123.wav ✓
+subtitle   → receives valid TTSResult (empty audio_path OK) → .ass file written ✓
+compositor → FFmpeg writes composite.tmp.mp4 → os.replace → composite.mp4 ✓
+renderer   → FFmpeg writes final.tmp.mp4 → validates → os.replace → final.mp4 ✓
+```
+
+### Architecture Compliance
+
+- ✅ No cross-module imports introduced
+- ✅ `contracts/` untouched (zero diff) — protected
+- ✅ No raw SQL or database imports in modules
+- ✅ Atomic rename pattern (`os.replace`) preserved
+- ✅ Deterministic — `os.path.splitext` is pure
+- ✅ All 537 tests passing
 
 ---
 

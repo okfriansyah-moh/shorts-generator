@@ -272,7 +272,7 @@ def test_process_fallback_when_face_visible_but_no_bbox(tmp_path):
     def fake_run(*args, **kwargs):
         cmd = args[0]
         for arg in cmd:
-            if arg.endswith(".tmp"):
+            if ".tmp." in arg:
                 os.makedirs(os.path.dirname(arg), exist_ok=True)
                 open(arg, "wb").close()
         return mock_proc
@@ -323,7 +323,7 @@ def test_process_idempotent_twice_same_result(tmp_path):
         # Create the .tmp file so atomic rename succeeds
         cmd = args[0]
         for arg in cmd:
-            if arg.endswith(".tmp"):
+            if ".tmp." in arg:
                 os.makedirs(os.path.dirname(arg), exist_ok=True)
                 open(arg, "wb").close()
         return mock_proc
@@ -493,7 +493,7 @@ def test_process_calls_ffmpeg_for_split_layout(tmp_path):
     def fake_run(*args, **kwargs):
         cmd = args[0]
         for arg in cmd:
-            if arg.endswith(".tmp"):
+            if ".tmp." in arg:
                 os.makedirs(os.path.dirname(arg), exist_ok=True)
                 open(arg, "wb").close()
         return mock_proc
@@ -519,7 +519,7 @@ def test_process_calls_ffmpeg_for_fallback_layout(tmp_path):
     def fake_run(*args, **kwargs):
         cmd = args[0]
         for arg in cmd:
-            if arg.endswith(".tmp"):
+            if ".tmp." in arg:
                 os.makedirs(os.path.dirname(arg), exist_ok=True)
                 open(arg, "wb").close()
         return mock_proc
@@ -554,7 +554,7 @@ def test_process_retries_with_simpler_filters_on_failure(tmp_path):
         else:
             # Retry creates the .tmp file
             for arg in cmd:
-                if arg.endswith(".tmp"):
+                if ".tmp." in arg:
                     os.makedirs(os.path.dirname(arg), exist_ok=True)
                     open(arg, "wb").close()
             m = MagicMock()
@@ -580,7 +580,7 @@ def test_process_output_path_structure(tmp_path):
     def fake_run(*args, **kwargs):
         cmd = args[0]
         for arg in cmd:
-            if arg.endswith(".tmp"):
+            if ".tmp." in arg:
                 os.makedirs(os.path.dirname(arg), exist_ok=True)
                 open(arg, "wb").close()
         m = MagicMock()

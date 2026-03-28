@@ -100,7 +100,8 @@ def _run_ffmpeg(args: list[str], timeout: int = 300) -> None:
 
 def _atomic_ffmpeg(args: list[str], output_path: str, timeout: int = 300) -> None:
     """Run FFmpeg writing to a .tmp file then atomically rename on success."""
-    tmp_path = output_path + ".tmp"
+    base, ext = os.path.splitext(output_path)
+    tmp_path = f"{base}.tmp{ext}"
     patched = [tmp_path if a == output_path else a for a in args]
     try:
         _run_ffmpeg(patched, timeout=timeout)

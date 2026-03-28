@@ -293,7 +293,7 @@ class TestRenderProcess:
             # Create output file for FFmpeg calls
             if cmd[0] == "ffmpeg":
                 for arg in cmd:
-                    if arg.endswith(".tmp"):
+                    if ".tmp." in arg:
                         with open(arg, "wb") as f:
                             f.write(b"\x00" * 100)
             return result
