@@ -334,21 +334,30 @@ You can also enable it per-run via CLI (`--gpu`) or environment variable (`SF_GP
 
 ### Face Detection (Optional)
 
-Face detection requires a MediaPipe `.task` model file. If the model file is missing or MediaPipe is not installed, face detection is **automatically skipped** — the pipeline still uses the split layout by default, cropping the face cam from the region specified by `compositor.face_region` (default: `bottom_left`).
+Face detection uses MediaPipe. The **bundled legacy detector** (`mp.solutions.face_detection`) works out of the box — **no model file download required**. Just install `mediapipe` via pip and face detection works.
 
-**Setup:**
+If you want to use the newer Tasks API instead, you can optionally provide a `.tflite` model file. The pipeline auto-detects which API to use:
+
+1. If a valid `.task`/`.tflite` model file exists → uses Tasks API
+2. Otherwise → uses bundled legacy detector (no download needed)
+
+**Optional model file setup (not required):**
 
 ```bash
 mkdir -p models
-curl -L -o models/blaze_face_short_range.task \
-  https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/1/blaze_face_short_range.task
+# NOTE: Google may remove these URLs at any time.
+# The pipeline works without a model file — the bundled legacy detector is used.
+curl -fL -o models/blaze_face_short_range.tflite \
+  https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/latest/blaze_face_short_range.tflite
+# Verify it's a binary file, not an HTML error page:
+file models/blaze_face_short_range.tflite
 ```
 
 **Configuration:**
 
 ```yaml
 face_detection:
-  model_path: "models/blaze_face_short_range.task" # Path to .task model file
+  model_path: "models/blaze_face_short_range.tflite" # Optional — used only for Tasks API
   skip: false # Set to true to disable face detection entirely
 ```
 

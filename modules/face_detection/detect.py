@@ -339,17 +339,14 @@ def _extract_scan_frames(
 
 
 def _load_mediapipe_detector(min_confidence: float, model_path: str) -> Any | None:
-    """Load MediaPipe face detector using the Tasks API.
+    """Load MediaPipe face detector.
 
-    Returns None (instead of raising) when mediapipe is missing or the
-    model file does not exist — face detection is optional per architecture.
+    Resolution order:
+      1. If a valid .task/.tflite model file exists, use the Tasks API.
+      2. Otherwise, use the bundled legacy ``mp.solutions.face_detection``
+         API which ships inside the ``mediapipe`` pip package (no download).
 
-    Args:
-        min_confidence: Minimum detection confidence threshold.
-        model_path: Path to the .task model file.
-
-    Returns:
-        MediaPipe FaceDetector instance, or None on failure.
+    Returns None when mediapipe is not installed.
     """
     try:
         import mediapipe as mp  # type: ignore[import]
@@ -360,21 +357,55 @@ def _load_mediapipe_detector(min_confidence: float, model_path: str) -> Any | No
         )
         return None
 
-    if not os.path.isfile(model_path):
-        logger.warning(
-            "MediaPipe model file not found at %s — face detection will be skipped",
-            model_path,
-            extra={"stage": "face_detection", "video_id": ""},
-        )
-        return None
+    # --- Try Tasks API first (requires .task/.tflite model file) ---
+    if os.path.isfile(model_path):
+        # Validate the file is a real binary model, not an HTML/XML error page
+        try:
+            with open(model_path, "rb") as f:
+                header = f.read(1)
+        except OSError:
+            header = b""
 
+        if header[:1] not in (b"<", b"{"):
+            try:
+                options = mp.tasks.vision.FaceDetectorOptions(
+                    base_options=mp.tasks.BaseOptions(model_asset_path=model_path),
+                    running_mode=mp.tasks.vision.RunningMode.IMAGE,
+                    min_detection_confidence=min_confidence,
+                )
+                detector = mp.tasks.vision.FaceDetector.create_from_options(options)
+                logger.info(
+                    "MediaPipe Tasks API face detector loaded from %s",
+                    model_path,
+                    extra={"stage": "face_detection", "video_id": ""},
+                )
+                return detector
+            except Exception as exc:
+                logger.warning(
+                    "Tasks API detector failed (%s) — "
+                    "falling back to bundled legacy detector.",
+                    exc,
+                    extra={"stage": "face_detection", "video_id": ""},
+                )
+        else:
+            logger.warning(
+                "Model file %s appears to be an HTML/XML error page "
+                "(bad download). Falling back to bundled legacy detector.",
+                model_path,
+                extra={"stage": "face_detection", "video_id": ""},
+            )
+
+    # --- Fallback: legacy solutions API (bundled in pip package, no download) ---
     try:
-        options = mp.tasks.vision.FaceDetectorOptions(
-            base_options=mp.tasks.BaseOptions(model_asset_path=model_path),
-            running_mode=mp.tasks.vision.RunningMode.IMAGE,
+        legacy = mp.solutions.face_detection.FaceDetection(  # type: ignore[attr-defined]
+            model_selection=0,
             min_detection_confidence=min_confidence,
         )
-        return mp.tasks.vision.FaceDetector.create_from_options(options)
+        logger.info(
+            "MediaPipe legacy face detector loaded (no model file required)",
+            extra={"stage": "face_detection", "video_id": ""},
+        )
+        return legacy
     except Exception as exc:
         logger.warning(
             "Failed to create MediaPipe FaceDetector: %s",
@@ -549,18 +580,9 @@ def _detect_face_in_frame(
 ) -> FaceBBox | None:
     """Detect the highest-confidence face in a single frame.
 
-    Uses the MediaPipe Tasks API. Bounding boxes are returned in pixel
-    coordinates and normalized to [0, 1] for resolution independence.
-
-    Args:
-        frame_path: Path to the JPEG frame image.
-        detector: MediaPipe FaceDetector (Tasks API) instance.
-        timestamp_ms: Frame timestamp in milliseconds.
-        min_confidence: Minimum confidence threshold for filtering.
-        min_face_size: Minimum normalized face size (0–1) for width and height.
-
-    Returns:
-        FaceBBox for the highest-confidence detected face, or None if no face found.
+    Supports both the Tasks API (FaceDetector.detect) and the legacy
+    solutions API (FaceDetection.process). Bounding boxes are returned
+    as normalized [0, 1] coordinates for resolution independence.
     """
     try:
         import mediapipe as mp  # type: ignore[import]
@@ -568,48 +590,63 @@ def _detect_face_in_frame(
         return None
 
     try:
-        mp_image = mp.Image.create_from_file(frame_path)
+        # Legacy solutions API: FaceDetection has .process() method
+        if hasattr(detector, "process"):
+            import cv2  # type: ignore[import]
+            img = cv2.imread(frame_path)
+            if img is None:
+                return None
+            rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+            result = detector.process(rgb)
+            if not result.detections:
+                return None
+            best = max(
+                result.detections,
+                key=lambda d: d.score[0] if d.score else 0.0,
+            )
+            confidence = float(best.score[0]) if best.score else 0.0
+            if confidence < min_confidence:
+                return None
+            rbb = best.location_data.relative_bounding_box
+            x = max(0.0, float(rbb.xmin))
+            y = max(0.0, float(rbb.ymin))
+            width = min(float(rbb.width), 1.0 - x)
+            height = min(float(rbb.height), 1.0 - y)
+        else:
+            # Tasks API: FaceDetector has .detect() method
+            try:
+                mp_image = mp.Image.create_from_file(frame_path)
+            except Exception:
+                return None
+            result = detector.detect(mp_image)
+            if not result.detections:
+                return None
+            best = max(
+                result.detections,
+                key=lambda d: d.categories[0].score if d.categories else 0.0,
+            )
+            confidence = float(best.categories[0].score) if best.categories else 0.0
+            if confidence < min_confidence:
+                return None
+            bbox = best.bounding_box
+            img_w = mp_image.width
+            img_h = mp_image.height
+            if img_w <= 0 or img_h <= 0:
+                return None
+            x = max(0.0, float(bbox.origin_x) / img_w)
+            y = max(0.0, float(bbox.origin_y) / img_h)
+            width = min(float(bbox.width) / img_w, 1.0 - x)
+            height = min(float(bbox.height) / img_h, 1.0 - y)
     except Exception:
         return None
 
-    result = detector.detect(mp_image)
-
-    if not result.detections:
-        return None
-
-    # Select the highest-confidence detection
-    best = max(
-        result.detections,
-        key=lambda d: d.categories[0].score if d.categories else 0.0,
-    )
-
-    confidence = float(best.categories[0].score) if best.categories else 0.0
-    if confidence < min_confidence:
-        return None
-
-    # Tasks API returns pixel coordinates — normalize to [0, 1]
-    bbox = best.bounding_box
-    img_w = mp_image.width
-    img_h = mp_image.height
-    if img_w <= 0 or img_h <= 0:
-        return None
-
-    x = max(0.0, float(bbox.origin_x) / img_w)
-    y = max(0.0, float(bbox.origin_y) / img_h)
-    width = min(float(bbox.width) / img_w, 1.0 - x)
-    height = min(float(bbox.height) / img_h, 1.0 - y)
-
     if width <= 0.0 or height <= 0.0:
         return None
-
     if width < min_face_size or height < min_face_size:
         return None
 
     return FaceBBox(
-        x=x,
-        y=y,
-        width=width,
-        height=height,
+        x=x, y=y, width=width, height=height,
         confidence=confidence,
         timestamp_ms=timestamp_ms,
     )

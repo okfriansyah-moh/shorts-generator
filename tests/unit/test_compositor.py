@@ -426,6 +426,20 @@ def test_gameplay_crop_filter_full_frame():
     assert "scale=1080:1920" in f
 
 
+def test_gameplay_crop_filter_excludes_face_region():
+    """When face bbox is provided, crop avoids the face cam region."""
+    bbox = _make_face_bbox(x=0.35, y=0.65, width=0.30, height=0.35)
+    f = build_gameplay_crop_filter(
+        "[gp_in]", "[gameplay]", 1080, 1248,
+        bbox=bbox, src_width=1280, src_height=720,
+    )
+    # Should NOT use the generic center-crop expression
+    assert "crop=ih*9/16:ih" not in f
+    assert "scale=1080:1248" in f
+    assert f.startswith("[gp_in]")
+    assert f.endswith("[gameplay]")
+
+
 # ---------------------------------------------------------------------------
 # Face crop tests
 # ---------------------------------------------------------------------------

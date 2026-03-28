@@ -199,7 +199,8 @@ def _compose_split_layout(
     end_sec = clip.end_time / 1000.0
 
     gameplay_filter = build_gameplay_crop_filter(
-        "[gp_in]", "[gameplay]", OUTPUT_WIDTH, GAMEPLAY_HEIGHT
+        "[gp_in]", "[gameplay]", OUTPUT_WIDTH, GAMEPLAY_HEIGHT,
+        bbox=bbox, src_width=src_width, src_height=src_height,
     )
     face_filter = build_face_crop_filter(
         "[fc_in]", "[face]", bbox, src_width, src_height, ZOOM_FACTOR
@@ -208,7 +209,8 @@ def _compose_split_layout(
         f"[0:v]split=2[gp_in][fc_in];"
         f"{gameplay_filter};"
         f"{face_filter};"
-        f"[gameplay][face]vstack=inputs=2,scale={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}[v]"
+        f"[gameplay][face]vstack=inputs=2,"
+        f"scale={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}:force_original_aspect_ratio=disable[v]"
     )
 
     gpu_settings = resolve_gpu_settings(config)
@@ -241,7 +243,7 @@ def _compose_split_layout_simple(
     end_sec = clip.end_time / 1000.0
 
     gameplay_filter = build_gameplay_crop_filter(
-        "[gp_in]", "[gameplay]", OUTPUT_WIDTH, GAMEPLAY_HEIGHT
+        "[gp_in]", "[gameplay]", OUTPUT_WIDTH, GAMEPLAY_HEIGHT,
     )
     # Center-crop to 1080×672 aspect without bbox zoom
     face_crop_w = min(src_width, int(src_height * OUTPUT_WIDTH / FACE_HEIGHT))
@@ -258,7 +260,8 @@ def _compose_split_layout_simple(
         f"[0:v]split=2[gp_in][fc_in];"
         f"{gameplay_filter};"
         f"{face_filter};"
-        f"[gameplay][face]vstack=inputs=2,scale={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}[v]"
+        f"[gameplay][face]vstack=inputs=2,"
+        f"scale={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}:force_original_aspect_ratio=disable[v]"
     )
 
     gpu_settings = resolve_gpu_settings(config)
