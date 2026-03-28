@@ -5,8 +5,9 @@ Parses arguments, loads configuration, verifies dependencies,
 initializes the database, and launches the pipeline.
 
 Usage:
-    python run_pipeline.py <video_file_path>
-    python run_pipeline.py --config config/config.yaml <video_file_path>
+    python3 run_pipeline.py <video_file_path>
+    python3 run_pipeline.py --output /path/to/output <video_file_path>
+    python3 run_pipeline.py --config config/config.yaml <video_file_path>
 """
 
 from __future__ import annotations
@@ -51,6 +52,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         action="store_true",
         default=False,
         help="Enable NVIDIA GPU acceleration (requires NVENC-capable GPU).",
+    )
+    parser.add_argument(
+        "--output",
+        default=None,
+        metavar="DIR",
+        help="Output directory for generated clips (default: value from config.yaml).",
     )
     return parser.parse_args(argv)
 
@@ -106,6 +113,13 @@ def main(argv: list[str] | None = None) -> int:
         if "gpu" not in config:
             config["gpu"] = {}
         config["gpu"]["enabled"] = True
+
+    # Apply --output CLI override
+    if args.output:
+        output_dir = os.path.abspath(args.output)
+        config["paths"]["output_dir"] = output_dir
+        config["paths"]["temp_dir"] = os.path.join(output_dir, "temp")
+        config["paths"]["database"] = os.path.join(output_dir, "shorts_factory.db")
 
     # Check dependencies
     check_all_dependencies(config)

@@ -1,0 +1,23 @@
+# Shorts Factory — Python dependencies
+# Install with: pip install -r requirements.txt
+#
+# Python 3.10–3.12 recommended (3.13 may have mediapipe/faster-whisper issues)
+
+# Core utilities
+pyyaml>=6.0
+
+# Scene detection (package name is 'scenedetect', NOT 'pyscenedetect')
+scenedetect[opencv]>=0.6.4
+
+# Speech transcription
+faster-whisper>=1.0.0
+
+# Face detection
+mediapipe>=0.10.0
+
+# Text-to-speech
+edge-tts>=6.1.9
+pyttsx3>=2.90
+
+# Image processing (thumbnails)
+pillow>=10.0.0

@@ -84,13 +84,13 @@ pip install -r requirements.txt
 If there's no `requirements.txt`, install the core packages manually:
 
 ```bash
-pip install pyyaml pyscenedetect faster-whisper mediapipe edge-tts pyttsx3 pillow
+pip install pyyaml scenedetect faster-whisper mediapipe edge-tts pyttsx3 pillow
 ```
 
 ### 4. Verify Everything Works
 
 ```bash
-python -m pytest tests/ -x -q
+python3 -m pytest tests/ -x -q
 ```
 
 You should see something like `535 passed`. All tests run without a GPU, without network, and without real video files.
@@ -107,10 +107,13 @@ Put a video file (MP4, MKV, AVI, MOV, or WebM) somewhere accessible. The video s
 
 ```bash
 # Default CPU mode
-python run_pipeline.py /path/to/your/video.mp4
+python3 run_pipeline.py /path/to/your/video.mp4
+
+# Custom output directory
+python3 run_pipeline.py --output /path/to/output /path/to/your/video.mp4
 
 # With NVIDIA GPU acceleration (optional — requires NVENC-capable GPU)
-python run_pipeline.py --gpu /path/to/your/video.mp4
+python3 run_pipeline.py --gpu /path/to/your/video.mp4
 ```
 
 That's it. The pipeline will:
@@ -243,7 +246,7 @@ Publishing is a **separate step** from the main pipeline. The pipeline generates
 ### Run the Publisher
 
 ```bash
-python scripts/publish_cron.py
+python3 scripts/publish_cron.py
 ```
 
 This will:
@@ -364,5 +367,5 @@ shorts-generator/
 - **Customize config**: Adjust scoring weights, clip duration, TTS voice in `config/config.yaml`
 - **Read the architecture**: See `docs/architecture.md` for the full system design
 - **Check progress**: See `docs/progress_report.md` for implementation status
-- **Run tests**: `python -m pytest tests/ -v` for verbose test output
+- **Run tests**: `python3 -m pytest tests/ -v` for verbose test output
 - **Contribute**: Each module is in its own folder under `modules/`. Follow the conventions in `.github/copilot-instructions.md`.
