@@ -37,7 +37,7 @@ OUTPUT_HEIGHT = 1920
 GAMEPLAY_HEIGHT = 1248   # 65% of 1920
 FACE_HEIGHT = 672        # 35% of 1920
 FACE_VISIBILITY_THRESHOLD = 0.3
-ZOOM_FACTOR = 1.2
+DEFAULT_ZOOM_FACTOR = 1.5
 
 
 # ---------------------------------------------------------------------------
@@ -193,6 +193,7 @@ def _compose_split_layout(
     fps: int,
     timeout: int,
     config: dict,
+    zoom_factor: float = 1.5,
 ) -> None:
     """Produce split gameplay/face composite with face zoom via FFmpeg."""
     start_sec = clip.start_time / 1000.0
@@ -203,14 +204,16 @@ def _compose_split_layout(
         bbox=bbox, src_width=src_width, src_height=src_height,
     )
     face_filter = build_face_crop_filter(
-        "[fc_in]", "[face]", bbox, src_width, src_height, ZOOM_FACTOR
+        "[fc_in]", "[face]", bbox, src_width, src_height, zoom_factor
     )
     filter_complex = (
         f"[0:v]split=2[gp_in][fc_in];"
         f"{gameplay_filter};"
         f"{face_filter};"
         f"[gameplay][face]vstack=inputs=2,"
-        f"scale={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}:force_original_aspect_ratio=disable[v]"
+        f"scale={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}:force_original_aspect_ratio=disable,"
+        f"pad={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}:(ow-iw)/2:(oh-ih)/2:black,"
+        f"setsar=1[v]"
     )
 
     gpu_settings = resolve_gpu_settings(config)
@@ -253,7 +256,7 @@ def _compose_split_layout_simple(
     face_filter = (
         f"[fc_in]"
         f"crop={face_crop_w}:{face_crop_h}:{face_x}:{face_y},"
-        f"scale={OUTPUT_WIDTH}:{FACE_HEIGHT}"
+        f"scale={OUTPUT_WIDTH}:{FACE_HEIGHT}:force_original_aspect_ratio=disable"
         f"[face]"
     )
     filter_complex = (
@@ -261,7 +264,9 @@ def _compose_split_layout_simple(
         f"{gameplay_filter};"
         f"{face_filter};"
         f"[gameplay][face]vstack=inputs=2,"
-        f"scale={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}:force_original_aspect_ratio=disable[v]"
+        f"scale={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}:force_original_aspect_ratio=disable,"
+        f"pad={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}:(ow-iw)/2:(oh-ih)/2:black,"
+        f"setsar=1[v]"
     )
 
     gpu_settings = resolve_gpu_settings(config)
@@ -371,6 +376,7 @@ def process(
     compositor_config = config.get("compositor", {})
     fps = int(pipeline_config.get("output_framerate", 30))
     ffmpeg_timeout = int(pipeline_config.get("ffmpeg_timeout", 300))
+    zoom_factor = float(compositor_config.get("face_zoom_factor", DEFAULT_ZOOM_FACTOR))
 
     source_path = ingestion_result.path
     src_width, src_height = ingestion_result.resolution
@@ -448,7 +454,7 @@ def process(
             _compose_split_layout(
                 source_path, output_path, clip,
                 bbox, src_width, src_height, fps, ffmpeg_timeout,
-                config,
+                config, zoom_factor,
             )
         except RuntimeError:
             logger.warning(

@@ -157,6 +157,10 @@ def _build_render_command(
     filters: list[str] = []
     video_filters: list[str] = []
 
+    # Resolution enforcement: guarantee 1080×1920 output regardless of input
+    video_filters.append("scale=1080:1920:force_original_aspect_ratio=disable")
+    video_filters.append("setsar=1")
+
     # Subtitle burn-in (video filter)
     has_subtitles = (
         subtitle_result is not None

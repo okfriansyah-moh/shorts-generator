@@ -411,10 +411,10 @@ def test_process_deterministic(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_gameplay_crop_filter_contains_9_16_crop():
-    """build_gameplay_crop_filter embeds a 9:16 crop expression."""
+def test_gameplay_crop_filter_contains_target_aspect_crop():
+    """build_gameplay_crop_filter embeds a target-aspect crop expression."""
     f = build_gameplay_crop_filter("[0:v]", "[gameplay]", 1080, 1248)
-    assert "crop=ih*9/16:ih" in f
+    assert "crop=ih*0.8654:ih" in f
     assert "scale=1080:1248" in f
     assert f.startswith("[0:v]")
     assert f.endswith("[gameplay]")
@@ -434,7 +434,7 @@ def test_gameplay_crop_filter_excludes_face_region():
         bbox=bbox, src_width=1280, src_height=720,
     )
     # Should NOT use the generic center-crop expression
-    assert "crop=ih*9/16:ih" not in f
+    assert "crop=ih*0.8654:ih" not in f
     assert "scale=1080:1248" in f
     assert f.startswith("[gp_in]")
     assert f.endswith("[gameplay]")

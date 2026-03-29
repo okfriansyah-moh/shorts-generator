@@ -405,29 +405,31 @@ class TestWeightedComposite:
             "face_presence": 2.0,
             "scene_activity": 1.0,
             "sentence_density": 1.0,
+            "image_quality": 2.0,
         }
-        composite = _weighted_composite(1.0, 1.0, 1.0, 1.0, 1.0, weights)
+        composite = _weighted_composite(1.0, 1.0, 1.0, 1.0, 1.0, 1.0, weights)
         assert abs(composite - 1.0) < 1e-9
 
     def test_composite_zero_weights_returns_zero(self):
         from modules.scoring.score import _weighted_composite
 
-        weights = {k: 0.0 for k in ["keyword", "audio_energy", "face_presence", "scene_activity", "sentence_density"]}
-        assert _weighted_composite(1.0, 1.0, 1.0, 1.0, 1.0, weights) == 0.0
+        weights = {k: 0.0 for k in ["keyword", "audio_energy", "face_presence", "scene_activity", "sentence_density", "image_quality"]}
+        assert _weighted_composite(1.0, 1.0, 1.0, 1.0, 1.0, 1.0, weights) == 0.0
 
     def test_partial_factors_weighted_correctly(self):
         from modules.scoring.score import _weighted_composite
 
-        # Only keyword=1.0, everything else 0. Weight keyword=3, total=9.
+        # Only keyword=1.0, everything else 0. Weight keyword=3, total=11.
         weights = {
             "keyword": 3.0,
             "audio_energy": 2.0,
             "face_presence": 2.0,
             "scene_activity": 1.0,
             "sentence_density": 1.0,
+            "image_quality": 2.0,
         }
-        composite = _weighted_composite(1.0, 0.0, 0.0, 0.0, 0.0, weights)
-        assert abs(composite - 3.0 / 9.0) < 1e-9
+        composite = _weighted_composite(1.0, 0.0, 0.0, 0.0, 0.0, 0.0, weights)
+        assert abs(composite - 3.0 / 11.0) < 1e-9
 
 
 # ---------------------------------------------------------------------------
@@ -656,3 +658,69 @@ class TestProcessIntegration:
         weights = _get_weights({})
         assert weights["keyword"] == 3.0
         assert weights["audio_energy"] == 2.0
+        assert weights["image_quality"] == 2.0
+
+
+# ---------------------------------------------------------------------------
+# Image quality scoring
+# ---------------------------------------------------------------------------
+
+
+class TestImageQualityScoring:
+    def test_laplacian_variance_flat_image_low(self):
+        """A uniform gray image has zero Laplacian variance."""
+        from modules.scoring.quality import _laplacian_variance
+
+        width, height = 16, 16
+        # All pixels = 128 → no edges → variance ~ 0
+        flat = bytes([128] * width * height)
+        var = _laplacian_variance(flat, width, height)
+        assert var == 0.0
+
+    def test_laplacian_variance_edge_image_high(self):
+        """An image with sharp edges has high Laplacian variance."""
+        from modules.scoring.quality import _laplacian_variance
+
+        width, height = 16, 16
+        # Alternating black/white columns → sharp vertical edges
+        row = bytes([0, 255] * (width // 2))
+        data = row * height
+        var = _laplacian_variance(data, width, height)
+        assert var > 100.0  # Significantly higher than flat
+
+    def test_laplacian_variance_wrong_size_returns_zero(self):
+        """Mismatched buffer size returns 0.0."""
+        from modules.scoring.quality import _laplacian_variance
+
+        var = _laplacian_variance(b"short", 100, 100)
+        assert var == 0.0
+
+    def test_compute_scene_qualities_returns_dict(self):
+        """compute_scene_qualities returns a dict mapping scene_id → float."""
+        from modules.scoring.quality import compute_scene_qualities
+
+        scenes = _make_scene_list(2)
+        # With a non-existent file, each scene should get 0.0
+        result = compute_scene_qualities(scenes, "/dev/null")
+        assert isinstance(result, dict)
+        for scene in scenes.scenes:
+            assert scene.scene_id in result
+            assert isinstance(result[scene.scene_id], float)
+
+    def test_scored_scene_includes_image_quality(self):
+        """ScoredScene includes image_quality_score field with default 0.0."""
+        scene = ScoredScene(
+            scene_id="test_scene",
+            video_id=VIDEO_ID,
+            start_time=0,
+            end_time=5000,
+            duration=5.0,
+            keyword_score=0.5,
+            audio_energy_score=0.5,
+            face_presence_score=0.5,
+            scene_activity_score=0.5,
+            sentence_density_score=0.5,
+        )
+        assert scene.image_quality_score == 0.0
+        assert scene.composite_score == 0.0
+        assert scene.rank == 0

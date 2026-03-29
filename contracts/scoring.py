@@ -10,7 +10,7 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class ScoredScene:
-    """Frozen DTO representing a scene with all five factor scores computed.
+    """Frozen DTO representing a scene with all factor scores computed.
 
     Fields:
         scene_id: References parent SceneSegment.scene_id.
@@ -23,6 +23,7 @@ class ScoredScene:
         face_presence_score: Fraction of frames with face detected. 0.0–1.0.
         scene_activity_score: Normalised inter-frame pixel difference. 0.0–1.0.
         sentence_density_score: Words-per-second score (optimal 2–4 wps). 0.0–1.0.
+        image_quality_score: Laplacian-variance sharpness. 0.0–1.0.
         composite_score: Weighted average of all factors, normalised. 0.0–1.0.
         rank: Position in descending composite_score order. >= 1.
     """
@@ -37,8 +38,9 @@ class ScoredScene:
     face_presence_score: float
     scene_activity_score: float
     sentence_density_score: float
-    composite_score: float
-    rank: int
+    image_quality_score: float = 0.0
+    composite_score: float = 0.0
+    rank: int = 0
 
 
 @dataclass(frozen=True)

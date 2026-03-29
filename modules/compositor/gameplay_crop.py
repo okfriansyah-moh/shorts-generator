@@ -1,7 +1,7 @@
 """Gameplay region crop filter builder.
 
 Produces an FFmpeg filtergraph fragment that crops the source
-to 9:16 aspect ratio (excluding any face cam PiP region) and
+to the target aspect ratio (excluding any face cam PiP region) and
 scales to target dimensions.
 """
 
@@ -19,7 +19,7 @@ def build_gameplay_crop_filter(
     src_width: int = 0,
     src_height: int = 0,
 ) -> str:
-    """Build FFmpeg filter fragment for cropping gameplay to 9:16.
+    """Build FFmpeg filter fragment for cropping gameplay to target aspect.
 
     When a face bounding box is provided, the crop avoids the face cam
     PiP region so the face does not appear duplicated in the gameplay
@@ -48,11 +48,12 @@ def build_gameplay_crop_filter(
             bbox, src_width, src_height,
         )
 
-    # No face info — simple center crop
+    # No face info — center crop to target aspect then scale to exact dims
+    target_aspect = target_width / target_height  # 1080/1248 ≈ 0.865
     return (
         f"{input_label}"
-        f"crop=ih*9/16:ih,"
-        f"scale={target_width}:{target_height}"
+        f"crop=ih*{target_aspect:.4f}:ih,"
+        f"scale={target_width}:{target_height}:force_original_aspect_ratio=disable"
         f"{output_label}"
     )
 
@@ -70,21 +71,17 @@ def _build_face_aware_crop(
 
     Determines the largest rectangular area of the source frame that:
       1. Does NOT overlap the face cam PiP bounding box
-      2. Maintains approximately 9:16 aspect ratio
+      2. Maintains the target aspect ratio (target_width / target_height)
       3. Is as large as possible (to preserve gameplay detail)
 
     The approach: figure out which edge the face cam is nearest, then
     crop from the opposite side.
     """
+    target_aspect = target_width / target_height  # 1080/1248 ≈ 0.865
+
     # Face cam center in normalized coords
     face_cx = bbox.x + bbox.width / 2
     face_cy = bbox.y + bbox.height / 2
-
-    # Determine best crop region that avoids the face cam
-    # Face cam at bottom → crop from top
-    # Face cam at top → crop from bottom
-    # Face cam at left → crop from right
-    # Face cam at right → crop from left
 
     # Calculate available regions (above, below, left, right of face cam)
     face_top_px = int(bbox.y * src_height)
@@ -96,22 +93,6 @@ def _build_face_aware_crop(
     space_above = face_top_px
     space_below = src_height - face_bottom_px
 
-    # For 9:16 aspect, ideal crop: width = height * 9/16
-    # Try cropping from the region with most space away from face cam
-
-    # Vertical strategy: crop a horizontal strip that excludes the face cam
-    # If face is in bottom half, crop from top; if top half, crop from bottom
-    if face_cy >= 0.5:
-        # Face cam in bottom half — crop from top, exclude bottom
-        crop_h = max(space_above, int(src_height * 0.6))
-        crop_h = min(crop_h, face_top_px) if face_top_px > 0 else src_height
-        crop_y = 0
-    else:
-        # Face cam in top half — crop from bottom, exclude top
-        crop_h = max(space_below, int(src_height * 0.6))
-        crop_h = min(crop_h, space_below) if space_below > 0 else src_height
-        crop_y = src_height - crop_h
-
     # If face cam is on the left or right side AND covers significant vertical
     # space, use a horizontal strategy instead
     face_covers_vertical = bbox.height > 0.4
@@ -121,7 +102,7 @@ def _build_face_aware_crop(
         # Face cam covers a tall strip on one side — crop from opposite side
         crop_h = src_height
         crop_y = 0
-        crop_w = int(crop_h * 9 / 16)
+        crop_w = int(crop_h * target_aspect)
 
         if face_cx < 0.5:
             # Face cam on left — crop from right side
@@ -136,12 +117,25 @@ def _build_face_aware_crop(
         return (
             f"{input_label}"
             f"crop={crop_w}:{crop_h}:{crop_x}:{crop_y},"
-            f"scale={target_width}:{target_height}"
+            f"scale={target_width}:{target_height}:force_original_aspect_ratio=disable"
             f"{output_label}"
         )
 
-    # Vertical strategy: use crop_h, compute crop_w for 9:16
-    crop_w = int(crop_h * 9 / 16)
+    # Vertical strategy: crop a horizontal strip that excludes the face cam
+    # If face is in bottom half, crop from top; if top half, crop from bottom
+    if face_cy >= 0.5:
+        # Face cam in bottom half — crop from top, exclude bottom
+        crop_h = max(space_above, int(src_height * 0.6))
+        crop_h = min(crop_h, face_top_px) if face_top_px > 0 else src_height
+        crop_y = 0
+    else:
+        # Face cam in top half — crop from bottom, exclude top
+        crop_h = max(space_below, int(src_height * 0.6))
+        crop_h = min(crop_h, space_below) if space_below > 0 else src_height
+        crop_y = src_height - crop_h
+
+    # Use target aspect ratio: crop_w = crop_h * (target_width / target_height)
+    crop_w = int(crop_h * target_aspect)
     crop_w = min(crop_w, src_width)
 
     # Center horizontally
@@ -150,6 +144,6 @@ def _build_face_aware_crop(
     return (
         f"{input_label}"
         f"crop={crop_w}:{crop_h}:{crop_x}:{crop_y},"
-        f"scale={target_width}:{target_height}"
+        f"scale={target_width}:{target_height}:force_original_aspect_ratio=disable"
         f"{output_label}"
     )

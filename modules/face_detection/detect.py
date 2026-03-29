@@ -30,7 +30,7 @@ _DEFAULT_SAMPLE_FPS = 2
 _DEFAULT_MIN_CONFIDENCE = 0.7
 _DEFAULT_EMA_ALPHA = 0.3
 _DEFAULT_MIN_FACE_SIZE = 0.05
-_DEFAULT_MODEL_PATH = "models/blaze_face_short_range.task"
+_DEFAULT_MODEL_PATH = "models/blaze_face_short_range.tflite"
 _DEFAULT_SKIP = False
 
 
@@ -343,8 +343,8 @@ def _load_mediapipe_detector(min_confidence: float, model_path: str) -> Any | No
 
     Resolution order:
       1. If a valid .task/.tflite model file exists, use the Tasks API.
-      2. Otherwise, use the bundled legacy ``mp.solutions.face_detection``
-         API which ships inside the ``mediapipe`` pip package (no download).
+      2. Otherwise, try the bundled legacy ``mp.solutions.face_detection``
+         API which ships inside older ``mediapipe`` pip packages.
 
     Returns None when mediapipe is not installed.
     """
@@ -357,62 +357,88 @@ def _load_mediapipe_detector(min_confidence: float, model_path: str) -> Any | No
         )
         return None
 
-    # --- Try Tasks API first (requires .task/.tflite model file) ---
-    if os.path.isfile(model_path):
-        # Validate the file is a real binary model, not an HTML/XML error page
-        try:
-            with open(model_path, "rb") as f:
-                header = f.read(1)
-        except OSError:
-            header = b""
+    # --- Resolve model file: try configured path, then common extensions ---
+    candidate_paths = [model_path]
+    base, ext = os.path.splitext(model_path)
+    if ext == ".task":
+        candidate_paths.append(base + ".tflite")
+    elif ext == ".tflite":
+        candidate_paths.append(base + ".task")
 
-        if header[:1] not in (b"<", b"{"):
+    resolved_path: str | None = None
+    for p in candidate_paths:
+        if os.path.isfile(p):
+            # Validate the file is a real binary model, not an HTML/XML error page
             try:
-                options = mp.tasks.vision.FaceDetectorOptions(
-                    base_options=mp.tasks.BaseOptions(model_asset_path=model_path),
-                    running_mode=mp.tasks.vision.RunningMode.IMAGE,
-                    min_detection_confidence=min_confidence,
-                )
-                detector = mp.tasks.vision.FaceDetector.create_from_options(options)
-                logger.info(
-                    "MediaPipe Tasks API face detector loaded from %s",
-                    model_path,
-                    extra={"stage": "face_detection", "video_id": ""},
-                )
-                return detector
-            except Exception as exc:
+                with open(p, "rb") as f:
+                    header = f.read(1)
+            except OSError:
+                continue
+            if header[:1] not in (b"<", b"{"):
+                resolved_path = p
+                break
+            else:
                 logger.warning(
-                    "Tasks API detector failed (%s) — "
-                    "falling back to bundled legacy detector.",
-                    exc,
+                    "Model file %s appears to be an HTML/XML error page "
+                    "(bad download). Skipping.",
+                    p,
                     extra={"stage": "face_detection", "video_id": ""},
                 )
-        else:
+
+    # --- Try Tasks API first (requires valid model file) ---
+    if resolved_path is not None:
+        try:
+            options = mp.tasks.vision.FaceDetectorOptions(
+                base_options=mp.tasks.BaseOptions(model_asset_path=resolved_path),
+                running_mode=mp.tasks.vision.RunningMode.IMAGE,
+                min_detection_confidence=min_confidence,
+            )
+            detector = mp.tasks.vision.FaceDetector.create_from_options(options)
+            logger.info(
+                "MediaPipe Tasks API face detector loaded from %s",
+                resolved_path,
+                extra={"stage": "face_detection", "video_id": ""},
+            )
+            return detector
+        except Exception as exc:
             logger.warning(
-                "Model file %s appears to be an HTML/XML error page "
-                "(bad download). Falling back to bundled legacy detector.",
+                "Tasks API detector failed (%s) — "
+                "trying legacy detector.",
+                exc,
+                extra={"stage": "face_detection", "video_id": ""},
+            )
+
+    # --- Fallback: legacy solutions API (bundled in older pip packages) ---
+    if hasattr(mp, "solutions") and hasattr(mp.solutions, "face_detection"):
+        try:
+            legacy = mp.solutions.face_detection.FaceDetection(  # type: ignore[attr-defined]
+                model_selection=0,
+                min_detection_confidence=min_confidence,
+            )
+            logger.info(
+                "MediaPipe legacy face detector loaded (no model file required)",
+                extra={"stage": "face_detection", "video_id": ""},
+            )
+            return legacy
+        except Exception as exc:
+            logger.warning(
+                "Legacy detector also failed: %s",
+                exc,
+                extra={"stage": "face_detection", "video_id": ""},
+            )
+    else:
+        if resolved_path is None:
+            logger.warning(
+                "No model file found at %s and mp.solutions.face_detection "
+                "is not available in this mediapipe version. "
+                "Download the model: curl -fLo models/blaze_face_short_range.tflite "
+                "'https://storage.googleapis.com/mediapipe-models/face_detector/"
+                "blaze_face_short_range/float16/1/blaze_face_short_range.tflite'",
                 model_path,
                 extra={"stage": "face_detection", "video_id": ""},
             )
 
-    # --- Fallback: legacy solutions API (bundled in pip package, no download) ---
-    try:
-        legacy = mp.solutions.face_detection.FaceDetection(  # type: ignore[attr-defined]
-            model_selection=0,
-            min_detection_confidence=min_confidence,
-        )
-        logger.info(
-            "MediaPipe legacy face detector loaded (no model file required)",
-            extra={"stage": "face_detection", "video_id": ""},
-        )
-        return legacy
-    except Exception as exc:
-        logger.warning(
-            "Failed to create MediaPipe FaceDetector: %s",
-            exc,
-            extra={"stage": "face_detection", "video_id": ""},
-        )
-        return None
+    return None
 
 
 def _process_scene(

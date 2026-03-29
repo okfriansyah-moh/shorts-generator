@@ -35,13 +35,14 @@ transcription:
   model_size: "small"
   language: "en"
   beam_size: 5
+  model_cache_dir: "models/whisper"
 
 face_detection:
   sample_fps: 2
   min_confidence: 0.7
   min_face_size: 0.05
   ema_alpha: 0.3
-  model_path: "models/blaze_face_short_range.task"
+  model_path: "models/blaze_face_short_range.tflite"
   skip: false
 
 scoring:
@@ -51,6 +52,7 @@ scoring:
     face_presence: 2
     scene_activity: 1
     sentence_density: 1
+    image_quality: 2
   min_composite_score: 0.2
 
 clip_builder:
@@ -85,6 +87,7 @@ compositor:
   facecam_ratio: 0.35
   output_width: 1080
   output_height: 1920
+  face_zoom_factor: 1.5
   default_layout: "split" # "split" (gameplay+face) or "gameplay_only"
   face_region: "auto" # "auto" (detect from video), or manual: "bottom_left", "bottom_center", "bottom_middle", "bottom_right", "middle_left", "middle_right", "upper_middle_left", "top_left", "top_right", "center"
 

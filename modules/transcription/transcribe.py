@@ -83,7 +83,7 @@ def transcribe(
     try:
         transcript = _run_faster_whisper(
             wav_path, video_id, model_size, language, beam_size,
-            device=device, compute_type=compute_type,
+            device=device, compute_type=compute_type, config=config,
         )
     finally:
         _cleanup_temp_file(wav_path)
@@ -168,6 +168,7 @@ def _run_faster_whisper(
     beam_size: int,
     device: str = "cpu",
     compute_type: str = "int8",
+    config: dict[str, Any] | None = None,
 ) -> Transcript:
     """Run faster-whisper transcription and return a Transcript DTO.
 
@@ -208,8 +209,19 @@ def _run_faster_whisper(
         },
     )
 
+    cache_dir = _model_cache_dir(config)
+    local_only = _model_is_cached(model_size, config)
+    logger.debug(
+        "Whisper cache: dir=%s local_only=%s",
+        cache_dir, local_only,
+        extra={"stage": "transcription", "video_id": video_id},
+    )
+
     try:
-        model = WhisperModel(model_size, device=device, compute_type=compute_type)
+        model = WhisperModel(
+            model_size, device=device, compute_type=compute_type,
+            download_root=cache_dir, local_files_only=local_only,
+        )
     except Exception as exc:
         # Fall back to CPU if CUDA fails
         if device != "cpu":
@@ -221,7 +233,10 @@ def _run_faster_whisper(
                     "error": str(exc)[:200],
                 },
             )
-            model = WhisperModel(model_size, device="cpu", compute_type="int8")
+            model = WhisperModel(
+                model_size, device="cpu", compute_type="int8",
+                download_root=cache_dir, local_files_only=local_only,
+            )
         else:
             raise RuntimeError(
                 f"Failed to load faster-whisper model '{model_size}': {exc}"
@@ -277,6 +292,27 @@ def _run_faster_whisper(
 def _seconds_to_ms(seconds: float) -> int:
     """Convert seconds (float) to milliseconds (int), rounding to nearest ms."""
     return int(round(seconds * 1000))
+
+
+def _model_cache_dir(config: dict[str, Any] | None) -> str:
+    """Resolve the cache directory for faster-whisper models."""
+    if config:
+        cache = config.get("transcription", {}).get("model_cache_dir", "")
+        if cache:
+            path = os.path.expanduser(cache)
+            os.makedirs(path, exist_ok=True)
+            return path
+    default = os.path.join(os.path.expanduser("~"), ".cache", "shorts-factory", "whisper")
+    os.makedirs(default, exist_ok=True)
+    return default
+
+
+def _model_is_cached(model_size: str, config: dict[str, Any] | None) -> bool:
+    """Check whether the specified model is already downloaded locally."""
+    cache_dir = _model_cache_dir(config)
+    # HuggingFace Hub stores models under models--{org}--{repo}
+    expected = os.path.join(cache_dir, f"models--Systran--faster-whisper-{model_size}")
+    return os.path.isdir(expected)
 
 
 def _cleanup_temp_file(path: str) -> None:

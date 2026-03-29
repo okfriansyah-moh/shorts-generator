@@ -85,6 +85,6 @@ def build_face_crop_filter(
     return (
         f"{input_label}"
         f"crop={crop_w}:{crop_h}:{crop_x}:{crop_y},"
-        f"scale={FACE_REGION_WIDTH}:{FACE_REGION_HEIGHT}"
+        f"scale={FACE_REGION_WIDTH}:{FACE_REGION_HEIGHT}:force_original_aspect_ratio=disable"
         f"{output_label}"
     )

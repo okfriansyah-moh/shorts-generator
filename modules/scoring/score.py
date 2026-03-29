@@ -21,6 +21,7 @@ from contracts.transcript import Transcript
 
 from .activity import compute_scene_activities
 from .keywords import get_keywords, score_keyword
+from .quality import compute_scene_qualities
 
 logger = logging.getLogger(__name__)
 
@@ -62,10 +63,15 @@ def process(
 
     # Scene activity requires the actual video file; normalise video-wide.
     raw_activities: dict[str, float] = {}
+    raw_qualities: dict[str, float] = {}
     if file_path is not None:
         raw_activities = compute_scene_activities(scene_list, file_path)
+        raw_qualities = compute_scene_qualities(scene_list, file_path)
     activity_scores = _normalize_values(
         raw_activities, [s.scene_id for s in scene_list.scenes]
+    )
+    quality_scores = _normalize_values(
+        raw_qualities, [s.scene_id for s in scene_list.scenes]
     )
 
     # Compute all five factor scores and a raw weighted composite per scene.
@@ -78,7 +84,8 @@ def process(
         sd = _sentence_density_score(
             scene.start_time, scene.end_time, scene.duration, transcript
         )
-        composite = _weighted_composite(kw, ae, fp, sa, sd, weights)
+        iq = quality_scores.get(scene.scene_id, 0.0)
+        composite = _weighted_composite(kw, ae, fp, sa, sd, iq, weights)
         scored.append(
             ScoredScene(
                 scene_id=scene.scene_id,
@@ -91,6 +98,7 @@ def process(
                 face_presence_score=fp,
                 scene_activity_score=sa,
                 sentence_density_score=sd,
+                image_quality_score=iq,
                 composite_score=composite,
                 rank=0,  # Placeholder — assigned after sorting.
             )
@@ -124,6 +132,7 @@ def process(
             face_presence_score=s.face_presence_score,
             scene_activity_score=s.scene_activity_score,
             sentence_density_score=s.sentence_density_score,
+            image_quality_score=s.image_quality_score,
             composite_score=s.composite_score,
             rank=i + 1,
         )
@@ -166,6 +175,7 @@ def _get_weights(config: dict) -> dict[str, float]:
         "face_presence": float(w.get("face_presence", 2)),
         "scene_activity": float(w.get("scene_activity", 1)),
         "sentence_density": float(w.get("sentence_density", 1)),
+        "image_quality": float(w.get("image_quality", 2)),
     }
 
 
@@ -175,9 +185,10 @@ def _weighted_composite(
     face_presence: float,
     scene_activity: float,
     sentence_density: float,
+    image_quality: float,
     weights: dict[str, float],
 ) -> float:
-    """Return weighted average of all five factor scores."""
+    """Return weighted average of all factor scores."""
     total_weight = sum(weights.values())
     if total_weight == 0.0:
         return 0.0
@@ -187,6 +198,7 @@ def _weighted_composite(
         + face_presence * weights["face_presence"]
         + scene_activity * weights["scene_activity"]
         + sentence_density * weights["sentence_density"]
+        + image_quality * weights["image_quality"]
     ) / total_weight
 
 
@@ -238,6 +250,7 @@ def _normalize_composite_scores(scenes: list[ScoredScene]) -> list[ScoredScene]:
             face_presence_score=s.face_presence_score,
             scene_activity_score=s.scene_activity_score,
             sentence_density_score=s.sentence_density_score,
+            image_quality_score=s.image_quality_score,
             composite_score=(s.composite_score - vmin) / span,
             rank=s.rank,
         )
@@ -305,6 +318,7 @@ def _temporal_fallback(scenes: list[ScoredScene]) -> list[ScoredScene]:
                 face_presence_score=scene.face_presence_score,
                 scene_activity_score=scene.scene_activity_score,
                 sentence_density_score=scene.sentence_density_score,
+                image_quality_score=scene.image_quality_score,
                 composite_score=score,
                 rank=scene.rank,
             )
