@@ -445,15 +445,23 @@ def process(
     )
 
     if has_face:
-        bbox = detected_bbox
-        if bbox is None:
-            # No per-scene bbox — use video-level PiP estimate (from region
-            # voting) or config fallback
-            bbox = _infer_face_bbox(compositor_config, face_result)
-        elif bbox.width < 0.15 or bbox.height < 0.18:
-            # Tiny face bbox from MediaPipe — expand to full PiP overlay
-            bbox = estimate_pip_region(bbox, src_width, src_height)
-        # else: bbox is already a full PiP region from region voting
+        manual_face_region = str(compositor_config.get("face_region", "auto"))
+
+        if manual_face_region != "auto":
+            # LOCK: Named regions are authoritative across ALL clips.
+            # Ensures consistency regardless of per-clip detection quality.
+            bbox = _infer_face_bbox(compositor_config)
+        else:
+            # AUTO mode: use per-clip detection with fallbacks
+            bbox = detected_bbox
+            if bbox is None:
+                # No per-scene bbox — use video-level PiP estimate (from
+                # region voting) or config fallback
+                bbox = _infer_face_bbox(compositor_config, face_result)
+            elif bbox.width < 0.15 or bbox.height < 0.18:
+                # Tiny face bbox from MediaPipe — expand to full PiP overlay
+                bbox = estimate_pip_region(bbox, src_width, src_height)
+            # else: bbox is already a full PiP region from region voting
         try:
             _compose_split_layout(
                 source_path, output_path, clip,

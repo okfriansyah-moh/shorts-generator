@@ -817,3 +817,93 @@ def test_gameplay_crop_bottom_left_uses_center():
     )
     assert "crop=ih*0.8654:ih:(iw-ih*0.8654)/2:0" in f
     assert "scale=1080:1248" in f
+
+
+# ---------------------------------------------------------------------------
+# Manual face_region consistency tests (compose.py lock)
+# ---------------------------------------------------------------------------
+
+
+def test_process_manual_middle_left_ignores_bad_detection(tmp_path):
+    """When face_region='middle_left', compose must use the fixed region
+    coordinates even when MediaPipe detected_bbox points elsewhere."""
+    clip = _make_clip()
+    # Face detection returned a WRONG bbox (far right, top) — must be ignored
+    bad_bbox = _make_face_bbox(x=0.70, y=0.0, width=0.30, height=0.40)
+    scene_data = tuple(
+        SceneFaceData(
+            scene_id=s.scene_id,
+            face_visible_ratio=0.9,
+            bounding_boxes=(bad_bbox,),
+            average_bbox=bad_bbox,
+            sample_count=10,
+        )
+        for s in clip.scenes
+    )
+    face_result = FaceDetectionResult(
+        video_id=VIDEO_ID,
+        scene_data=scene_data,
+        average_visibility=0.9,
+        faceless_scene_count=0,
+    )
+    ingestion = _make_ingestion_result()
+    config = _make_config(str(tmp_path))
+    config["compositor"] = {"face_region": "middle_left"}
+
+    mock_proc = _mock_subprocess_success()
+
+    def fake_run(*args, **kwargs):
+        cmd = args[0]
+        for arg in cmd:
+            if ".tmp." in arg:
+                os.makedirs(os.path.dirname(arg), exist_ok=True)
+                open(arg, "wb").close()
+        return mock_proc
+
+    with patch("subprocess.run", side_effect=fake_run):
+        result = process(clip, face_result, ingestion, config)
+
+    assert result.layout == "face_gameplay_split"
+    assert result.has_face is True
+
+
+def test_process_manual_bottom_middle_ignores_missing_detection(tmp_path):
+    """When face_region='bottom_middle', compose must use the fixed region
+    even when per-scene detection returned no bboxes at all."""
+    clip = _make_clip()
+    # Face detection returned NO bboxes — must still use bottom_middle
+    scene_data = tuple(
+        SceneFaceData(
+            scene_id=s.scene_id,
+            face_visible_ratio=0.9,
+            bounding_boxes=(),
+            average_bbox=None,
+            sample_count=10,
+        )
+        for s in clip.scenes
+    )
+    face_result = FaceDetectionResult(
+        video_id=VIDEO_ID,
+        scene_data=scene_data,
+        average_visibility=0.9,
+        faceless_scene_count=0,
+    )
+    ingestion = _make_ingestion_result()
+    config = _make_config(str(tmp_path))
+    config["compositor"] = {"face_region": "bottom_middle"}
+
+    mock_proc = _mock_subprocess_success()
+
+    def fake_run(*args, **kwargs):
+        cmd = args[0]
+        for arg in cmd:
+            if ".tmp." in arg:
+                os.makedirs(os.path.dirname(arg), exist_ok=True)
+                open(arg, "wb").close()
+        return mock_proc
+
+    with patch("subprocess.run", side_effect=fake_run):
+        result = process(clip, face_result, ingestion, config)
+
+    assert result.layout == "face_gameplay_split"
+    assert result.has_face is True
