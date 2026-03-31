@@ -5,7 +5,8 @@ Determines layout mode, builds FFmpeg filter chain, and produces
 a silent intermediate composite video at 1080×1920.
 
 Layout rules (configurable via compositor.default_layout):
-  - "split" (default): gameplay top (65%) + face cam bottom (35%)
+  - "split" (default): gameplay top (65%) + face/reaction bottom (35%)
+    Gameplay occupies the upper portion; face cam occupies the lower portion.
     Uses detected face bbox when available; falls back to a
     configurable source region (compositor.face_region) when
     face detection has no valid bbox.
@@ -26,7 +27,7 @@ from contracts.ingestion import IngestionResult
 
 from core.gpu import resolve_gpu_settings
 
-from .face_crop import build_face_crop_filter
+from .face_crop import build_face_crop_filter, estimate_pip_region
 from .fallback import build_fallback_filter, build_fallback_filter_simple
 from .gameplay_crop import build_gameplay_crop_filter
 
@@ -34,10 +35,10 @@ logger = logging.getLogger(__name__)
 
 OUTPUT_WIDTH = 1080
 OUTPUT_HEIGHT = 1920
-GAMEPLAY_HEIGHT = 1248   # 65% of 1920
-FACE_HEIGHT = 672        # 35% of 1920
+GAMEPLAY_HEIGHT = 1248   # 65% of 1920 — gameplay section (top)
+FACE_HEIGHT = 672        # 35% of 1920 — face/reaction section (bottom)
 FACE_VISIBILITY_THRESHOLD = 0.3
-DEFAULT_ZOOM_FACTOR = 1.5
+DEFAULT_ZOOM_FACTOR = 1.0
 
 
 # ---------------------------------------------------------------------------
@@ -72,28 +73,29 @@ def _infer_face_bbox(
          (video-level aggregate or skin-tone scan), use that.
       2. If face_region is a named position, use the predefined coordinates.
       3. If face_region == "auto" with no detection data, fall back to
-         "bottom_left" (most common PiP position in gaming streams).
+         "top_left" (face cam is typically in the upper-left of the source).
     """
     region = compositor_config.get("face_region", "auto")
 
     if region == "auto":
         if face_result is not None and face_result.estimated_pip_bbox is not None:
             return face_result.estimated_pip_bbox
-        # No detection data — default to bottom_left as most common
-        region = "bottom_left"
+        # No detection data — default to top_left (face cam overlay in source)
+        region = "top_left"
 
-    # Named PiP positions covering all common face cam placements
+    # Named PiP positions covering all common face cam placements.
+    # Widths are 30-35% of frame to match real PiP overlays (not just face area).
     region_map = {
-        "bottom_left": (0.0, 0.65, 0.25, 0.35),
-        "bottom_center": (0.375, 0.65, 0.25, 0.35),
-        "bottom_middle": (0.375, 0.65, 0.25, 0.35),
-        "bottom_right": (0.75, 0.65, 0.25, 0.35),
-        "middle_left": (0.0, 0.325, 0.25, 0.35),
-        "middle_right": (0.75, 0.325, 0.25, 0.35),
-        "upper_middle_left": (0.0, 0.15, 0.25, 0.35),
-        "center": (0.25, 0.25, 0.5, 0.5),
-        "top_left": (0.0, 0.0, 0.25, 0.35),
-        "top_right": (0.75, 0.0, 0.25, 0.35),
+        "bottom_left": (0.0, 0.60, 0.30, 0.40),
+        "bottom_center": (0.35, 0.60, 0.30, 0.40),
+        "bottom_middle": (0.35, 0.60, 0.30, 0.40),
+        "bottom_right": (0.70, 0.60, 0.30, 0.40),
+        "middle_left": (0.0, 0.30, 0.30, 0.40),
+        "middle_right": (0.70, 0.30, 0.30, 0.40),
+        "upper_middle_left": (0.0, 0.10, 0.30, 0.40),
+        "center": (0.25, 0.25, 0.50, 0.50),
+        "top_left": (0.0, 0.0, 0.30, 0.40),
+        "top_right": (0.70, 0.0, 0.30, 0.40),
     }
     x, y, w, h = region_map.get(region, region_map["bottom_left"])
     return FaceBBox(
@@ -199,13 +201,14 @@ def _compose_split_layout(
     start_sec = clip.start_time / 1000.0
     end_sec = clip.end_time / 1000.0
 
+    face_filter = build_face_crop_filter(
+        "[fc_in]", "[face]", bbox, src_width, src_height, zoom_factor,
+    )
     gameplay_filter = build_gameplay_crop_filter(
         "[gp_in]", "[gameplay]", OUTPUT_WIDTH, GAMEPLAY_HEIGHT,
         bbox=bbox, src_width=src_width, src_height=src_height,
     )
-    face_filter = build_face_crop_filter(
-        "[fc_in]", "[face]", bbox, src_width, src_height, zoom_factor
-    )
+    # gameplay (top, 65%) + face/reaction (bottom, 35%)
     filter_complex = (
         f"[0:v]split=2[gp_in][fc_in];"
         f"{gameplay_filter};"
@@ -235,30 +238,26 @@ def _compose_split_layout_simple(
     source_path: str,
     output_path: str,
     clip: ClipDefinition,
+    bbox: FaceBBox,
     src_width: int,
     src_height: int,
     fps: int,
     timeout: int,
     config: dict,
 ) -> None:
-    """Simplified split layout without zoom used on first retry."""
+    """Simplified split layout used on first retry — same PiP crop, no zoom trim."""
     start_sec = clip.start_time / 1000.0
     end_sec = clip.end_time / 1000.0
 
+    # Use the PiP bbox directly with zoom=1.0 (no inward trim)
+    face_filter = build_face_crop_filter(
+        "[fc_in]", "[face]", bbox, src_width, src_height, zoom=1.0,
+    )
     gameplay_filter = build_gameplay_crop_filter(
         "[gp_in]", "[gameplay]", OUTPUT_WIDTH, GAMEPLAY_HEIGHT,
+        bbox=bbox, src_width=src_width, src_height=src_height,
     )
-    # Center-crop to 1080×672 aspect without bbox zoom
-    face_crop_w = min(src_width, int(src_height * OUTPUT_WIDTH / FACE_HEIGHT))
-    face_crop_h = min(src_height, int(face_crop_w * FACE_HEIGHT / OUTPUT_WIDTH))
-    face_x = max(0, (src_width - face_crop_w) // 2)
-    face_y = max(0, (src_height - face_crop_h) // 2)
-    face_filter = (
-        f"[fc_in]"
-        f"crop={face_crop_w}:{face_crop_h}:{face_x}:{face_y},"
-        f"scale={OUTPUT_WIDTH}:{FACE_HEIGHT}:force_original_aspect_ratio=disable"
-        f"[face]"
-    )
+    # gameplay (top, 65%) + face/reaction (bottom, 35%)
     filter_complex = (
         f"[0:v]split=2[gp_in][fc_in];"
         f"{gameplay_filter};"
@@ -448,8 +447,13 @@ def process(
     if has_face:
         bbox = detected_bbox
         if bbox is None:
-            # No MediaPipe bbox — use video-level PiP estimate or config fallback
+            # No per-scene bbox — use video-level PiP estimate (from region
+            # voting) or config fallback
             bbox = _infer_face_bbox(compositor_config, face_result)
+        elif bbox.width < 0.15 or bbox.height < 0.18:
+            # Tiny face bbox from MediaPipe — expand to full PiP overlay
+            bbox = estimate_pip_region(bbox, src_width, src_height)
+        # else: bbox is already a full PiP region from region voting
         try:
             _compose_split_layout(
                 source_path, output_path, clip,
@@ -471,7 +475,7 @@ def process(
             )
             _compose_split_layout_simple(
                 source_path, output_path, clip,
-                src_width, src_height, fps, ffmpeg_timeout,
+                bbox, src_width, src_height, fps, ffmpeg_timeout,
                 config,
             )
 

@@ -122,9 +122,11 @@ def detect_faces(
     )
 
     # Aggregate a video-level PiP bbox from ALL per-scene bounding boxes.
-    # Since the face cam PiP barely moves between scenes, averaging all
-    # detected positions gives a stable video-level estimate.
-    estimated_pip = _compute_video_level_bbox(scene_data_tuple)
+    # Prefer region voting (filters out game character faces) — fall back
+    # to averaging only when voting has insufficient data.
+    estimated_pip = _vote_pip_region(scene_data_tuple)
+    if estimated_pip is None:
+        estimated_pip = _compute_video_level_bbox(scene_data_tuple)
 
     result = FaceDetectionResult(
         video_id=video_id,
@@ -205,18 +207,81 @@ def _compute_video_level_bbox(
 
 # PiP scan candidate regions — common face cam overlay positions in
 # gaming stream recordings, expressed as (name, x, y, width, height)
-# in normalized coordinates.
+# in normalized coordinates. Regions are intentionally larger than the
+# actual PiP window to define search areas for face voting.
 _PIP_CANDIDATES: list[tuple[str, float, float, float, float]] = [
-    ("bottom_left", 0.0, 0.65, 0.30, 0.35),
-    ("bottom_center", 0.35, 0.65, 0.30, 0.35),
-    ("bottom_middle", 0.35, 0.65, 0.30, 0.35),
-    ("bottom_right", 0.70, 0.65, 0.30, 0.35),
-    ("middle_left", 0.0, 0.325, 0.30, 0.35),
-    ("middle_right", 0.70, 0.325, 0.30, 0.35),
-    ("upper_middle_left", 0.0, 0.15, 0.30, 0.35),
-    ("top_left", 0.0, 0.0, 0.30, 0.35),
-    ("top_right", 0.70, 0.0, 0.30, 0.35),
+    ("bottom_left",        0.0,  0.55, 0.25, 0.45),
+    ("bottom_center",      0.20, 0.55, 0.25, 0.45),
+    ("bottom_middle",      0.35, 0.55, 0.30, 0.45),
+    ("bottom_right",       0.70, 0.55, 0.30, 0.45),
+    ("middle_left",        0.0,  0.25, 0.25, 0.45),
+    ("middle_right",       0.70, 0.25, 0.30, 0.45),
+    ("upper_middle_left",  0.0,  0.0,  0.25, 0.45),
+    ("top_left",           0.0,  0.0,  0.25, 0.40),
+    ("top_right",          0.70, 0.0,  0.30, 0.40),
 ]
+
+# Minimum number of face detections inside a single candidate region
+# before we trust it as the real PiP location.
+_MIN_REGION_VOTES = 3
+
+
+def _face_inside_candidate(
+    face: FaceBBox,
+    candidate: tuple[str, float, float, float, float],
+) -> bool:
+    """Check if a detected face center falls inside a candidate PiP region."""
+    _name, cx, cy, cw, ch = candidate
+    face_center_x = face.x + face.width / 2
+    face_center_y = face.y + face.height / 2
+    return (
+        cx <= face_center_x <= cx + cw
+        and cy <= face_center_y <= cy + ch
+    )
+
+
+def _vote_pip_region(
+    scene_data: tuple[SceneFaceData, ...],
+) -> FaceBBox | None:
+    """Vote on which candidate PiP region consistently contains a real human face.
+
+    For each detected face across all scenes, check which candidate region
+    its center falls inside. The candidate with the most votes wins, but
+    only if it has enough votes to be reliable (>= _MIN_REGION_VOTES).
+
+    Returns the full candidate region bbox (not the raw face bbox) so the
+    compositor crops the entire OBS window.
+    """
+    votes: dict[str, int] = {name: 0 for name, *_ in _PIP_CANDIDATES}
+
+    for sd in scene_data:
+        for face in sd.bounding_boxes:
+            for candidate in _PIP_CANDIDATES:
+                if _face_inside_candidate(face, candidate):
+                    votes[candidate[0]] += 1
+                    break  # one face = one vote for one region only
+
+    if not votes:
+        return None
+
+    best_name = max(votes, key=lambda k: votes[k])
+    if votes[best_name] < _MIN_REGION_VOTES:
+        return None
+
+    for name, x, y, w, h in _PIP_CANDIDATES:
+        if name == best_name:
+            logger.info(
+                "PiP region voting selected %s (%d votes)",
+                best_name,
+                votes[best_name],
+                extra={"stage": "face_detection", "video_id": ""},
+            )
+            return FaceBBox(
+                x=x, y=y, width=w, height=h,
+                confidence=1.0, timestamp_ms=0,
+            )
+    return None
+
 
 # Minimum skin-tone density to consider a region as containing a face cam PiP.
 _MIN_SKIN_DENSITY = 0.03
@@ -260,7 +325,7 @@ def _scan_pip_region(
                 px, py = int(cx * w), int(cy * h)
                 pw, ph = int(cw * w), int(ch * h)
                 region = img.crop((px, py, px + pw, py + ph))
-                pixels = list(region.getdata())
+                pixels = list(region.get_flattened_data())
                 if not pixels:
                     continue
                 # Skin-tone in PIL HSV: H in [0,28] or [245,255], S>=50, V>=70

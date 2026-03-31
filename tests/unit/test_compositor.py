@@ -34,6 +34,7 @@ from modules.compositor.face_crop import (
     FACE_REGION_WIDTH,
     build_face_crop_filter,
     compute_face_crop_params,
+    estimate_pip_region,
 )
 from modules.compositor.fallback import (
     build_fallback_filter,
@@ -446,18 +447,20 @@ def test_gameplay_crop_filter_excludes_face_region():
 
 
 def test_compute_face_crop_params_center():
-    """Face crop is centered on bbox with 1.2× zoom."""
+    """Face crop extracts the PiP bbox region with inward zoom trim."""
     bbox = _make_face_bbox(x=0.3, y=0.2, width=0.4, height=0.4)
     src_w, src_h = 1920, 1080
 
     crop_w, crop_h, crop_x, crop_y = compute_face_crop_params(bbox, src_w, src_h, zoom=1.2)
 
-    # Zoom 1.2 → crop height = src_h / 1.2 = 900
-    assert crop_h == int(src_h / 1.2)
-
-    # Aspect ratio maintained within 1 pixel tolerance
-    expected_aspect = FACE_REGION_WIDTH / FACE_REGION_HEIGHT
-    assert abs(crop_w / crop_h - expected_aspect) < 0.05
+    # Zoom 1.2 trims ~8% per side → crop is ~83% of bbox pixel size
+    raw_w = int(0.4 * src_w)  # 768
+    raw_h = int(0.4 * src_h)  # 432
+    # After zoom trim: each dim shrinks by (1 - 1/1.2) = ~17% total
+    expected_w_approx = raw_w / 1.2
+    expected_h_approx = raw_h / 1.2
+    assert abs(crop_w - expected_w_approx) < 20
+    assert abs(crop_h - expected_h_approx) < 20
 
     # Coordinates within bounds
     assert crop_x >= 0
@@ -479,12 +482,16 @@ def test_compute_face_crop_params_clamps_to_bounds():
 
 
 def test_compute_face_crop_params_top_left_corner():
-    """Face crop is clamped at top-left corner."""
+    """Face crop for tiny bbox at top-left stays near origin."""
     bbox = _make_face_bbox(x=0.0, y=0.0, width=0.05, height=0.05)
     crop_w, crop_h, crop_x, crop_y = compute_face_crop_params(bbox, 1920, 1080)
 
-    assert crop_x == 0
-    assert crop_y == 0
+    # Crop should be near the top-left corner (within a small offset from zoom trim)
+    assert crop_x < 20
+    assert crop_y < 20
+    # Still within bounds
+    assert crop_x + crop_w <= 1920
+    assert crop_y + crop_h <= 1080
 
 
 def test_build_face_crop_filter_format():
@@ -502,6 +509,52 @@ def test_face_crop_output_dimensions_in_filter():
     bbox = _make_face_bbox()
     f = build_face_crop_filter("[0:v]", "[face]", bbox, 1920, 1080)
     assert "scale=1080:672" in f
+
+
+# ---------------------------------------------------------------------------
+# PiP estimation tests
+# ---------------------------------------------------------------------------
+
+
+def test_estimate_pip_region_small_face_expands():
+    """A small MediaPipe face bbox is expanded to PiP overlay size."""
+    # Typical MediaPipe face: ~10% of frame
+    face = _make_face_bbox(x=0.05, y=0.70, width=0.10, height=0.12)
+    pip = estimate_pip_region(face, 1920, 1080)
+    # PiP should be significantly larger than the raw face
+    assert pip.width > face.width * 1.5
+    assert pip.height > face.height * 1.5
+    # PiP should still be within [0, 1] bounds
+    assert pip.x >= 0.0
+    assert pip.y >= 0.0
+    assert pip.x + pip.width <= 1.001  # small float tolerance
+    assert pip.y + pip.height <= 1.001
+
+
+def test_estimate_pip_region_large_bbox_unchanged():
+    """A bbox already PiP-sized is returned unchanged."""
+    pip_bbox = _make_face_bbox(x=0.0, y=0.60, width=0.30, height=0.40)
+    result = estimate_pip_region(pip_bbox, 1920, 1080)
+    assert result.x == pip_bbox.x
+    assert result.y == pip_bbox.y
+    assert result.width == pip_bbox.width
+    assert result.height == pip_bbox.height
+
+
+def test_estimate_pip_region_snaps_to_edge():
+    """PiP estimate near a frame edge snaps to that edge."""
+    face = _make_face_bbox(x=0.03, y=0.75, width=0.08, height=0.10)
+    pip = estimate_pip_region(face, 1920, 1080)
+    # Should snap to left edge
+    assert pip.x == 0.0
+
+
+def test_estimate_pip_region_right_side_face():
+    """A face on the right side produces a right-aligned PiP."""
+    face = _make_face_bbox(x=0.85, y=0.70, width=0.10, height=0.12)
+    pip = estimate_pip_region(face, 1920, 1080)
+    # PiP should be right-aligned (near edge)
+    assert pip.x + pip.width >= 0.9
 
 
 # ---------------------------------------------------------------------------
@@ -708,3 +761,59 @@ def test_compositor_init_uses_relative_imports():
                 assert node.module.startswith("contracts") or "." not in node.module, (
                     f"__init__.py uses absolute module import: {node.module}"
                 )
+
+
+# ---------------------------------------------------------------------------
+# Region-lock tests: bottom_middle must stay untouched, left-side uses center
+# ---------------------------------------------------------------------------
+
+
+def test_gameplay_crop_bottom_middle_unchanged():
+    """bottom_middle PiP (cx ~0.5, cy ~0.8) must use the candidate-based
+    face-aware crop — NOT the center-crop fast path."""
+    bbox = _make_face_bbox(x=0.35, y=0.60, width=0.30, height=0.40)
+    f = build_gameplay_crop_filter(
+        "[gp_in]", "[gameplay]", 1080, 1248,
+        bbox=bbox, src_width=1920, src_height=1080,
+    )
+    # The candidate-based path produces pixel-level crop=W:H:X:Y,
+    # NOT the expression-based crop=ih*ASPECT:ih:(iw-...)/2:0
+    assert "crop=ih*" not in f, (
+        "bottom_middle should NOT use the center-crop fast path"
+    )
+    assert "scale=1080:1248" in f
+
+
+def test_gameplay_crop_middle_left_uses_center():
+    """middle_left PiP (cx ~0.15, cy ~0.5) must use strict center crop
+    to capture the middle gameplay area."""
+    bbox = _make_face_bbox(x=0.0, y=0.30, width=0.30, height=0.40)
+    f = build_gameplay_crop_filter(
+        "[gp_in]", "[gameplay]", 1080, 1248,
+        bbox=bbox, src_width=1920, src_height=1080,
+    )
+    # Center-crop fast path uses expression-based crop
+    assert "crop=ih*0.8654:ih:(iw-ih*0.8654)/2:0" in f
+    assert "scale=1080:1248" in f
+
+
+def test_gameplay_crop_upper_middle_left_uses_center():
+    """upper_middle_left PiP (cx ~0.15, cy ~0.3) must also use center crop."""
+    bbox = _make_face_bbox(x=0.0, y=0.10, width=0.30, height=0.40)
+    f = build_gameplay_crop_filter(
+        "[gp_in]", "[gameplay]", 1080, 1248,
+        bbox=bbox, src_width=1280, src_height=720,
+    )
+    assert "crop=ih*0.8654:ih:(iw-ih*0.8654)/2:0" in f
+    assert "scale=1080:1248" in f
+
+
+def test_gameplay_crop_bottom_left_uses_center():
+    """bottom_left PiP (cx ~0.15, cy ~0.8) must also use center crop."""
+    bbox = _make_face_bbox(x=0.0, y=0.60, width=0.30, height=0.40)
+    f = build_gameplay_crop_filter(
+        "[gp_in]", "[gameplay]", 1080, 1248,
+        bbox=bbox, src_width=1920, src_height=1080,
+    )
+    assert "crop=ih*0.8654:ih:(iw-ih*0.8654)/2:0" in f
+    assert "scale=1080:1248" in f

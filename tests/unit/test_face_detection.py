@@ -475,7 +475,7 @@ class TestScanPipRegion:
         assert isinstance(result, FaceBBox)
         # Should detect bottom_left region
         assert result.x == pytest.approx(0.0)
-        assert result.y == pytest.approx(0.65)
+        assert result.y == pytest.approx(0.55)
 
 
 # ---------------------------------------------------------------------------
@@ -527,6 +527,132 @@ class TestEstimatedPipBbox:
         assert result.estimated_pip_bbox is not None
         assert result.estimated_pip_bbox.x == pytest.approx(0.1)
         assert result.estimated_pip_bbox.y == pytest.approx(0.7)
+
+
+# ---------------------------------------------------------------------------
+# Region voting tests
+# ---------------------------------------------------------------------------
+
+
+class TestFaceInsideCandidate:
+    def test_face_center_inside(self) -> None:
+        from modules.face_detection.detect import _face_inside_candidate
+
+        face = FaceBBox(x=0.02, y=0.60, width=0.08, height=0.10, confidence=0.9, timestamp_ms=0)
+        candidate = ("bottom_left", 0.0, 0.55, 0.25, 0.45)
+        assert _face_inside_candidate(face, candidate) is True
+
+    def test_face_center_outside(self) -> None:
+        from modules.face_detection.detect import _face_inside_candidate
+
+        face = FaceBBox(x=0.50, y=0.50, width=0.08, height=0.10, confidence=0.9, timestamp_ms=0)
+        candidate = ("bottom_left", 0.0, 0.55, 0.25, 0.45)
+        assert _face_inside_candidate(face, candidate) is False
+
+    def test_face_at_candidate_edge(self) -> None:
+        from modules.face_detection.detect import _face_inside_candidate
+
+        face = FaceBBox(x=0.20, y=0.55, width=0.10, height=0.10, confidence=0.9, timestamp_ms=0)
+        candidate = ("bottom_left", 0.0, 0.55, 0.25, 0.45)
+        assert _face_inside_candidate(face, candidate) is True
+
+
+class TestVotePipRegion:
+    def _make_scene_data(
+        self, bboxes: tuple[FaceBBox, ...]
+    ) -> SceneFaceData:
+        return SceneFaceData(
+            scene_id="s1",
+            face_visible_ratio=1.0 if bboxes else 0.0,
+            bounding_boxes=bboxes,
+            average_bbox=bboxes[0] if bboxes else None,
+            sample_count=max(len(bboxes), 1),
+        )
+
+    def test_empty_scenes_returns_none(self) -> None:
+        from modules.face_detection.detect import _vote_pip_region
+        assert _vote_pip_region(()) is None
+
+    def test_insufficient_votes_returns_none(self) -> None:
+        from modules.face_detection.detect import _vote_pip_region
+
+        # Only 2 faces in bottom_left — below _MIN_REGION_VOTES threshold (3)
+        face1 = FaceBBox(x=0.02, y=0.60, width=0.08, height=0.10, confidence=0.9, timestamp_ms=0)
+        face2 = FaceBBox(x=0.03, y=0.62, width=0.08, height=0.10, confidence=0.9, timestamp_ms=100)
+        sd = self._make_scene_data((face1, face2))
+        assert _vote_pip_region((sd,)) is None
+
+    def test_bottom_left_wins(self) -> None:
+        from modules.face_detection.detect import _vote_pip_region
+
+        # 5 faces in bottom_left, 1 game character face in center
+        faces = tuple(
+            FaceBBox(x=0.02, y=0.60 + i * 0.01, width=0.08, height=0.10,
+                     confidence=0.9, timestamp_ms=i * 100)
+            for i in range(5)
+        )
+        game_face = FaceBBox(x=0.45, y=0.35, width=0.06, height=0.08,
+                             confidence=0.8, timestamp_ms=500)
+        sd = self._make_scene_data(faces + (game_face,))
+        result = _vote_pip_region((sd,))
+        assert result is not None
+        assert result.x == pytest.approx(0.0)
+        assert result.y == pytest.approx(0.55)
+        assert result.width == pytest.approx(0.25)
+        assert result.height == pytest.approx(0.45)
+
+    def test_top_left_wins(self) -> None:
+        from modules.face_detection.detect import _vote_pip_region
+
+        # 4 faces in top_left area
+        faces = tuple(
+            FaceBBox(x=0.02, y=0.05 + i * 0.01, width=0.08, height=0.10,
+                     confidence=0.9, timestamp_ms=i * 100)
+            for i in range(4)
+        )
+        sd = self._make_scene_data(faces)
+        result = _vote_pip_region((sd,))
+        assert result is not None
+        # upper_middle_left or top_left — both start at x=0, y=0
+        assert result.x == pytest.approx(0.0)
+        assert result.y == pytest.approx(0.0)
+
+    def test_game_faces_ignored(self) -> None:
+        from modules.face_detection.detect import _vote_pip_region
+
+        # Only game character faces in center of frame — no candidate region matches
+        game_faces = tuple(
+            FaceBBox(x=0.40, y=0.35, width=0.06, height=0.08,
+                     confidence=0.8, timestamp_ms=i * 100)
+            for i in range(10)
+        )
+        sd = self._make_scene_data(game_faces)
+        result = _vote_pip_region((sd,))
+        # No candidate region has faces, so should be None
+        assert result is None
+
+    def test_multi_scene_voting(self) -> None:
+        from modules.face_detection.detect import _vote_pip_region
+
+        # 2 faces per scene in middle_left, across 3 scenes
+        scenes = []
+        for s in range(3):
+            faces = tuple(
+                FaceBBox(x=0.03, y=0.35 + i * 0.01, width=0.08, height=0.10,
+                         confidence=0.9, timestamp_ms=s * 1000 + i * 100)
+                for i in range(2)
+            )
+            scenes.append(SceneFaceData(
+                scene_id=f"s{s}",
+                face_visible_ratio=1.0,
+                bounding_boxes=faces,
+                average_bbox=faces[0],
+                sample_count=2,
+            ))
+        result = _vote_pip_region(tuple(scenes))
+        assert result is not None
+        assert result.x == pytest.approx(0.0)
+        assert result.y == pytest.approx(0.25)
 
     @patch("modules.face_detection.detect._scan_pip_region")
     @patch("modules.face_detection.detect._load_mediapipe_detector")
