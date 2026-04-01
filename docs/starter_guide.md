@@ -186,6 +186,22 @@ python3 run_pipeline.py --gpu /path/to/your/video.mp4
 
 # Combined: local + GPU + gameplay-only
 python3 run_pipeline.py --local-only --gpu --gameplay-only /path/to/your/video.mp4
+
+# ── Podcast video type ──────────────────────────────────────────
+# Use --video-type podcast for podcast/interview/panel videos.
+# Podcast mode uses transcript-aligned speaker detection to identify
+# the primary speaker, then generates a stable 9:16 crop plan.
+# Falls back to largest-face or center-crop when transcript/faces
+# are unavailable. Fully isolated from the gameplay path.
+
+# Podcast mode — speaker-aware crop via transcript alignment
+python3 run_pipeline.py --video-type podcast /path/to/podcast.mp4
+
+# Podcast + local only (recommended for first podcast run)
+python3 run_pipeline.py --video-type podcast --local-only /path/to/podcast.mp4
+
+# Podcast + GPU acceleration
+python3 run_pipeline.py --video-type podcast --gpu /path/to/podcast.mp4
 ```
 
 **Windows users:** Replace `python3` with `python` in all commands above.
@@ -196,7 +212,9 @@ That's it. The pipeline will:
 2. Score each scene on engagement potential
 3. Build the best clips (30–60 seconds each)
 4. Generate hooks, narration, and subtitles for each clip
-5. Composite into vertical 1080×1920 format (split face+gameplay or gameplay-only with blurred background)
+5. Composite into vertical 1080×1920 format:
+   - **Gameplay**: split face+gameplay or gameplay-only with blurred background
+   - **Podcast**: transcript-aligned speaker crop (falls back to face crop or center)
 6. Render final MP4s with original audio (or mixed with TTS if `--tts` is used)
 7. Create thumbnails and metadata
 8. Schedule clips for publishing (one per day) — skipped with `--local-only`

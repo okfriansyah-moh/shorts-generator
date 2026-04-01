@@ -90,6 +90,13 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         dest="gameplay_only",
         help="Use gameplay-only layout with blurred background (default: split face+gameplay).",
     )
+    parser.add_argument(
+        "--video-type",
+        default=None,
+        choices=["gameplay", "podcast"],
+        dest="video_type",
+        help="Video type: 'gameplay' (default) or 'podcast'. Selects per-type config overrides and compositor strategy.",
+    )
     return parser.parse_args(argv)
 
 
@@ -115,6 +122,44 @@ def setup_output_dirs(config: dict) -> None:
     temp_dir = config["paths"]["temp_dir"]
     os.makedirs(output_dir, exist_ok=True)
     os.makedirs(temp_dir, exist_ok=True)
+
+
+# Podcast-prefixed config sections that overlay over base sections
+_PODCAST_OVERLAY_MAP: dict[str, str] = {
+    "podcast_scene_splitter": "scene_splitter",
+    "podcast_face_detection": "face_detection",
+    "podcast_scoring": "scoring",
+    "podcast_compositor": "compositor",
+}
+
+
+def _apply_video_type_overrides(config: dict) -> None:
+    """Merge podcast-specific config overrides when video_type is 'podcast'.
+
+    For each ``podcast_<section>`` key in config, shallow-merge its values
+    into the base ``<section>``. The base section is preserved for gameplay;
+    podcast overrides are additive — only the keys present in the podcast
+    section are replaced; base keys not mentioned are kept.
+
+    This function is a no-op when video_type is 'gameplay' (or absent).
+    """
+    video_type = config.get("video_type", "gameplay")
+    if video_type != "podcast":
+        return
+
+    for podcast_key, base_key in _PODCAST_OVERLAY_MAP.items():
+        overlay = config.get(podcast_key)
+        if overlay is None:
+            continue
+        base = config.get(base_key, {})
+        # Shallow merge: podcast values win over base values
+        merged = {**base, **overlay}
+        config[base_key] = merged
+
+    logger.info(
+        "Podcast config overrides applied",
+        extra={"stage": "startup", "video_id": "", "video_type": video_type},
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -175,6 +220,11 @@ def main(argv: list[str] | None = None) -> int:
         if "compositor" not in config:
             config["compositor"] = {}
         config["compositor"]["default_layout"] = "gameplay_only"
+
+    # Apply --video-type CLI override and merge podcast-specific config
+    if args.video_type:
+        config["video_type"] = args.video_type
+    _apply_video_type_overrides(config)
 
     # Check dependencies
     check_all_dependencies(config)

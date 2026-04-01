@@ -2,6 +2,8 @@
 # All thresholds, paths, and tunable parameters live here.
 # No hardcoded values in module code.
 
+video_type: "gameplay" # "gameplay" (default) or "podcast"
+
 paths:
   output_dir: "output"
   temp_dir: "output/temp"
@@ -20,7 +22,7 @@ pipeline:
   disk_min_free_mb: 500
 
 ingestion:
-  min_duration_seconds: 600
+  min_duration_seconds: 200
   max_duration_seconds: 7200
   supported_formats: ["mp4", "mkv", "avi", "mov", "webm"]
 
@@ -30,6 +32,14 @@ scene_splitter:
   max_scene_duration: 20.0
   fallback_threshold: 27.0
   fallback_target_duration: 10.0
+
+# Podcast-specific scene splitter overrides (merged on top when video_type=podcast)
+podcast_scene_splitter:
+  threshold: 20.0
+  min_scene_duration: 5.0
+  max_scene_duration: 30.0
+  fallback_threshold: 20.0
+  fallback_target_duration: 15.0
 
 transcription:
   model_size: "small"
@@ -45,6 +55,14 @@ face_detection:
   model_path: "models/blaze_face_short_range.tflite"
   skip: false
 
+# Podcast-specific face detection overrides (merged on top when video_type=podcast)
+# Podcasts have large faces in frame — lower sampling rate, larger min face size
+podcast_face_detection:
+  sample_fps: 1
+  min_confidence: 0.5
+  min_face_size: 0.10
+  ema_alpha: 0.5
+
 scoring:
   weights:
     keyword: 3
@@ -54,6 +72,18 @@ scoring:
     sentence_density: 1
     image_quality: 2
   min_composite_score: 0.2
+
+# Podcast-specific scoring overrides (merged on top when video_type=podcast)
+# Podcasts rely on speech content, not visual activity or face PiP overlays
+podcast_scoring:
+  weights:
+    keyword: 3
+    audio_energy: 2
+    face_presence: 1
+    scene_activity: 0
+    sentence_density: 3
+    image_quality: 1
+  min_composite_score: 0.15
 
 clip_builder:
   target_duration_min: 45
@@ -84,6 +114,23 @@ compositor:
   facecam_ratio: 0.35
   output_width: 1080
   output_height: 1920
+
+# Podcast-specific compositor overrides (merged on top when video_type=podcast)
+# Podcast composition crops the wide 16:9 frame to vertical 9:16 centered on speakers
+podcast_compositor:
+  crop_strategy: "face_follow" # legacy key — speaker detection now handled by podcast_strategy
+  face_padding: 0.15 # retained for backward compat; strategy uses bbox_expand_scale
+  output_width: 1080
+  output_height: 1920
+
+# Podcast speaker detection strategy (transcript-aligned, deterministic)
+# Controls how the primary speaker is identified and how the crop plan is built.
+podcast_strategy:
+  window_seconds: 1.0 # time bucket width for text/face alignment
+  text_weight: 0.7 # weight applied to normalised text score per bucket
+  face_weight: 0.3 # weight applied to raw face frame presence per bucket
+  cluster_threshold: 0.20 # max normalised distance to merge face centres into one cluster
+  bbox_expand_scale: 1.4 # expand base 9:16 crop width by this factor for framing context
 
 subtitle:
   font_size: 48
