@@ -479,11 +479,23 @@ class Orchestrator:
         clip: "ClipDefinition",
         face_result: "FaceDetectionResult",
         ingestion_result: "IngestionResult",
+        transcript: "Transcript | None" = None,
     ) -> "CompositeStream":
-        """Execute the compositor stage for a single clip."""
+        """Execute the compositor stage for a single clip.
+
+        For podcast videos, the strategy module is called here to generate a
+        PodcastFramePlan DTO before invoking the compositor. This satisfies the
+        Architecture Invariant: only the orchestrator calls modules; the
+        compositor receives only frozen DTO contracts.
+        """
         from modules.compositor.compose import process as comp_process
 
-        return comp_process(clip, face_result, ingestion_result, self._config)
+        plan = None
+        if self._config.get("video_type") == "podcast":
+            from modules.strategies.podcast_strategy import generate_plan
+            plan = generate_plan(clip, transcript, face_result, ingestion_result, self._config)
+
+        return comp_process(clip, face_result, ingestion_result, self._config, plan)
 
     # ------------------------------------------------------------------
     # Stage: renderer (per clip)
@@ -661,7 +673,7 @@ class Orchestrator:
         # Stage 9: compositor
         composite = self._run_stage_with_retry(
             "compositor", self.run_compositor,
-            clip, face_result, ingestion_result,
+            clip, face_result, ingestion_result, transcript,
         )
 
         # Stage 10: renderer

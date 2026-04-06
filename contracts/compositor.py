@@ -18,7 +18,9 @@ class CompositeStream:
         composite_path: Absolute path to the intermediate composite MP4. Silent (no audio).
         source_audio_path: Absolute path to original gameplay audio for audio mixing. Non-empty.
         resolution: Output resolution as (width, height). Always (1080, 1920).
-        layout: Composition layout. 'face_gameplay_split' or 'gameplay_only_zoom'.
+        layout: Composition layout.
+            Gameplay: 'face_gameplay_split' or 'gameplay_only_zoom'.
+            Podcast:  'speaker_crop', 'center_face_crop', or 'center_crop'.
         duration_seconds: Duration of composite video in seconds. > 0.
         has_face: True if face data was available and visibility >= 0.3.
         source_fps: Frame rate of composite output, as configured (e.g., pipeline.output_framerate; typically 30.0).

@@ -1,8 +1,112 @@
 # Shorts Factory — Progress Report
 
-**Last Updated:** 2026-03-28
-**Active Phase:** All Phases — Full Pipeline Wiring Complete + NVIDIA GPU Mode + Production Certified
-**Phase Status:** ✅ COMPLETE — All 16 stages wired in orchestrator, 537 tests passing
+**Last Updated:** 2026-04-01
+**Active Phase:** All Phases — Full Pipeline + NVIDIA GPU Mode + Podcast Video Type Support + Speaker Detection
+**Phase Status:** ✅ COMPLETE — All 16 stages wired in orchestrator, gameplay + podcast video types supported
+
+---
+
+## Podcast Speaker Detection — Transcript-Aligned (2026-04-01)
+
+**Status:** ✅ COMPLETE — Podcast compositor upgraded from face-based to transcript-aligned speaker detection
+
+Replaces the visual-only "largest face" heuristic with a deterministic, multi-modal speaker detection algorithm that aligns transcript activity with face position to identify the primary speaker and generate a stable crop plan.
+
+### What Changed
+
+| Component              | Change                                                                                                                                         | Files                                    |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
+| Strategy module (new)  | `modules/strategies/podcast_strategy.py` — full speaker detection + crop plan generation                                                       | `modules/strategies/podcast_strategy.py` |
+| Strategy package (new) | `modules/strategies/__init__.py` — exposes `generate_plan()`                                                                                   | `modules/strategies/__init__.py`         |
+| Strategy DTO (new)     | `contracts/strategies.py` — `PodcastFramePlan` frozen dataclass                                                                                | `contracts/strategies.py`                |
+| Podcast compositor     | Updated to consume precomputed `PodcastFramePlan` objects; no direct transcript handling                                                       | `modules/compositor/podcast.py`          |
+| Compositor dispatcher  | `compose.process()` now accepts optional `plan: PodcastFramePlan` and routes it to the podcast compositor                                      | `modules/compositor/compose.py`          |
+| Orchestrator           | `run_compositor()` + `_process_single_clip()` build a `PodcastFramePlan` from transcript via strategy and pass `plan` into `compose.process()` | `core/orchestrator.py`                   |
+| Config                 | Added `podcast_strategy` section with all algorithm weights and thresholds                                                                     | `config/config.yaml`                     |
+| Tests (new)            | 35+ tests for the strategy module covering all paths, determinism, multi-speaker, silent speaker                                               | `tests/unit/test_podcast_strategy.py`    |
+| Tests (updated)        | Existing podcast tests updated for new API; removed tests for deleted functions; added strategy-mock tests                                     | `tests/unit/test_podcast.py`             |
+
+### Algorithm: Transcript-Aligned Speaker Detection
+
+```text
+Input: clip timing, transcript segments, face bboxes (per frame at 2fps), config weights
+
+1. Build 1-second time buckets over clip duration
+2. Compute text activity per bucket (character count, proportional overlap)
+3. Cluster face bboxes by centre position (threshold=0.20, greedy, deterministic L→R IDs)
+4. Count face frames per cluster per bucket
+5. Normalize text scores to [0,1], compute: score = frames*face_wt + frames*norm_text*text_wt
+6. Primary speaker = cluster with highest total score (lower face_id tiebreak)
+7. Median bbox of primary speaker bboxes (coordinate-wise sorted median)
+8. Expand to 9:16 at 1.4× width, centre on speaker face_cx
+9. Clamp to source bounds → PodcastFramePlan
+```
+
+### Decision Paths
+
+| Situation                | Layout             | Description                                      |
+| ------------------------ | ------------------ | ------------------------------------------------ |
+| Transcript + faces       | `speaker_crop`     | Primary speaker detected via text-face alignment |
+| No transcript, faces OK  | `center_face_crop` | Largest-area face cluster used                   |
+| No faces detected        | `center_crop`      | Simple 9:16 center crop                          |
+| FFmpeg execution failure | `center_crop`      | Plan-level fallback (compositor-level only)      |
+
+### Architecture Compliance
+
+- ✅ Compositor is a **pure executor** — no speaker-detection logic in `podcast.py`
+- ✅ All decision logic lives in `modules/strategies/podcast_strategy.py`
+- ✅ `PodcastFramePlan` is a frozen dataclass in `contracts/` (additive, no DTO modified)
+- ✅ Gameplay path **completely untouched** — zero regression (confirmed by tests)
+- ✅ Deterministic — same inputs always produce the same plan (no randomness)
+- ✅ Temporally stable — crop computed once per clip, applied to all frames identically
+- ✅ Fallbacks are all deterministic — no random tie-breaking or network-dependent logic
+
+---
+
+## Podcast Video Type Support (2026-03-31)
+
+**Status:** ✅ COMPLETE — Podcast video type added with full isolation from gameplay path
+
+Adds support for podcast-style videos (talking heads, interviews, panel discussions) alongside the existing gameplay video type. The two paths are fully isolated — gameplay code is never executed when video_type is "podcast" and vice versa.
+
+### What Changed
+
+| Component          | Change                                                                                                                                               | Files                            |
+| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------- |
+| Config             | Added `video_type` top-level key; added `podcast_scene_splitter`, `podcast_face_detection`, `podcast_scoring`, `podcast_compositor` overlay sections | `config/config.yaml`             |
+| CLI                | Added `--video-type` flag (`gameplay` or `podcast`)                                                                                                  | `run_pipeline.py`                |
+| Config merging     | New `_apply_video_type_overrides()` merges podcast overlays into base config sections                                                                | `run_pipeline.py`                |
+| Compositor         | 3-line dispatcher at top of `process()` routes podcast to `process_podcast()`                                                                        | `modules/compositor/compose.py`  |
+| Podcast compositor | NEW — smart-crop composition: face-follow (crop centered on speaker) or center crop (simple 16:9→9:16)                                               | `modules/compositor/podcast.py`  |
+| Compositor init    | Exports both `process` and `process_podcast`                                                                                                         | `modules/compositor/__init__.py` |
+| Tests              | 22 new tests covering config overlay, crop math, dispatcher, idempotency, fallback, gameplay isolation, CLI args                                     | `tests/unit/test_podcast.py`     |
+
+### Podcast vs Gameplay Architecture
+
+| Aspect              | Gameplay                                             | Podcast                                     |
+| ------------------- | ---------------------------------------------------- | ------------------------------------------- |
+| Source layout       | Gameplay fills frame + small PiP face overlay        | People at desk(s), full-frame talking heads |
+| Face detection goal | Find PiP overlay rectangle                           | Find which speaker is talking, crop to them |
+| Composition         | Gameplay (top 65%) + face crop from PiP (bottom 35%) | Smart crop of wide shot to vertical 9:16    |
+| Camera angles       | Single fixed POV                                     | Multiple: wide, medium, close-up            |
+| Scoring weights     | Activity=1, Sentence density=1                       | Activity=0, Sentence density=3              |
+| Scene splitter      | Threshold=27.0, max=20s                              | Threshold=20.0, max=30s                     |
+
+### Isolation Guarantee
+
+- `video_type == "gameplay"` → calls exactly the same functions as before (zero diff in gameplay path)
+- `video_type == "podcast"` → calls completely separate `podcast.py` functions
+- No shared mutable state, no conditional branches inside gameplay functions
+- Config overlay is additive — podcast sections don't exist in gameplay path
+
+### Architecture Compliance
+
+- ✅ No cross-module imports introduced — podcast.py only imports from `contracts/` and `core.gpu`
+- ✅ `contracts/` changes are additive-only — new `contracts/strategies.py` DTO + `CompositeStream` layout field accepts new string values
+- ✅ No raw SQL or database imports in modules
+- ✅ Atomic rename pattern (`os.replace`) preserved in podcast compositor
+- ✅ Deterministic — crop math is pure, no randomness
+- ✅ Idempotent — podcast compositor skips FFmpeg when output exists
 
 ---
 
