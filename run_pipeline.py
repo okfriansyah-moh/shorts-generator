@@ -126,6 +126,7 @@ def setup_output_dirs(config: dict) -> None:
 
 # Podcast-prefixed config sections that overlay over base sections
 _PODCAST_OVERLAY_MAP: dict[str, str] = {
+    "podcast_ingestion": "ingestion",
     "podcast_scene_splitter": "scene_splitter",
     "podcast_face_detection": "face_detection",
     "podcast_scoring": "scoring",
@@ -133,13 +134,32 @@ _PODCAST_OVERLAY_MAP: dict[str, str] = {
 }
 
 
+def _deep_merge(base: dict, overlay: dict) -> dict:
+    """Recursively merge *overlay* into *base*, returning a new dict.
+
+    For each key in overlay:
+    - If the value in both dicts is itself a dict, recurse.
+    - Otherwise, the overlay value wins (replaces the base value).
+    Keys present only in *base* are preserved unchanged.
+    """
+    merged: dict = dict(base)
+    for key, overlay_val in overlay.items():
+        base_val = merged.get(key)
+        if isinstance(base_val, dict) and isinstance(overlay_val, dict):
+            merged[key] = _deep_merge(base_val, overlay_val)
+        else:
+            merged[key] = overlay_val
+    return merged
+
+
 def _apply_video_type_overrides(config: dict) -> None:
     """Merge podcast-specific config overrides when video_type is 'podcast'.
 
-    For each ``podcast_<section>`` key in config, shallow-merge its values
+    For each ``podcast_<section>`` key in config, deep-merge its values
     into the base ``<section>``. The base section is preserved for gameplay;
     podcast overrides are additive — only the keys present in the podcast
-    section are replaced; base keys not mentioned are kept.
+    section are replaced; base keys not mentioned are kept (including nested
+    keys such as ``scoring.weights`` sub-entries).
 
     This function is a no-op when video_type is 'gameplay' (or absent).
     """
@@ -152,9 +172,9 @@ def _apply_video_type_overrides(config: dict) -> None:
         if overlay is None:
             continue
         base = config.get(base_key, {})
-        # Shallow merge: podcast values win over base values
-        merged = {**base, **overlay}
-        config[base_key] = merged
+        # Deep merge: podcast values win; nested dicts are merged recursively
+        # so that base keys absent from the overlay section are preserved.
+        config[base_key] = _deep_merge(base, overlay)
 
     logger.info(
         "Podcast config overrides applied",

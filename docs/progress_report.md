@@ -14,17 +14,17 @@ Replaces the visual-only "largest face" heuristic with a deterministic, multi-mo
 
 ### What Changed
 
-| Component              | Change                                                                                                     | Files                                    |
-| ---------------------- | ---------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
-| Strategy module (new)  | `modules/strategies/podcast_strategy.py` — full speaker detection + crop plan generation                   | `modules/strategies/podcast_strategy.py` |
-| Strategy package (new) | `modules/strategies/__init__.py` — exposes `generate_plan()`                                               | `modules/strategies/__init__.py`         |
-| Strategy DTO (new)     | `contracts/strategies.py` — `PodcastFramePlan` frozen dataclass                                            | `contracts/strategies.py`                |
-| Podcast compositor     | Replaced face-based heuristic with `generate_plan()` call; accepts optional `transcript` parameter         | `modules/compositor/podcast.py`          |
-| Compositor dispatcher  | `compose.process()` now accepts optional `transcript` and passes it to the podcast path                    | `modules/compositor/compose.py`          |
-| Orchestrator           | `run_compositor()` + `_process_single_clip()` pass `transcript` to the compositor                          | `core/orchestrator.py`                   |
-| Config                 | Added `podcast_strategy` section with all algorithm weights and thresholds                                 | `config/config.yaml`                     |
-| Tests (new)            | 35+ tests for the strategy module covering all paths, determinism, multi-speaker, silent speaker           | `tests/unit/test_podcast_strategy.py`    |
-| Tests (updated)        | Existing podcast tests updated for new API; removed tests for deleted functions; added strategy-mock tests | `tests/unit/test_podcast.py`             |
+| Component              | Change                                                                                                                                         | Files                                    |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
+| Strategy module (new)  | `modules/strategies/podcast_strategy.py` — full speaker detection + crop plan generation                                                       | `modules/strategies/podcast_strategy.py` |
+| Strategy package (new) | `modules/strategies/__init__.py` — exposes `generate_plan()`                                                                                   | `modules/strategies/__init__.py`         |
+| Strategy DTO (new)     | `contracts/strategies.py` — `PodcastFramePlan` frozen dataclass                                                                                | `contracts/strategies.py`                |
+| Podcast compositor     | Updated to consume precomputed `PodcastFramePlan` objects; no direct transcript handling                                                       | `modules/compositor/podcast.py`          |
+| Compositor dispatcher  | `compose.process()` now accepts optional `plan: PodcastFramePlan` and routes it to the podcast compositor                                      | `modules/compositor/compose.py`          |
+| Orchestrator           | `run_compositor()` + `_process_single_clip()` build a `PodcastFramePlan` from transcript via strategy and pass `plan` into `compose.process()` | `core/orchestrator.py`                   |
+| Config                 | Added `podcast_strategy` section with all algorithm weights and thresholds                                                                     | `config/config.yaml`                     |
+| Tests (new)            | 35+ tests for the strategy module covering all paths, determinism, multi-speaker, silent speaker                                               | `tests/unit/test_podcast_strategy.py`    |
+| Tests (updated)        | Existing podcast tests updated for new API; removed tests for deleted functions; added strategy-mock tests                                     | `tests/unit/test_podcast.py`             |
 
 ### Algorithm: Transcript-Aligned Speaker Detection
 
@@ -102,7 +102,7 @@ Adds support for podcast-style videos (talking heads, interviews, panel discussi
 ### Architecture Compliance
 
 - ✅ No cross-module imports introduced — podcast.py only imports from `contracts/` and `core.gpu`
-- ✅ `contracts/` untouched (zero diff) — `CompositeStream` layout field accepts new string values
+- ✅ `contracts/` changes are additive-only — new `contracts/strategies.py` DTO + `CompositeStream` layout field accepts new string values
 - ✅ No raw SQL or database imports in modules
 - ✅ Atomic rename pattern (`os.replace`) preserved in podcast compositor
 - ✅ Deterministic — crop math is pure, no randomness

@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import logging
 import os
-import subprocess
 from typing import Optional
 
 from contracts.clip import ClipDefinition
@@ -34,7 +33,6 @@ from .gameplay_crop import build_gameplay_crop_filter
 from .podcast import process_podcast
 from ._helpers import (
     get_output_path as _get_output_path,
-    run_ffmpeg as _run_ffmpeg,
     atomic_ffmpeg as _atomic_ffmpeg,
     get_clip_scenes_face_data as _get_clip_scenes_face_data,
 )

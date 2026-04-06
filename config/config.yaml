@@ -22,9 +22,14 @@ pipeline:
   disk_min_free_mb: 500
 
 ingestion:
-  min_duration_seconds: 200
+  min_duration_seconds: 600
   max_duration_seconds: 7200
   supported_formats: ["mp4", "mkv", "avi", "mov", "webm"]
+
+# Podcast-specific ingestion overrides (merged on top when video_type=podcast)
+# Podcast episodes can be as short as 3-4 minutes; gameplay requires longer sessions
+podcast_ingestion:
+  min_duration_seconds: 200
 
 scene_splitter:
   threshold: 27.0

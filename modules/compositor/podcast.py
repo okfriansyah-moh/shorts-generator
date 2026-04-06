@@ -46,21 +46,22 @@ OUTPUT_HEIGHT = 1920
 def _build_plan_filter(plan: PodcastFramePlan) -> str:
     """Build FFmpeg filter string from a PodcastFramePlan.
 
-    Crops source video to plan.crop_{x,y,width,height}, then scales and pads
-    to the target 1080×1920 output resolution.
+    Crops source video to plan.crop_{x,y,width,height} (guaranteed 9:16 by
+    the strategy) then scales directly to 1080×1920 (full-bleed, no padding).
     """
     return (
         f"crop={plan.crop_width}:{plan.crop_height}:{plan.crop_x}:{plan.crop_y},"
-        f"scale={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}:force_original_aspect_ratio=decrease,"
-        f"pad={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}:(ow-iw)/2:(oh-ih)/2:black,"
+        f"scale={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}:flags=lanczos,"
         f"setsar=1"
     )
 
 
 def _build_center_crop_filter(src_width: int, src_height: int) -> str:
-    """Build FFmpeg filter for simple center crop → scale to 1080×1920.
+    """Build FFmpeg filter for simple center crop → scale to 1080×1920 (full-bleed).
 
     Used as the fallback when the strategy plan itself fails at FFmpeg level.
+    The computed crop_w/src_height ratio is exactly 9:16, so the direct scale
+    never introduces letterboxing.
     """
     crop_w = int(round(src_height * (9.0 / 16.0)))
     if crop_w > src_width:
@@ -68,8 +69,7 @@ def _build_center_crop_filter(src_width: int, src_height: int) -> str:
     crop_x = (src_width - crop_w) // 2
     return (
         f"crop={crop_w}:{src_height}:{crop_x}:0,"
-        f"scale={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}:force_original_aspect_ratio=decrease,"
-        f"pad={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}:(ow-iw)/2:(oh-ih)/2:black,"
+        f"scale={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}:flags=lanczos,"
         f"setsar=1"
     )
 

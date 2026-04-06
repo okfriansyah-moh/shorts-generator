@@ -356,6 +356,12 @@ def generate_plan(
     window_ms: int = int(
         float(strategy_cfg.get("window_seconds", _DEFAULT_WINDOW_SECONDS)) * 1000
     )
+    if window_ms < 1:
+        raise ValueError(
+            f"Invalid podcast_strategy.window_seconds: "
+            f"{strategy_cfg.get('window_seconds', _DEFAULT_WINDOW_SECONDS)!r} "
+            f"(must be > 0)"
+        )
 
     src_width, src_height = ingestion_result.resolution
 

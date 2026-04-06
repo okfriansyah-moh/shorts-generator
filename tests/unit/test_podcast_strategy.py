@@ -635,3 +635,38 @@ class TestGameplayIsolation:
             ) as mock_generate:
                 comp_process(clip, face_result, ingestion, gameplay_config)
                 mock_generate.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# 10. Input validation
+# ---------------------------------------------------------------------------
+
+
+class TestGeneratePlanValidation:
+    """Input validation guards in generate_plan()."""
+
+    def test_zero_window_seconds_raises(self):
+        """window_seconds=0 must raise ValueError (would cause infinite loop)."""
+        clip = _make_clip()
+        face_result = _make_face_result(())
+        ingestion = _make_ingestion()
+        config = {
+            "podcast_strategy": {
+                "window_seconds": 0,
+                "text_weight": 0.7,
+                "face_weight": 0.3,
+                "cluster_threshold": 0.20,
+                "bbox_expand_scale": 1.4,
+            }
+        }
+        with pytest.raises(ValueError, match="window_seconds"):
+            generate_plan(clip, None, face_result, ingestion, config)
+
+    def test_negative_window_seconds_raises(self):
+        """window_seconds=-1 must raise ValueError."""
+        clip = _make_clip()
+        face_result = _make_face_result(())
+        ingestion = _make_ingestion()
+        config = {"podcast_strategy": {"window_seconds": -1}}
+        with pytest.raises(ValueError, match="window_seconds"):
+            generate_plan(clip, None, face_result, ingestion, config)

@@ -229,6 +229,50 @@ class TestVideoTypeConfigOverlay:
         # Base key not in overlay is preserved
         assert config["face_detection"]["model_path"] == "models/x.tflite"
 
+    def test_deep_merge_preserves_base_nested_keys(self):
+        """Deep merge must NOT drop base weight keys absent from podcast overlay."""
+        from run_pipeline import _apply_video_type_overrides
+
+        config = {
+            "video_type": "podcast",
+            "scoring": {
+                "weights": {"keyword": 3, "audio_energy": 2, "scene_activity": 1},
+                "min_composite_score": 0.2,
+            },
+            # podcast only overrides two of the three weight keys
+            "podcast_scoring": {
+                "weights": {"scene_activity": 0, "sentence_density": 3},
+                "min_composite_score": 0.15,
+            },
+        }
+        _apply_video_type_overrides(config)
+        # Overridden keys win
+        assert config["scoring"]["weights"]["scene_activity"] == 0
+        assert config["scoring"]["weights"]["sentence_density"] == 3
+        assert config["scoring"]["min_composite_score"] == 0.15
+        # Base keys NOT in the overlay are preserved (deep-merge, not replaced)
+        assert config["scoring"]["weights"]["keyword"] == 3
+        assert config["scoring"]["weights"]["audio_energy"] == 2
+
+    def test_podcast_ingestion_overlay_applied(self):
+        """podcast_ingestion section is applied as a config override."""
+        from run_pipeline import _apply_video_type_overrides
+
+        config = {
+            "video_type": "podcast",
+            "ingestion": {
+                "min_duration_seconds": 600,
+                "max_duration_seconds": 7200,
+                "supported_formats": ["mp4"],
+            },
+            "podcast_ingestion": {"min_duration_seconds": 200},
+        }
+        _apply_video_type_overrides(config)
+        assert config["ingestion"]["min_duration_seconds"] == 200
+        # Base keys not in overlay are preserved
+        assert config["ingestion"]["max_duration_seconds"] == 7200
+        assert config["ingestion"]["supported_formats"] == ["mp4"]
+
 
 # ---------------------------------------------------------------------------
 # Podcast compositor: crop filter tests
