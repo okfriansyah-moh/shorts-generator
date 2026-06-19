@@ -128,7 +128,13 @@ def _export_pending_ai_metadata(config: dict) -> str | None:
 
 
 def _next_raw_video() -> str | None:
-    """Return the path of the oldest unprocessed video in raw/, or None."""
+    """Return the path of any unprocessed video in raw/, or None.
+
+    Ordering does not matter — the pipeline processes one video per run and
+    every unprocessed file will be picked up on a subsequent run regardless.
+    Filenames are sorted alphabetically for deterministic selection.
+    Already-processed filenames are tracked in raw/.processed and skipped.
+    """
     os.makedirs(RAW_FOLDER, exist_ok=True)
     candidates: list[str] = []
     for ext in VIDEO_EXTENSIONS:
@@ -136,14 +142,11 @@ def _next_raw_video() -> str | None:
         candidates.extend(glob.glob(os.path.join(RAW_FOLDER, f"*{ext.upper()}")))
 
     processed = _load_processed()
-    unprocessed = [
+    unprocessed = sorted(
         p for p in candidates
         if os.path.basename(p) not in processed
-    ]
-    if not unprocessed:
-        return None
-    # Newest first (by modification time)
-    return max(unprocessed, key=os.path.getmtime)
+    )
+    return unprocessed[0] if unprocessed else None
 
 
 # ---------------------------------------------------------------------------

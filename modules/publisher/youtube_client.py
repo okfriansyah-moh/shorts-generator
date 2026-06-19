@@ -304,6 +304,7 @@ class YouTubeClient:
             data=video_bytes,
             method="PUT",
             headers={
+                "Authorization": f"Bearer {self._access_token}",
                 "Content-Type": "video/*",
                 "Content-Length": str(file_size),
             },

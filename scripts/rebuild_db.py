@@ -79,10 +79,11 @@ def main() -> None:
         video_id = video_dir_name.split("_")[0]
 
         conn.execute(
-            """INSERT OR IGNORE INTO videos
+            """INSERT INTO videos
                (video_id, file_path, duration_seconds, resolution_width,
                 resolution_height, file_size_bytes, status)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT (video_id) DO NOTHING""",
             (video_id, video_dir, 0.0, 1080, 1920, 0, "processed"),
         )
         conn.commit()  # commit video before inserting clips (foreign key constraint)
@@ -122,11 +123,12 @@ def main() -> None:
             used_slots.add(slot)
 
             conn.execute(
-                """INSERT OR IGNORE INTO clips
+                """INSERT INTO clips
                    (clip_id, video_id, start_time, end_time, duration, composite_score,
                     title, description, tags, category, video_path, thumbnail_path,
                     status, scheduled_at, created_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'scheduled', ?, CURRENT_TIMESTAMP)""",
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'scheduled', ?, CURRENT_TIMESTAMP)
+                   ON CONFLICT (clip_id) DO NOTHING""",
                 (
                     clip_id, video_id,
                     idx * 50.0, (idx + 1) * 50.0, 50.0, 0.9,

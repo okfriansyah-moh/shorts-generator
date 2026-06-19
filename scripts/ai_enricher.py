@@ -218,15 +218,13 @@ def cmd_apply(adapter: DatabaseAdapter, config: dict, enriched_path: str) -> int
         scheduled_at = _next_scheduled_at(occupied, config)
         occupied.add(scheduled_at)
 
-        conn = adapter._conn
-        conn.execute(
+        adapter.connection.execute(
             """UPDATE clips
                SET title=?, description=?, tags=?, scheduled_at=?,
                    status='scheduled', updated_at=CURRENT_TIMESTAMP
                WHERE clip_id=?""",
             (title, description, tags_json, scheduled_at, clip_id),
         )
-        conn.commit()
 
         applied += 1
         logger.info(
@@ -237,6 +235,8 @@ def cmd_apply(adapter: DatabaseAdapter, config: dict, enriched_path: str) -> int
                 "stage": "ai_enricher",
             },
         )
+
+    adapter.connection.commit()
 
     # Persist the enriched IDs into the per-video folder
     rows_for_dir = adapter.get_clips_by_status(["scheduled", "published"])

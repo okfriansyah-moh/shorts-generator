@@ -427,6 +427,13 @@ def process_all() -> int:
                     return candidate_
         return None
 
+    con = sqlite3.connect(db_path)
+    con.row_factory = sqlite3.Row
+    rows = con.execute(
+        "SELECT clip_id, title, thumbnail_path FROM clips WHERE status='scheduled'"
+    ).fetchall()
+    con.close()
+
     _vdir = _video_dir_from_rows(rows)
     state_file = (
         os.path.join(_vdir, "thumbnail_overlaid_clips.json")
@@ -434,13 +441,6 @@ def process_all() -> int:
         else os.path.join(_PROJECT_ROOT, "output", "thumbnail_overlaid_clips.json")
     )
     done_ids: set[str] = set()
-
-    con = sqlite3.connect(db_path)
-    con.row_factory = sqlite3.Row
-    rows = con.execute(
-        "SELECT clip_id, title, thumbnail_path FROM clips WHERE status='scheduled'"
-    ).fetchall()
-    con.close()
 
     processed = 0
     used_hooks: set[str] = set()

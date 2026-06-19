@@ -65,8 +65,8 @@ def process(
     raw_activities: dict[str, float] = {}
     raw_qualities: dict[str, float] = {}
     if file_path is not None:
-        raw_activities = compute_scene_activities(scene_list, file_path)
-        raw_qualities = compute_scene_qualities(scene_list, file_path)
+        raw_activities = compute_scene_activities(scene_list, file_path, config)
+        raw_qualities = compute_scene_qualities(scene_list, file_path, config)
     activity_scores = _normalize_values(
         raw_activities, [s.scene_id for s in scene_list.scenes]
     )
