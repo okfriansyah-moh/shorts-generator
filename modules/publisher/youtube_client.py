@@ -13,6 +13,10 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
@@ -126,11 +130,7 @@ class YouTubeClient:
         return True
 
     def _refresh_access_token(self, creds: dict) -> str:
-        """Exchange refresh token for a new access token.
-
-        In production this makes an HTTP POST to
-        ``https://oauth2.googleapis.com/token``.  The method is
-        extracted so tests can mock it without touching the filesystem.
+        """Exchange refresh token for a new access token via Google OAuth2.
 
         Args:
             creds: Dict with ``client_id``, ``client_secret``, ``refresh_token``.
@@ -141,12 +141,38 @@ class YouTubeClient:
         Raises:
             RuntimeError: If the token exchange fails.
         """
-        # This is the network boundary — override in tests.
-        raise NotImplementedError(
-            "YouTubeClient._refresh_access_token must be overridden "
-            "or mocked in tests. In production, implement the OAuth2 "
-            "token refresh HTTP call here."
+        payload = urllib.parse.urlencode({
+            "client_id": creds["client_id"],
+            "client_secret": creds["client_secret"],
+            "refresh_token": creds["refresh_token"],
+            "grant_type": "refresh_token",
+        }).encode()
+
+        req = urllib.request.Request(
+            "https://oauth2.googleapis.com/token",
+            data=payload,
+            method="POST",
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
         )
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                body = json.loads(resp.read())
+        except urllib.error.HTTPError as exc:
+            error_body = exc.read().decode(errors="replace")
+            raise RuntimeError(
+                f"OAuth2 token refresh failed ({exc.code}): {error_body}"
+            ) from exc
+
+        access_token = body.get("access_token")
+        if not access_token:
+            raise RuntimeError(
+                f"OAuth2 token refresh returned no access_token: {body}"
+            )
+        logger.debug(
+            "OAuth2 token refreshed",
+            extra={"stage": "publisher", "expires_in": body.get("expires_in")},
+        )
+        return access_token
 
     def upload_video(
         self,
@@ -210,17 +236,125 @@ class YouTubeClient:
         category: str,
         privacy: str,
     ) -> UploadResult:
-        """Execute the actual upload HTTP request.
+        """Execute a resumable upload to the YouTube Data API v3.
 
-        Extracted as a method so tests can mock the network call
-        without touching the validation logic in ``upload_video``.
+        Uses the resumable upload protocol so large files are handled
+        reliably. Steps:
+          1. Initiate a resumable session → get upload URI.
+          2. Upload the file in a single PUT (files are ≤100 MB per config).
 
         Returns:
             UploadResult from the YouTube API response.
         """
-        raise NotImplementedError(
-            "YouTubeClient._do_upload must be overridden or mocked."
+        file_size = os.path.getsize(video_path)
+
+        # ── Step 1: initiate resumable session ────────────────────────────
+        metadata = {
+            "snippet": {
+                "title": title,
+                "description": description,
+                "tags": list(tags),
+                "categoryId": self._category_id(category),
+            },
+            "status": {
+                "privacyStatus": privacy,
+                "selfDeclaredMadeForKids": False,
+            },
+        }
+        metadata_bytes = json.dumps(metadata).encode()
+        init_url = (
+            "https://www.googleapis.com/upload/youtube/v3/videos"
+            "?uploadType=resumable&part=snippet,status"
         )
+        init_req = urllib.request.Request(
+            init_url,
+            data=metadata_bytes,
+            method="POST",
+            headers={
+                "Authorization": f"Bearer {self._access_token}",
+                "Content-Type": "application/json; charset=UTF-8",
+                "X-Upload-Content-Type": "video/*",
+                "X-Upload-Content-Length": str(file_size),
+            },
+        )
+        try:
+            with urllib.request.urlopen(init_req, timeout=30) as resp:
+                upload_uri = resp.headers.get("Location")
+        except urllib.error.HTTPError as exc:
+            error_body = exc.read().decode(errors="replace")
+            quota_exceeded = exc.code == 403 and "quotaExceeded" in error_body
+            return UploadResult(
+                success=False,
+                error_message=f"Upload initiation failed ({exc.code}): {error_body}",
+                quota_exceeded=quota_exceeded,
+            )
+
+        if not upload_uri:
+            return UploadResult(
+                success=False,
+                error_message="Upload initiation returned no Location URI.",
+            )
+
+        # ── Step 2: upload file bytes ──────────────────────────────────────
+        with open(video_path, "rb") as fh:
+            video_bytes = fh.read()
+
+        upload_req = urllib.request.Request(
+            upload_uri,
+            data=video_bytes,
+            method="PUT",
+            headers={
+                "Authorization": f"Bearer {self._access_token}",
+                "Content-Type": "video/*",
+                "Content-Length": str(file_size),
+            },
+        )
+        try:
+            with urllib.request.urlopen(upload_req, timeout=600) as resp:
+                body = json.loads(resp.read())
+        except urllib.error.HTTPError as exc:
+            error_body = exc.read().decode(errors="replace")
+            quota_exceeded = exc.code == 403 and "quotaExceeded" in error_body
+            return UploadResult(
+                success=False,
+                error_message=f"Upload failed ({exc.code}): {error_body}",
+                quota_exceeded=quota_exceeded,
+            )
+
+        youtube_id = body.get("id")
+        if not youtube_id:
+            return UploadResult(
+                success=False,
+                error_message=f"Upload response contained no video id: {body}",
+            )
+
+        logger.info(
+            "Video uploaded successfully",
+            extra={
+                "stage": "publisher",
+                "youtube_id": youtube_id,
+                "title": title,
+                "privacy": privacy,
+            },
+        )
+        return UploadResult(success=True, youtube_id=youtube_id)
+
+    @staticmethod
+    def _category_id(category: str) -> str:
+        """Map a human-readable category name to a YouTube category ID."""
+        _MAP = {
+            "Gaming": "20",
+            "Entertainment": "24",
+            "Education": "27",
+            "Science & Technology": "28",
+            "People & Blogs": "22",
+            "Music": "10",
+            "Sports": "17",
+            "News & Politics": "25",
+            "Howto & Style": "26",
+            "Film & Animation": "1",
+        }
+        return _MAP.get(category, "22")  # default: People & Blogs
 
     def set_thumbnail(
         self,
@@ -264,14 +398,39 @@ class YouTubeClient:
         youtube_id: str,
         thumbnail_path: str,
     ) -> ThumbnailUploadResult:
-        """Execute the actual thumbnail upload HTTP request.
+        """Upload a JPEG thumbnail via the YouTube thumbnails.set endpoint."""
+        with open(thumbnail_path, "rb") as fh:
+            thumb_bytes = fh.read()
 
-        Returns:
-            ThumbnailUploadResult from the YouTube API response.
-        """
-        raise NotImplementedError(
-            "YouTubeClient._do_set_thumbnail must be overridden or mocked."
+        url = (
+            f"https://www.googleapis.com/upload/youtube/v3/thumbnails/set"
+            f"?videoId={urllib.parse.quote(youtube_id)}&uploadType=media"
         )
+        req = urllib.request.Request(
+            url,
+            data=thumb_bytes,
+            method="POST",
+            headers={
+                "Authorization": f"Bearer {self._access_token}",
+                "Content-Type": "image/jpeg",
+                "Content-Length": str(len(thumb_bytes)),
+            },
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=60) as resp:
+                resp.read()  # consume response
+        except urllib.error.HTTPError as exc:
+            error_body = exc.read().decode(errors="replace")
+            return ThumbnailUploadResult(
+                success=False,
+                error_message=f"Thumbnail upload failed ({exc.code}): {error_body}",
+            )
+
+        logger.info(
+            "Thumbnail set successfully",
+            extra={"stage": "publisher", "youtube_id": youtube_id},
+        )
+        return ThumbnailUploadResult(success=True)
 
     def update_visibility(
         self,
@@ -310,11 +469,38 @@ class YouTubeClient:
         youtube_id: str,
         privacy: str,
     ) -> VisibilityUpdateResult:
-        """Execute the actual visibility update HTTP request.
+        """Update a video's privacy status via the YouTube videos.update endpoint."""
+        payload = json.dumps({
+            "id": youtube_id,
+            "status": {"privacyStatus": privacy},
+        }).encode()
 
-        Returns:
-            VisibilityUpdateResult from the YouTube API response.
-        """
-        raise NotImplementedError(
-            "YouTubeClient._do_update_visibility must be overridden or mocked."
+        url = "https://www.googleapis.com/youtube/v3/videos?part=status"
+        req = urllib.request.Request(
+            url,
+            data=payload,
+            method="PUT",
+            headers={
+                "Authorization": f"Bearer {self._access_token}",
+                "Content-Type": "application/json; charset=UTF-8",
+            },
         )
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                resp.read()
+        except urllib.error.HTTPError as exc:
+            error_body = exc.read().decode(errors="replace")
+            return VisibilityUpdateResult(
+                success=False,
+                error_message=f"Visibility update failed ({exc.code}): {error_body}",
+            )
+
+        logger.info(
+            "Video visibility updated",
+            extra={
+                "stage": "publisher",
+                "youtube_id": youtube_id,
+                "privacy": privacy,
+            },
+        )
+        return VisibilityUpdateResult(success=True)

@@ -35,13 +35,15 @@ def build_fallback_filter(
     Returns:
         FFmpeg filtergraph fragment string (no trailing semicolon).
     """
-    # Background: scale source to fill 1080×1920, blur heavily
+    # Background: scale source to fill 1080×1920, blur via cheap scale-down/up
     # Foreground: center-crop to 9:16 aspect, scale to 1080×1920
+    # "Poor man's blur": scale to tiny then back up — orders of magnitude faster
+    # than boxblur at full resolution, visually identical for a blurred BG.
     return (
         f"{input_label}split=2[bg_in][fg_in];"
-        f"[bg_in]scale={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}:force_original_aspect_ratio=increase,"
-        f"crop={OUTPUT_WIDTH}:{OUTPUT_HEIGHT},"
-        f"boxblur=20:20[bg];"
+        f"[bg_in]scale=108:192:force_original_aspect_ratio=increase,"
+        f"crop=108:192,"
+        f"scale={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}:flags=bilinear[bg];"
         f"[fg_in]crop=ih*9/16:ih,"
         f"scale={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}[fg];"
         f"[bg][fg]overlay=(W-w)/2:(H-h)/2"
@@ -66,9 +68,9 @@ def build_fallback_filter_simple(
     """
     return (
         f"{input_label}split=2[bg_in][fg_in];"
-        f"[bg_in]scale={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}:force_original_aspect_ratio=increase,"
-        f"crop={OUTPUT_WIDTH}:{OUTPUT_HEIGHT},"
-        f"boxblur=20:20[bg];"
+        f"[bg_in]scale=108:192:force_original_aspect_ratio=increase,"
+        f"crop=108:192,"
+        f"scale={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}:flags=bilinear[bg];"
         f"[fg_in]crop=ih*9/16:ih,"
         f"scale={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}[fg];"
         f"[bg][fg]overlay=(W-w)/2:(H-h)/2"

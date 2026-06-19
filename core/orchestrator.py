@@ -889,6 +889,8 @@ class Orchestrator:
                             end_time=clip.end_time,
                             duration=clip.duration,
                             composite_score=record.composite_score,
+                            video_path=record.file_paths.get("video"),
+                            thumbnail_path=record.file_paths.get("thumbnail"),
                         )
                         self._adapter.update_clip_status(
                             clip_id=record.clip_id,

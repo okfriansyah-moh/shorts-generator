@@ -73,6 +73,28 @@ class DatabaseAdapter:
         ).fetchone()
         return dict(row) if row else None
 
+    def video_id_exists(self, video_id: str) -> bool:
+        """Return True if a video with this content-hash ID is already in the DB.
+
+        Used by generation_scheduler to skip re-processing renamed duplicates.
+        """
+        row = self._conn.execute(
+            "SELECT 1 FROM videos WHERE video_id = ? LIMIT 1", (video_id,)
+        ).fetchone()
+        return row is not None
+
+    def get_clip_youtube_id(self, clip_id: str) -> str | None:
+        """Return the youtube_id for a clip, or None if not yet published.
+
+        Used by upload_scheduler to guard against duplicate uploads.
+        """
+        row = self._conn.execute(
+            "SELECT youtube_id FROM clips WHERE clip_id = ? LIMIT 1", (clip_id,)
+        ).fetchone()
+        if row is None:
+            return None
+        return row["youtube_id"] or None
+
     # ------------------------------------------------------------------
     # Scene operations (DTO-based, with ms↔sec conversion)
     # ------------------------------------------------------------------
@@ -140,14 +162,20 @@ class DatabaseAdapter:
         end_time: float,
         duration: float,
         composite_score: float | None = None,
+        video_path: str | None = None,
+        thumbnail_path: str | None = None,
     ) -> None:
         """Insert a clip record. Idempotent via ON CONFLICT DO NOTHING."""
         self._conn.execute(
             """INSERT INTO clips
-               (clip_id, video_id, start_time, end_time, duration, composite_score)
-               VALUES (?, ?, ?, ?, ?, ?)
-               ON CONFLICT (clip_id) DO NOTHING""",
-            (clip_id, video_id, start_time, end_time, duration, composite_score),
+               (clip_id, video_id, start_time, end_time, duration, composite_score,
+                video_path, thumbnail_path)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT (clip_id) DO UPDATE SET
+                 video_path = COALESCE(excluded.video_path, clips.video_path),
+                 thumbnail_path = COALESCE(excluded.thumbnail_path, clips.thumbnail_path)""",
+            (clip_id, video_id, start_time, end_time, duration, composite_score,
+             video_path, thumbnail_path),
         )
         self._conn.commit()
 
