@@ -209,3 +209,8 @@ __marimo__/
 output/
 models/
 models/
+config/youtube_credentials.json
+raw/
+.DS_Store
+*.bak
+.DS_Store

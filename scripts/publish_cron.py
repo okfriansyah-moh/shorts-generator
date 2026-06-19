@@ -157,7 +157,9 @@ def main(argv: list[str] | None = None) -> int:
 
     # ── Database ───────────────────────────────────────────────────────────
     try:
-        db_path = config.get("database", {}).get("path", "shorts.db")
+        db_path = config.get("paths", {}).get("database", "output/shorts_factory.db")
+        if not os.path.isabs(db_path):
+            db_path = os.path.join(_PROJECT_ROOT, db_path)
         conn = initialize_database(db_path)
         adapter = DatabaseAdapter(conn)
     except Exception as exc:

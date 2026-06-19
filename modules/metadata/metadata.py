@@ -1,20 +1,30 @@
 """Metadata generation module — builds YouTube-ready title, description, and tags.
 
-Template-driven and deterministic. Combines hook text, story text, transcript
-keywords, and channel configuration to produce metadata that satisfies
-YouTube's field constraints:
-  - title: 40–60 characters
-  - description: 150–300 characters
-  - tags: 10–15 unique lowercase strings (sorted)
+Supports two modes, controlled by config['ai_metadata']['enabled']:
+
+  AI mode (default when ANTHROPIC_API_KEY is set and ai_metadata.enabled=true):
+    Sends clip signals to Claude, which returns a title/description/tags plus a
+    viral_confidence score (0.0–1.0). If confidence >= ai_metadata.viral_confidence_threshold
+    (default 0.7) the AI metadata is used; otherwise the module falls back to
+    the template-driven path below.
+
+  Template mode (deterministic fallback):
+    Combines hook text, story text, and transcript keywords to produce metadata
+    that satisfies YouTube's field constraints:
+      - title: 40–60 characters
+      - description: 150–300 characters
+      - tags: 10–15 unique lowercase strings (sorted)
 """
 
 from __future__ import annotations
 
 import logging
+from typing import Optional
 
 from contracts.clip import ClipDefinition
 from contracts.hook import HookResult
 from contracts.metadata import MetadataResult
+from contracts.scoring import ScoredScene
 from contracts.transcript import Transcript
 
 logger = logging.getLogger(__name__)
@@ -228,32 +238,103 @@ def process(
     transcript: Transcript,
     clip: ClipDefinition,
     config: dict,
+    scored_scene: Optional[ScoredScene] = None,
 ) -> MetadataResult:
     """Generate YouTube-ready metadata for a clip.
 
-    Deterministic: same input + same config always produces identical output.
-    No network calls, no LLM, no randomness.
+    Tries Claude AI metadata first when ai_metadata.enabled=true and an
+    ANTHROPIC_API_KEY is present. Falls back to the deterministic template
+    path if AI is disabled, the API key is missing, the call fails, or
+    Claude's viral_confidence is below the configured threshold.
 
     Args:
         hook_result: Hook and story text from hook_generator.
         transcript: Full video transcript from transcription module.
         clip: ClipDefinition for the clip being processed.
         config: Full pipeline config dict.
+        scored_scene: Optional scoring data used to enrich the AI prompt.
 
     Returns:
         MetadataResult DTO with title, description, and tags.
     """
+    category = config.get("metadata", {}).get("category", "Gaming")
+    ai_cfg = config.get("ai_metadata", {})
+    ai_enabled = ai_cfg.get("enabled", True)
+
+    # ── Attempt AI metadata generation ───────────────────────────────────────
+    if ai_enabled:
+        try:
+            from modules.ai_metadata.claude_client import ClaudeClient
+            from modules.ai_metadata.viral_metadata import generate as ai_generate
+
+            client = ClaudeClient(config)
+            if client.is_configured():
+                ai_result = ai_generate(
+                    clip=clip,
+                    scored_scene=scored_scene,
+                    hook_result=hook_result,
+                    transcript=transcript,
+                    config=config,
+                    client=client,
+                )
+                if ai_result.used:
+                    logger.info(
+                        "AI metadata accepted",
+                        extra={
+                            "clip_id": clip.clip_id,
+                            "stage": "metadata",
+                            "status": "ai_accepted",
+                            "viral_confidence": ai_result.viral_confidence,
+                            "viral_reasoning": ai_result.viral_reasoning,
+                            "title_len": len(ai_result.title),
+                            "tag_count": len(ai_result.tags),
+                        },
+                    )
+                    return MetadataResult(
+                        clip_id=clip.clip_id,
+                        title=ai_result.title,
+                        description=ai_result.description,
+                        tags=ai_result.tags,
+                        category=category,
+                    )
+                else:
+                    logger.info(
+                        "AI metadata rejected (low confidence) — using template",
+                        extra={
+                            "clip_id": clip.clip_id,
+                            "stage": "metadata",
+                            "status": "ai_rejected",
+                            "viral_confidence": ai_result.viral_confidence,
+                            "viral_reasoning": ai_result.viral_reasoning,
+                            "threshold": ai_cfg.get("viral_confidence_threshold", 0.7),
+                        },
+                    )
+            else:
+                logger.info(
+                    "AI metadata skipped — ANTHROPIC_API_KEY not set",
+                    extra={"clip_id": clip.clip_id, "stage": "metadata"},
+                )
+        except Exception as exc:
+            logger.warning(
+                "AI metadata generation failed — falling back to template",
+                extra={
+                    "clip_id": clip.clip_id,
+                    "stage": "metadata",
+                    "error": str(exc),
+                },
+            )
+
+    # ── Template-driven fallback (deterministic) ──────────────────────────────
     title = _build_title(hook_result, config)
     description = _build_description(hook_result, transcript, config)
     tags = _build_tags(hook_result, transcript, config)
-    category = config.get("metadata", {}).get("category", "Gaming")
 
     logger.info(
-        "Metadata generated",
+        "Template metadata generated",
         extra={
             "clip_id": clip.clip_id,
             "stage": "metadata",
-            "status": "ok",
+            "status": "template",
             "title_len": len(title),
             "description_len": len(description),
             "tag_count": len(tags),

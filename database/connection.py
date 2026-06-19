@@ -40,9 +40,10 @@ def run_migrations(
     conn: sqlite3.Connection,
     migrations_dir: str = "database/migrations",
 ) -> int:
-    """Execute all SQL migrations in lexicographic order.
+    """Execute pending SQL migrations in lexicographic order.
 
-    All migrations must be idempotent (CREATE TABLE IF NOT EXISTS, etc.).
+    Tracks applied migrations in a _migrations table so each file runs
+    exactly once — safe for non-idempotent statements like ALTER TABLE.
     Migration failure is fatal — raises RuntimeError.
 
     Args:
@@ -50,7 +51,7 @@ def run_migrations(
         migrations_dir: Directory containing .sql migration files.
 
     Returns:
-        Number of migration files executed.
+        Number of new migration files executed.
 
     Raises:
         RuntimeError: If any migration fails.
@@ -58,6 +59,20 @@ def run_migrations(
     """
     if not os.path.isdir(migrations_dir):
         raise FileNotFoundError(f"Migrations directory not found: {migrations_dir}")
+
+    # Ensure migration tracking table exists.
+    conn.execute(
+        """CREATE TABLE IF NOT EXISTS _migrations (
+               filename TEXT PRIMARY KEY,
+               applied_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+           )"""
+    )
+    conn.commit()
+
+    applied: set[str] = {
+        row[0]
+        for row in conn.execute("SELECT filename FROM _migrations").fetchall()
+    }
 
     migration_files = sorted(
         f for f in os.listdir(migrations_dir) if f.endswith(".sql")
@@ -70,13 +85,26 @@ def run_migrations(
         )
         return 0
 
+    executed = 0
     for filename in migration_files:
+        if filename in applied:
+            logger.debug(
+                "Migration already applied — skipping",
+                extra={"stage": "startup", "video_id": "", "migration": filename},
+            )
+            continue
+
         filepath = os.path.join(migrations_dir, filename)
         with open(filepath, "r") as f:
             sql = f.read()
 
         try:
             conn.executescript(sql)
+            conn.execute(
+                "INSERT INTO _migrations (filename) VALUES (?)", (filename,)
+            )
+            conn.commit()
+            executed += 1
             logger.debug(
                 "Migration applied",
                 extra={
@@ -90,17 +118,16 @@ def run_migrations(
                 f"Migration failed: {filename}: {exc}"
             ) from exc
 
-    conn.commit()
-
     logger.info(
-        "All migrations applied",
+        "Migrations complete",
         extra={
             "stage": "startup",
             "video_id": "",
-            "migration_count": len(migration_files),
+            "new": executed,
+            "total": len(migration_files),
         },
     )
-    return len(migration_files)
+    return executed
 
 
 def initialize_database(

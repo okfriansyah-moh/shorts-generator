@@ -1,0 +1,263 @@
+"""Viral metadata generation via Claude LLM.
+
+Workflow:
+  1. Build a rich prompt from clip signals (transcript, scores, hook, duration).
+  2. Call Claude and request structured JSON: title, description, tags,
+     viral_confidence, viral_reasoning.
+  3. Validate and parse the response.
+  4. Return an AIMetadataResult; caller decides whether to use it based on
+     viral_confidence vs. the configured threshold.
+
+If Claude is unavailable or returns malformed output, this module raises
+so the caller can cleanly fall back to the template-driven metadata.
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import re
+from dataclasses import dataclass
+
+from contracts.clip import ClipDefinition
+from contracts.hook import HookResult
+from contracts.metadata import MetadataResult
+from contracts.scoring import ScoredScene
+from contracts.transcript import Transcript
+
+from .claude_client import ClaudeClient
+
+logger = logging.getLogger(__name__)
+
+# ── System prompt ─────────────────────────────────────────────────────────────
+
+_SYSTEM_PROMPT = """\
+You are a YouTube Shorts growth expert specialising in viral content optimisation.
+Your job is to analyse a short-form video clip and produce metadata that maximises
+discoverability, click-through rate, and viewer retention.
+
+Rules:
+- Title: 40–60 characters, punchy, hooks curiosity or emotion. No clickbait lies.
+- Description: 150–300 characters. Include the hook, context, and 3 hashtags
+  (#Shorts plus 2 relevant ones). No emojis unless they genuinely help.
+- Tags: Exactly 10–15 unique, lowercase strings. Mix broad and niche terms.
+- viral_confidence: A float 0.0–1.0 reflecting how confident you are that this
+  clip has genuine viral potential based on the signals provided.
+  - 0.0–0.4  → low potential (dull content, weak signals)
+  - 0.4–0.7  → moderate (good content but missing a wow moment)
+  - 0.7–1.0  → high (strong hook, emotional peak, clear engagement signals)
+- viral_reasoning: 1–2 sentences explaining the confidence score.
+
+Respond ONLY with a valid JSON object — no markdown fences, no extra text:
+{
+  "title": "...",
+  "description": "...",
+  "tags": ["...", ...],
+  "viral_confidence": 0.0,
+  "viral_reasoning": "..."
+}
+"""
+
+
+# ── DTOs ──────────────────────────────────────────────────────────────────────
+
+@dataclass(frozen=True)
+class AIMetadataResult:
+    """Result from Claude metadata generation.
+
+    Fields:
+        title: AI-generated title. 40–60 chars.
+        description: AI-generated description. 150–300 chars.
+        tags: AI-generated tags. 10–15 items.
+        viral_confidence: Claude's confidence that this clip has viral potential.
+                          0.0–1.0.
+        viral_reasoning: Short explanation of the confidence score.
+        used: Whether this result should be used (confidence >= threshold).
+    """
+    title: str
+    description: str
+    tags: tuple[str, ...]
+    viral_confidence: float
+    viral_reasoning: str
+    used: bool
+
+
+# ── Prompt builder ────────────────────────────────────────────────────────────
+
+def _build_user_prompt(
+    clip: ClipDefinition,
+    scored_scene: ScoredScene | None,
+    hook_result: HookResult,
+    transcript: Transcript,
+    config: dict,
+) -> str:
+    """Assemble a rich context prompt from clip signals."""
+    duration_s = clip.duration_s if hasattr(clip, "duration_s") else (
+        (clip.end_time - clip.start_time) / 1000.0
+        if hasattr(clip, "end_time") and hasattr(clip, "start_time")
+        else 0.0
+    )
+
+    # Transcript excerpt — first 400 chars of relevant segment text
+    transcript_text = " ".join(
+        seg.text.strip()
+        for seg in transcript.segments
+        if seg.text.strip()
+    )[:400]
+
+    # Scores
+    composite = scored_scene.composite_score if scored_scene else 0.0
+    keyword_score = scored_scene.keyword_score if scored_scene else 0.0
+    audio_energy = scored_scene.audio_energy_score if scored_scene else 0.0
+    face_presence = scored_scene.face_presence_score if scored_scene else 0.0
+    scene_activity = scored_scene.scene_activity_score if scored_scene else 0.0
+
+    video_type = config.get("video_type", "gameplay")
+    channel_name = config.get("channel", {}).get("name", "")
+
+    lines = [
+        f"VIDEO TYPE: {video_type}",
+        f"CLIP DURATION: {duration_s:.1f}s",
+        f"CHANNEL NAME: {channel_name or '(not set)'}",
+        "",
+        "── PIPELINE SCORES (0.0–1.0) ──",
+        f"  composite_score   : {composite:.3f}  (overall clip quality)",
+        f"  keyword_score     : {keyword_score:.3f}  (engagement keyword density)",
+        f"  audio_energy      : {audio_energy:.3f}  (loudness / excitement level)",
+        f"  face_presence     : {face_presence:.3f}  (fraction of frames with face)",
+        f"  scene_activity    : {scene_activity:.3f}  (visual motion / action)",
+        "",
+        "── HOOK GENERATED BY PIPELINE ──",
+        f"  hook_text  : {hook_result.hook_text}",
+        f"  story_text : {hook_result.story_text}",
+        f"  keywords   : {', '.join(hook_result.keyword_source) or '(none)'}",
+        "",
+        "── TRANSCRIPT EXCERPT ──",
+        transcript_text or "(no speech detected)",
+    ]
+    return "\n".join(lines)
+
+
+# ── Response parser ───────────────────────────────────────────────────────────
+
+def _parse_response(raw: str, config: dict) -> AIMetadataResult:
+    """Parse and validate Claude's JSON response.
+
+    Raises:
+        ValueError: If required fields are missing or out of bounds.
+    """
+    meta_cfg = config.get("metadata", {})
+    ai_cfg = config.get("ai_metadata", {})
+    threshold = float(ai_cfg.get("viral_confidence_threshold", 0.7))
+
+    # Strip stray markdown fences if Claude wrapped the JSON anyway
+    cleaned = re.sub(r"```(?:json)?", "", raw).strip()
+
+    try:
+        data = json.loads(cleaned)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Claude returned non-JSON output: {exc}\nRaw: {raw[:200]}") from exc
+
+    # ── title ────────────────────────────────────────────────────────────────
+    title = str(data.get("title", "")).strip()
+    min_t = meta_cfg.get("title_min_chars", 40)
+    max_t = meta_cfg.get("title_max_chars", 60)
+    if not (min_t <= len(title) <= max_t):
+        # Soft-fix: truncate or pad rather than hard-fail
+        if len(title) > max_t:
+            title = title[:max_t].rsplit(" ", 1)[0]
+        elif len(title) < min_t:
+            title = title.ljust(min_t)
+
+    # ── description ──────────────────────────────────────────────────────────
+    description = str(data.get("description", "")).strip()
+    min_d = meta_cfg.get("description_min_chars", 150)
+    max_d = meta_cfg.get("description_max_chars", 300)
+    if len(description) > max_d:
+        description = description[:max_d].rsplit(" ", 1)[0]
+
+    # ── tags ──────────────────────────────────────────────────────────────────
+    raw_tags = data.get("tags", [])
+    if not isinstance(raw_tags, list):
+        raw_tags = []
+    tags = tuple(
+        str(t).strip().lower()
+        for t in raw_tags
+        if str(t).strip()
+    )
+    min_tags = meta_cfg.get("tag_count_min", 10)
+    max_tags = meta_cfg.get("tag_count_max", 15)
+    tags = tags[:max_tags]
+    if len(tags) < min_tags:
+        raise ValueError(
+            f"Claude returned only {len(tags)} tags (min {min_tags})."
+        )
+
+    # ── viral_confidence ─────────────────────────────────────────────────────
+    try:
+        confidence = float(data["viral_confidence"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError(f"Missing/invalid viral_confidence: {exc}") from exc
+    confidence = max(0.0, min(1.0, confidence))
+
+    reasoning = str(data.get("viral_reasoning", "")).strip()
+
+    used = confidence >= threshold
+
+    logger.info(
+        "AI metadata parsed",
+        extra={
+            "stage": "ai_metadata",
+            "viral_confidence": confidence,
+            "viral_reasoning": reasoning,
+            "used": used,
+            "threshold": threshold,
+        },
+    )
+
+    return AIMetadataResult(
+        title=title,
+        description=description,
+        tags=tags,
+        viral_confidence=confidence,
+        viral_reasoning=reasoning,
+        used=used,
+    )
+
+
+# ── Public entry point ────────────────────────────────────────────────────────
+
+def generate(
+    clip: ClipDefinition,
+    scored_scene: ScoredScene | None,
+    hook_result: HookResult,
+    transcript: Transcript,
+    config: dict,
+    client: ClaudeClient,
+) -> AIMetadataResult:
+    """Call Claude and return an AIMetadataResult.
+
+    Args:
+        clip: The clip being processed.
+        scored_scene: Scoring data for the clip's primary scene (may be None).
+        hook_result: Hook and story text from hook_generator.
+        transcript: Full video transcript.
+        config: Full pipeline config dict.
+        client: Configured ClaudeClient instance.
+
+    Returns:
+        AIMetadataResult with viral_confidence and used flag set.
+
+    Raises:
+        RuntimeError: If the Claude API call fails.
+        ValueError: If the response cannot be parsed/validated.
+    """
+    user_prompt = _build_user_prompt(clip, scored_scene, hook_result, transcript, config)
+
+    logger.info(
+        "Requesting AI metadata from Claude",
+        extra={"stage": "ai_metadata", "clip_id": clip.clip_id, "model": client._model},
+    )
+
+    raw_response = client.complete(system=_SYSTEM_PROMPT, user=user_prompt)
+    return _parse_response(raw_response, config)
