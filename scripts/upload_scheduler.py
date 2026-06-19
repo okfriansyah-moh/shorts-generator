@@ -39,6 +39,7 @@ from modules.publisher.publish import publish_single                           #
 from modules.publisher.youtube_client import YouTubeClient                     # noqa: E402
 from modules.publisher.multi_platform import publish_to_all_platforms          # noqa: E402
 from modules.publisher.visibility import check_visibility_transitions          # noqa: E402
+from modules.notifier.telegram import TelegramNotifier, build_publish_message  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -201,6 +202,51 @@ def _spawn_generation() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Telegram notification
+# ---------------------------------------------------------------------------
+
+def _notify_telegram(record, config: dict, platform_results, published_at: str) -> None:
+    """Send a Telegram notification after a successful publish.
+
+    Reads ``telegram.enabled`` from config (default: True).
+    Silently skips if credentials are missing or disabled.
+    A Telegram failure never aborts the pipeline.
+    """
+    tg_config = config.get("telegram", {})
+    if not tg_config.get("enabled", True):
+        return
+
+    try:
+        notifier = TelegramNotifier.from_config(config)
+    except ValueError as exc:
+        logger.info(
+            "upload_scheduler: Telegram not configured — skipping notification (%s)",
+            exc,
+            extra={"stage": "upload_scheduler"},
+        )
+        return
+
+    msg = build_publish_message(
+        title=record.title or "(no title)",
+        clip_id=record.clip_id,
+        composite_score=record.composite_score,
+        scheduled_at=record.scheduled_at,
+        published_at=published_at,
+        youtube_id=platform_results.youtube_id,
+        tiktok_id=platform_results.tiktok_id,
+        instagram_id=platform_results.instagram_id,
+        facebook_id=platform_results.facebook_id,
+        error_summary=platform_results.error_summary,
+    )
+    notifier.send_message(msg)
+    logger.info(
+        "upload_scheduler: Telegram notification sent for clip %s",
+        record.clip_id,
+        extra={"stage": "upload_scheduler", "clip_id": record.clip_id},
+    )
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -352,6 +398,7 @@ def main() -> int:
             extra={"stage": "upload_scheduler"},
         )
         _delete_clip_artefacts(updated, config)
+        _notify_telegram(updated, config, platform_results, now_iso)
 
         # Check if queue is now empty → spawn generation
         remaining = _remaining_scheduled_count(adapter)

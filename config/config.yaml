@@ -235,6 +235,16 @@ meta:
   serve_port: 8080
   public_ip: ""  # e.g. "203.0.113.42" — leave blank for auto-detection
 
+# Telegram notifications — sent after each successful publish.
+# Set SF_TELEGRAM_BOT_TOKEN and SF_TELEGRAM_CHAT_ID in your environment, or
+# override the env var names below (or hardcode values — not recommended).
+telegram:
+  enabled: true
+  bot_token_env: "SF_TELEGRAM_BOT_TOKEN"
+  chat_id_env: "SF_TELEGRAM_CHAT_ID"
+  # bot_token: ""   # fallback if env var is missing
+  # chat_id: ""     # fallback if env var is missing
+
 channel:
   name: ""
   hashtags: []
