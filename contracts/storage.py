@@ -28,6 +28,9 @@ class StorageRecord:
         scheduled_at: Assigned publish timestamp. ISO 8601 or None.
         published_at: Actual publish timestamp. ISO 8601 or None.
         youtube_id: YouTube video ID after upload. None until published.
+        tiktok_id: TikTok video ID after upload. None until published.
+        instagram_id: Instagram media ID after upload. None until published.
+        facebook_id: Facebook video ID after upload. None until published.
         error_message: Failure description. None unless status is "failed".
         retry_count: Number of publish retries attempted. 0-3.
     """
@@ -45,5 +48,8 @@ class StorageRecord:
     scheduled_at: str | None = field(default=None)
     published_at: str | None = field(default=None)
     youtube_id: str | None = field(default=None)
+    tiktok_id: str | None = field(default=None)
+    instagram_id: str | None = field(default=None)
+    facebook_id: str | None = field(default=None)
     error_message: str | None = field(default=None)
     retry_count: int = field(default=0)

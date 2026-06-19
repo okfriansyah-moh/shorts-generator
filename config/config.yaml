@@ -170,6 +170,10 @@ thumbnail:
   contrast_boost: 1.10
 
 metadata:
+  # Language for AI-generated titles, descriptions, tags, and thumbnail text.
+  # "en"  → English
+  # "id"  → Bahasa Indonesia (casual/conversational — bukan bahasa formal)
+  language: "id"
   title_min_chars: 40
   title_max_chars: 60
   description_min_chars: 150
@@ -201,6 +205,45 @@ publisher:
   retry_delays: [60, 300, 900]
   initial_visibility: "unlisted"
   public_delay_minutes: 30
+
+# Multi-platform publishing.
+# Set each platform to "enabled" or "disabled".
+# Credentials files must exist before enabling a platform.
+platforms:
+  youtube: "enabled"
+  tiktok: "disabled"       # fill in config/tiktok_credentials.json first
+  instagram: "disabled"    # fill in config/meta_credentials.json first
+  facebook: "disabled"     # fill in config/meta_credentials.json first
+
+# TikTok Content Posting API settings.
+tiktok:
+  credentials_path: "config/tiktok_credentials.json"
+  privacy_level: "PUBLIC_TO_EVERYONE"  # PUBLIC_TO_EVERYONE | MUTUAL_FOLLOW_FRIENDS | SELF_ONLY
+  disable_duet: false
+  disable_stitch: false
+  disable_comment: false
+
+# Meta Graph API settings (Instagram Reels + Facebook Reels share one token).
+meta:
+  credentials_path: "config/meta_credentials.json"
+  # Instagram Reels requires a publicly reachable video URL (Meta's API limitation).
+  # This is solved by spinning up a temporary HTTP server on your machine using
+  # your public IP. Forward the serve_port on your router to this machine (one-time).
+  #
+  # serve_port: the local port to listen on (must be forwarded on your router)
+  # public_ip:  leave blank to auto-detect via api.ipify.org, or hardcode your IP
+  serve_port: 8080
+  public_ip: ""  # e.g. "203.0.113.42" — leave blank for auto-detection
+
+# Telegram notifications — sent after each successful publish.
+# Set SF_TELEGRAM_BOT_TOKEN and SF_TELEGRAM_CHAT_ID in your environment, or
+# override the env var names below (or hardcode values — not recommended).
+telegram:
+  enabled: true
+  bot_token_env: "SF_TELEGRAM_BOT_TOKEN"
+  chat_id_env: "SF_TELEGRAM_CHAT_ID"
+  # bot_token: ""   # fallback if env var is missing
+  # chat_id: ""     # fallback if env var is missing
 
 channel:
   name: ""
