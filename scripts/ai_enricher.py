@@ -55,8 +55,9 @@ def _enrichment_guidelines(language: str) -> dict:
     When this dict is present in the export, Claude MUST follow it instead
     of any default English instructions.
     """
-    if language == "id":
-        return {
+    # ── Per-language rich guidelines (filler lists, tone examples, etc.) ──────
+    _RICH: dict[str, dict] = {
+        "id": {
             "language": "id",
             "language_name": "Bahasa Indonesia (casual/conversational — bukan bahasa formal)",
             "important": (
@@ -72,7 +73,7 @@ def _enrichment_guidelines(language: str) -> dict:
                     "Pakai bahasa aktif dan energik — kayak lagi cerita ke temen",
                     "Contoh gaya yang bener: 'Kabur dari 3 musuh pakai 1 jurus', 'Kenapa boss ini bikin frustrasi banget'",
                     "JANGAN pakai frasa generik: 'Kamu harus lihat ini', 'Tunggu yang ini', 'Nggak nyangka'",
-                    "Sertakan 'Ninja Gaiden' kalau terasa natural — jangan dipaksa",
+                    "Sertakan nama game kalau terasa natural — jangan dipaksa",
                     "Setiap judul HARUS unik — nggak boleh ada dua clip dengan judul yang sama",
                 ],
                 "filler_to_avoid": [
@@ -93,11 +94,10 @@ def _enrichment_guidelines(language: str) -> dict:
             "tags": {
                 "count": "10-15 tag",
                 "rules": [
-                    "Mix antara tag spesifik (ninja gaiden, ryu hayabusa, tecmo koei) dan yang lebih luas (game action, gaming highlight, boss fight)",
+                    "Mix antara tag spesifik dan yang lebih luas (gaming highlight, boss fight, action game)",
                     "Sertakan tag kesulitan kalau relevan: game susah, no damage, one life, tanpa mati",
-                    "Campuran Indonesia dan Inggris OK untuk istilah gaming yang umum",
+                    "Campuran bahasa lokal dan Inggris OK untuk istilah gaming yang umum",
                     "Hindari tag yang terlalu generik: best, epic, wow, omg, keren",
-                    "Contoh tag yang bagus: ninja gaiden, ryu hayabusa, game susah, boss fight, gaming highlight, no damage, action game, gameplay indonesia",
                 ],
             },
             "thumbnail_hook": {
@@ -108,10 +108,8 @@ def _enrichment_guidelines(language: str) -> dict:
                     "Hindari: 'LUAR BIASA', 'KEREN', 'WOW' — terlalu generik",
                 ],
             },
-        }
-    else:
-        # Default: English
-        return {
+        },
+        "en": {
             "language": "en",
             "language_name": "English",
             "important": "All text must be in English.",
@@ -121,7 +119,7 @@ def _enrichment_guidelines(language: str) -> dict:
                     "Lead with the most exciting/surprising moment",
                     "Use active language: 'Escapes 3 enemies with ONE move', 'Why this boss fight broke me'",
                     "NO generic phrases: 'You need to see this', 'Stop and watch', 'This is unreal'",
-                    "Include 'Ninja Gaiden' naturally where it fits",
+                    "Include the game name naturally where it fits",
                     "Every title must be UNIQUE — no two clips share the same title",
                 ],
                 "filler_to_avoid": [
@@ -140,7 +138,7 @@ def _enrichment_guidelines(language: str) -> dict:
             "tags": {
                 "count": "10-15 tags",
                 "rules": [
-                    "Mix specific (ninja gaiden, ryu hayabusa, tecmo koei) and broad (action games, gaming highlight, boss fight)",
+                    "Mix specific and broad tags (gaming highlight, boss fight, action games)",
                     "Include difficulty-related tags (hard game, one life, no damage) where relevant",
                     "Avoid generic tags: best, epic, wow, omg",
                 ],
@@ -152,7 +150,59 @@ def _enrichment_guidelines(language: str) -> dict:
                     "Avoid: 'AMAZING', 'EPIC', 'WOW' — too generic",
                 ],
             },
-        }
+        },
+    }
+
+    if language in _RICH:
+        return _RICH[language]
+
+    # ── Generic fallback for any other language ───────────────────────────────
+    # Claude has native knowledge of most languages and styles. We just tell it
+    # the target language + universal rules; Claude handles tone and idioms.
+    return {
+        "language": language,
+        "language_name": language,
+        "important": (
+            f"ALL text (title, description, tags, thumbnail hook) MUST be written in {language}. "
+            "Use natural, conversational tone — like talking to a fellow gamer, not writing an article. "
+            "You may keep widely-understood gaming terms in English (boss fight, no damage, combo, etc.) "
+            "if they are commonly used that way in the target language community."
+        ),
+        "title": {
+            "max_chars": 60,
+            "rules": [
+                "Lead with the most exciting or surprising moment in the clip",
+                "Use active, energetic language",
+                "Avoid generic filler phrases that don't describe the actual clip",
+                "Include the game name naturally if it fits",
+                "Every title must be UNIQUE across all clips",
+            ],
+        },
+        "description": {
+            "max_chars": 200,
+            "rules": [
+                "First sentence: describe what happens in the clip",
+                "Second sentence: context or why it is impressive",
+                "End with 3-5 relevant hashtags — avoid generic ones",
+            ],
+        },
+        "tags": {
+            "count": "10-15 tags",
+            "rules": [
+                "Mix game-specific and broader gaming tags",
+                "Include difficulty tags where relevant (hard game, no damage, etc.)",
+                "Avoid overly generic tags",
+                "Mix local-language tags with common English gaming terms as appropriate",
+            ],
+        },
+        "thumbnail_hook": {
+            "rules": [
+                "Short punchy text — max 5-6 words",
+                "Describe the extreme or intriguing moment",
+                "Avoid generic words like AMAZING, EPIC, WOW",
+            ],
+        },
+    }
 # Legacy global path — kept as fallback only; new code writes per-video.
 _GLOBAL_ENRICHED_STATE_FILE = os.path.join(_PROJECT_ROOT, "output", "ai_enriched_clips.json")
 

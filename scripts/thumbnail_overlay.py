@@ -223,7 +223,8 @@ def _make_hook(
         used: Set of already-used hooks — ensures no duplicates.
         language: "en" or "id" — controls which filler list to strip.
     """
-    filler = _FILLER_ID if language == "id" else _FILLER_EN
+    _FILLER_MAP = {"en": _FILLER_EN, "id": _FILLER_ID}
+    filler = _FILLER_MAP.get(language, [])  # unknown language → no stripping, trust Claude's title
     text = title
     for f in filler:
         # Case-insensitive strip
