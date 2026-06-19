@@ -99,13 +99,17 @@ def main() -> None:
 
         for idx, short_dir in enumerate(short_dirs):
             meta_path = os.path.join(short_dir, "metadata.json")
-            video_path = os.path.join(short_dir, "final.mp4")
-            thumb_path = os.path.join(short_dir, "thumbnail.jpg")
+            video_path_abs = os.path.join(short_dir, "final.mp4")
+            thumb_path_abs = os.path.join(short_dir, "thumbnail.jpg")
+            # Store paths relative to output_dir so the publisher's
+            # _resolve_file_path can prepend output_dir without doubling it.
+            video_path = os.path.relpath(video_path_abs, output_dir)
+            thumb_path = os.path.relpath(thumb_path_abs, output_dir)
 
             if not os.path.isfile(meta_path):
                 print(f"  SKIP {short_dir} — no metadata.json")
                 continue
-            if not os.path.isfile(video_path):
+            if not os.path.isfile(video_path_abs):
                 print(f"  SKIP {short_dir} — no final.mp4")
                 continue
 
