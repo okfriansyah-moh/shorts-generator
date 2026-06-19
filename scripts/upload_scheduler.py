@@ -2,7 +2,8 @@
 """Upload scheduler for Shorts Factory.
 
 Runs on a recurring schedule (e.g., 3× daily). Each invocation:
-  1. Finds the next due 'scheduled' clip and uploads it to YouTube.
+  1. Finds the next due 'scheduled' clip and uploads it to all enabled
+     platforms (YouTube, TikTok, Instagram Reels, Facebook Reels) concurrently.
   2. After a successful upload, deletes all on-disk clip artefacts
      (composite, final video, thumbnail, subtitles) to reclaim space.
   3. If the queue is now empty, spawns generation_scheduler.py to
@@ -22,20 +23,22 @@ import os
 import shutil
 import subprocess
 import sys
+from dataclasses import replace
 from datetime import datetime, timezone
 
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
-from core.config import load_config                          # noqa: E402
-from core.logging import configure_logging                   # noqa: E402
-from contracts.storage import StorageRecord                  # noqa: E402
-from database.adapter import DatabaseAdapter                 # noqa: E402
-from database.connection import initialize_database          # noqa: E402
-from modules.publisher.publish import publish_single         # noqa: E402
-from modules.publisher.youtube_client import YouTubeClient   # noqa: E402
-from modules.publisher.visibility import check_visibility_transitions  # noqa: E402
+from core.config import load_config                                            # noqa: E402
+from core.logging import configure_logging                                     # noqa: E402
+from contracts.storage import StorageRecord                                    # noqa: E402
+from database.adapter import DatabaseAdapter                                   # noqa: E402
+from database.connection import initialize_database                            # noqa: E402
+from modules.publisher.publish import publish_single                           # noqa: E402
+from modules.publisher.youtube_client import YouTubeClient                     # noqa: E402
+from modules.publisher.multi_platform import publish_to_all_platforms          # noqa: E402
+from modules.publisher.visibility import check_visibility_transitions          # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -263,22 +266,50 @@ def main() -> int:
         conn.close()
         return 0
 
-    # ── Authenticate YouTube ───────────────────────────────────────────────
+    # ── Authenticate YouTube (pre-auth so multi_platform can reuse the client) ─
+    youtube_client: YouTubeClient | None = None
     try:
         publisher_config = config.get("publisher", {})
-        client = YouTubeClient(publisher_config)
-        client.authenticate()
+        youtube_client = YouTubeClient(publisher_config)
+        youtube_client.authenticate()
     except FileNotFoundError as exc:
-        logger.error("upload_scheduler: credentials not found", extra={"stage": "upload_scheduler", "error": str(exc)})
-        conn.close()
-        return 1
+        logger.warning(
+            "upload_scheduler: YouTube credentials not found — YouTube will be skipped: %s",
+            exc,
+            extra={"stage": "upload_scheduler"},
+        )
+        youtube_client = None
     except (ValueError, RuntimeError) as exc:
-        logger.error("upload_scheduler: YouTube auth failed", extra={"stage": "upload_scheduler", "error": str(exc)})
-        conn.close()
-        return 1
+        logger.warning(
+            "upload_scheduler: YouTube auth failed — YouTube will be skipped: %s",
+            exc,
+            extra={"stage": "upload_scheduler"},
+        )
+        youtube_client = None
 
-    # ── Upload ────────────────────────────────────────────────────────────
-    updated = publish_single(record, client, config)
+    # ── Multi-platform upload ──────────────────────────────────────────────
+    platform_results = publish_to_all_platforms(record, config, youtube_client=youtube_client)
+
+    now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+    if platform_results.any_success:
+        updated = replace(
+            record,
+            status="published",
+            youtube_id=platform_results.youtube_id or record.youtube_id,
+            tiktok_id=platform_results.tiktok_id,
+            instagram_id=platform_results.instagram_id,
+            facebook_id=platform_results.facebook_id,
+            published_at=now_iso,
+            error_message=platform_results.error_summary,  # partial failures logged
+        )
+    else:
+        updated = replace(
+            record,
+            status="failed",
+            error_message=platform_results.error_summary or "All platforms failed",
+            retry_count=record.retry_count + 1,
+        )
 
     # ── Persist result ─────────────────────────────────────────────────────
     try:
@@ -288,11 +319,14 @@ def main() -> int:
             valid_from=(record.status,),
             error_message=updated.error_message,
         )
-        if updated.youtube_id and updated.status == "published":
-            adapter.update_clip_publish_info(
+        if platform_results.any_success:
+            adapter.update_clip_platform_ids(
                 clip_id=updated.clip_id,
-                youtube_id=updated.youtube_id,
-                published_at=updated.published_at,
+                youtube_id=platform_results.youtube_id,
+                tiktok_id=platform_results.tiktok_id,
+                instagram_id=platform_results.instagram_id,
+                facebook_id=platform_results.facebook_id,
+                published_at=now_iso,
             )
     except Exception as exc:
         logger.error(
@@ -300,18 +334,22 @@ def main() -> int:
             extra={"stage": "upload_scheduler", "clip_id": updated.clip_id, "error": str(exc)},
         )
 
-    # ── Post-upload visibility transition ─────────────────────────────────
-    try:
-        check_visibility_transitions([updated], client, config)
-    except Exception as exc:
-        logger.warning("upload_scheduler: visibility transition failed", extra={"stage": "upload_scheduler", "error": str(exc)})
+    # ── Post-upload YouTube visibility transition ──────────────────────────
+    if platform_results.youtube_id and youtube_client:
+        try:
+            check_visibility_transitions([updated], youtube_client, config)
+        except Exception as exc:
+            logger.warning("upload_scheduler: visibility transition failed", extra={"stage": "upload_scheduler", "error": str(exc)})
 
     # ── On success: delete artefacts ──────────────────────────────────────
     if updated.status == "published":
         logger.info(
-            "upload_scheduler: upload succeeded — https://youtu.be/%s",
-            updated.youtube_id,
-            extra={"stage": "upload_scheduler", "youtube_id": updated.youtube_id},
+            "upload_scheduler: publish succeeded — YT:%s TT:%s IG:%s FB:%s",
+            platform_results.youtube_id,
+            platform_results.tiktok_id,
+            platform_results.instagram_id,
+            platform_results.facebook_id,
+            extra={"stage": "upload_scheduler"},
         )
         _delete_clip_artefacts(updated, config)
 

@@ -192,14 +192,44 @@ def _pick_text_color(img: Image.Image, text_y: int) -> tuple[int, int, int, int]
 
 # ── Text shortening ────────────────────────────────────────────────────────
 
-def _make_hook(title: str, max_words: int = 6, used: set[str] | None = None) -> str:
-    filler = [
-        "A moment", "Watch this", "You need to see this",
-        "Stop and watch", "Wait for the best part",
-    ]
+_FILLER_EN = [
+    "A moment", "Watch this", "You need to see this",
+    "Stop and watch", "Wait for the best part", "This is unreal",
+    "You won't believe", "Must see",
+]
+
+_FILLER_ID = [
+    "Kamu harus lihat ini", "Hentikan dan tonton", "Tunggu bagian terbaiknya",
+    "Ini nggak nyata", "Sebuah momen", "Tonton ini", "Luar biasa banget",
+    "Keren parah", "Nggak percaya", "Harus ditonton", "Ini keren",
+    "Kalian harus lihat", "Tonton sampai habis",
+]
+
+
+def _make_hook(
+    title: str,
+    max_words: int = 6,
+    used: set[str] | None = None,
+    language: str = "en",
+) -> str:
+    """Extract a short punchy hook from a clip title for thumbnail overlay.
+
+    Strips language-specific filler phrases, then picks the most impactful
+    word window.  Guarantees uniqueness when ``used`` is provided.
+
+    Args:
+        title: Full clip title.
+        max_words: Maximum words in the hook (default 6).
+        used: Set of already-used hooks — ensures no duplicates.
+        language: "en" or "id" — controls which filler list to strip.
+    """
+    filler = _FILLER_ID if language == "id" else _FILLER_EN
     text = title
     for f in filler:
-        text = text.replace(f, "").strip(" —-")
+        # Case-insensitive strip
+        import re as _re
+        text = _re.sub(_re.escape(f), "", text, flags=_re.IGNORECASE).strip(" —-")
+
     words = text.split()
 
     # Try sliding windows across the title to find a unique hook
@@ -234,6 +264,7 @@ def add_text_overlay(
     text: str,
     output_path: str | None = None,
     used_hooks: set[str] | None = None,
+    language: str = "en",
 ) -> str:
     output_path = output_path or image_path
 
@@ -248,7 +279,7 @@ def add_text_overlay(
     img = _to_9x16(img)
     W, H = img.size  # 1080 x 1920
 
-    hook = _make_hook(text, used=used_hooks)
+    hook = _make_hook(text, used=used_hooks, language=language)
 
     # Font size: start large and shrink until text fits within margins
     margin = int(W * 0.06)           # 6% margin each side
@@ -414,6 +445,9 @@ def process_all() -> int:
     if not os.path.isabs(db_path):
         db_path = os.path.join(_PROJECT_ROOT, db_path)
 
+    # Read language from config
+    language = config.get("metadata", {}).get("language", "en")
+
     # Derive per-video state file from the first clip's thumbnail_path
     def _video_dir_from_rows(rows_: list) -> str | None:
         for r_ in rows_:
@@ -454,8 +488,8 @@ def process_all() -> int:
             continue
 
         try:
-            add_text_overlay(thumb, title, used_hooks=used_hooks)
-            hook = _make_hook(title, used=used_hooks)
+            add_text_overlay(thumb, title, used_hooks=used_hooks, language=language)
+            hook = _make_hook(title, used=used_hooks, language=language)
             used_hooks.add(hook)
             done_ids.add(clip_id)
             processed += 1

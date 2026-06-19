@@ -244,6 +244,48 @@ class DatabaseAdapter:
         )
         self._conn.commit()
 
+    def update_clip_platform_ids(
+        self,
+        clip_id: str,
+        youtube_id: str | None = None,
+        tiktok_id: str | None = None,
+        instagram_id: str | None = None,
+        facebook_id: str | None = None,
+        published_at: str | None = None,
+    ) -> None:
+        """Persist per-platform video IDs after a multi-platform upload.
+
+        Only non-None values are written so existing IDs are never overwritten
+        by a partial retry on a different platform.
+        """
+        sets: list[str] = ["updated_at = CURRENT_TIMESTAMP"]
+        params: list[Any] = []
+
+        if youtube_id is not None:
+            sets.append("youtube_id = ?")
+            params.append(youtube_id)
+        if tiktok_id is not None:
+            sets.append("tiktok_id = ?")
+            params.append(tiktok_id)
+        if instagram_id is not None:
+            sets.append("instagram_id = ?")
+            params.append(instagram_id)
+        if facebook_id is not None:
+            sets.append("facebook_id = ?")
+            params.append(facebook_id)
+        if published_at is not None:
+            sets.append("published_at = ?")
+            params.append(published_at)
+
+        if len(sets) == 1:
+            # Nothing to update besides the timestamp
+            return
+
+        params.append(clip_id)
+        sql = f"UPDATE clips SET {', '.join(sets)} WHERE clip_id = ?"
+        self._conn.execute(sql, params)
+        self._conn.commit()
+
     # ------------------------------------------------------------------
     # Pipeline run operations
     # ------------------------------------------------------------------

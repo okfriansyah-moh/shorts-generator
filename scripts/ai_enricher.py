@@ -41,6 +41,118 @@ from database.connection import initialize_database  # noqa: E402
 logger = logging.getLogger(__name__)
 
 ENRICHED_FLAG = "enriched"  # status value after AI enrichment, before upload
+
+
+# ---------------------------------------------------------------------------
+# Language-aware enrichment guidelines
+# ---------------------------------------------------------------------------
+
+def _enrichment_guidelines(language: str) -> dict:
+    """Return per-field enrichment guidelines for the given language.
+
+    These are embedded in the --export JSON so Claude follows them during
+    the 8am enrichment step regardless of what's hardcoded in the SKILL.md.
+    When this dict is present in the export, Claude MUST follow it instead
+    of any default English instructions.
+    """
+    if language == "id":
+        return {
+            "language": "id",
+            "language_name": "Bahasa Indonesia (casual/conversational — bukan bahasa formal)",
+            "important": (
+                "Semua teks WAJIB dalam Bahasa Indonesia yang kasual dan natural. "
+                "Gaya bahasa seperti ngobrol sama teman gamer — santai, energik, nggak kaku. "
+                "Boleh mix istilah gaming dalam bahasa Inggris (boss fight, no damage, combo, dll) "
+                "karena itu udah jadi bahasa sehari-hari gamer Indonesia."
+            ),
+            "title": {
+                "max_chars": 60,
+                "rules": [
+                    "Mulai dari momen paling seru atau mengejutkan di clip",
+                    "Pakai bahasa aktif dan energik — kayak lagi cerita ke temen",
+                    "Contoh gaya yang bener: 'Kabur dari 3 musuh pakai 1 jurus', 'Kenapa boss ini bikin frustrasi banget'",
+                    "JANGAN pakai frasa generik: 'Kamu harus lihat ini', 'Tunggu yang ini', 'Nggak nyangka'",
+                    "Sertakan 'Ninja Gaiden' kalau terasa natural — jangan dipaksa",
+                    "Setiap judul HARUS unik — nggak boleh ada dua clip dengan judul yang sama",
+                ],
+                "filler_to_avoid": [
+                    "Kamu harus lihat ini", "Hentikan dan tonton", "Tunggu bagian terbaiknya",
+                    "Ini nggak nyata", "Sebuah momen", "Tonton ini", "Luar biasa banget",
+                    "Keren parah", "Nggak percaya",
+                ],
+            },
+            "description": {
+                "max_chars": 200,
+                "rules": [
+                    "Kalimat pertama: hook yang langsung ngejelasin apa yang terjadi di clip",
+                    "Kalimat kedua: konteks atau kenapa momen ini keren/susah/lucu",
+                    "Akhiri dengan 3-5 hashtag yang relevan — jangan pakai #Shorts #Gaming #Clips yang terlalu generik",
+                    "Gaya penulisan santai dan natural, bukan seperti artikel berita",
+                ],
+            },
+            "tags": {
+                "count": "10-15 tag",
+                "rules": [
+                    "Mix antara tag spesifik (ninja gaiden, ryu hayabusa, tecmo koei) dan yang lebih luas (game action, gaming highlight, boss fight)",
+                    "Sertakan tag kesulitan kalau relevan: game susah, no damage, one life, tanpa mati",
+                    "Campuran Indonesia dan Inggris OK untuk istilah gaming yang umum",
+                    "Hindari tag yang terlalu generik: best, epic, wow, omg, keren",
+                    "Contoh tag yang bagus: ninja gaiden, ryu hayabusa, game susah, boss fight, gaming highlight, no damage, action game, gameplay indonesia",
+                ],
+            },
+            "thumbnail_hook": {
+                "rules": [
+                    "Teks singkat dan nendang — maksimal 5-6 kata",
+                    "Pakai kata yang bikin penasaran atau menggambarkan momen ekstrem",
+                    "Contoh: 'KABUR DARI 3 MUSUH', 'BOSS NYA GILA', 'NGGAK NYANGKA'",
+                    "Hindari: 'LUAR BIASA', 'KEREN', 'WOW' — terlalu generik",
+                ],
+            },
+        }
+    else:
+        # Default: English
+        return {
+            "language": "en",
+            "language_name": "English",
+            "important": "All text must be in English.",
+            "title": {
+                "max_chars": 60,
+                "rules": [
+                    "Lead with the most exciting/surprising moment",
+                    "Use active language: 'Escapes 3 enemies with ONE move', 'Why this boss fight broke me'",
+                    "NO generic phrases: 'You need to see this', 'Stop and watch', 'This is unreal'",
+                    "Include 'Ninja Gaiden' naturally where it fits",
+                    "Every title must be UNIQUE — no two clips share the same title",
+                ],
+                "filler_to_avoid": [
+                    "You need to see this", "Stop and watch", "Wait for the best part",
+                    "This is unreal", "A moment", "Watch this",
+                ],
+            },
+            "description": {
+                "max_chars": 200,
+                "rules": [
+                    "First sentence: hook describing what happens in the clip",
+                    "Second sentence: context or why it's impressive",
+                    "End with 3-5 relevant hashtags only (no filler like #Shorts #Gaming #Clips)",
+                ],
+            },
+            "tags": {
+                "count": "10-15 tags",
+                "rules": [
+                    "Mix specific (ninja gaiden, ryu hayabusa, tecmo koei) and broad (action games, gaming highlight, boss fight)",
+                    "Include difficulty-related tags (hard game, one life, no damage) where relevant",
+                    "Avoid generic tags: best, epic, wow, omg",
+                ],
+            },
+            "thumbnail_hook": {
+                "rules": [
+                    "Short punchy text — max 5-6 words",
+                    "Make it intriguing or describe the extreme moment",
+                    "Avoid: 'AMAZING', 'EPIC', 'WOW' — too generic",
+                ],
+            },
+        }
 # Legacy global path — kept as fallback only; new code writes per-video.
 _GLOBAL_ENRICHED_STATE_FILE = os.path.join(_PROJECT_ROOT, "output", "ai_enriched_clips.json")
 
@@ -150,8 +262,14 @@ def _next_scheduled_at(occupied: set[str], config: dict) -> str:
     )
 
 
-def cmd_export(adapter: DatabaseAdapter) -> int:
-    """Export clips that haven't been AI-enriched yet."""
+def cmd_export(adapter: DatabaseAdapter, config: dict | None = None) -> int:
+    """Export clips that haven't been AI-enriched yet.
+
+    The output JSON includes enrichment_guidelines so Claude follows the
+    correct language and style during the 8am enrichment step — regardless
+    of what is hardcoded in the SKILL.md.  Claude MUST use these guidelines
+    instead of any default English instructions when this field is present.
+    """
     # Check both queued and scheduled clips
     rows = adapter.get_clips_by_status(["queued", "scheduled"])
 
@@ -167,6 +285,11 @@ def cmd_export(adapter: DatabaseAdapter) -> int:
         print(json.dumps({"status": "nothing_to_enrich", "clips": []}))
         return 0
 
+    # Read language from config (default: "en")
+    language = "en"
+    if config:
+        language = config.get("metadata", {}).get("language", "en")
+
     clips = []
     for r in to_enrich:
         clips.append({
@@ -179,7 +302,13 @@ def cmd_export(adapter: DatabaseAdapter) -> int:
             "tags": json.loads(r["tags"]) if isinstance(r.get("tags"), str) and r["tags"] else r.get("tags") or [],
         })
 
-    print(json.dumps({"status": "ok", "count": len(clips), "clips": clips, "already_enriched": len(already_enriched)}, indent=2))
+    print(json.dumps({
+        "status": "ok",
+        "count": len(clips),
+        "already_enriched": len(already_enriched),
+        "enrichment_guidelines": _enrichment_guidelines(language),
+        "clips": clips,
+    }, indent=2, ensure_ascii=False))
     return 0
 
 
@@ -291,7 +420,7 @@ def main() -> int:
     if not args or args[0] == "--status":
         return cmd_status(adapter)
     elif args[0] == "--export":
-        return cmd_export(adapter)
+        return cmd_export(adapter, config)
     elif args[0] == "--apply" and len(args) >= 2:
         return cmd_apply(adapter, config, args[1])
     else:
