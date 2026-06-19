@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Rebuild shorts_factory.db from on-disk clip metadata.
 
-Run this on your Mac when the DB gets corrupted:
-  cd /Users/mekari/Developer/personal-project/shorts-generator
+Run this when the DB gets corrupted:
+  cd /path/to/shorts-generator  # repo root
   python3 scripts/rebuild_db.py
 
 It will:

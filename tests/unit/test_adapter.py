@@ -146,6 +146,75 @@ class TestClipOperations:
         # Invalid transition: generated → published (current state is queued)
         assert adapter.update_clip_status("clip1", "published", ("generated",)) is False
 
+    def test_update_clip_platform_ids_writes_non_none(self, test_db):
+        """update_clip_platform_ids only writes non-None platform IDs."""
+        adapter = DatabaseAdapter(test_db)
+        adapter.insert_video(
+            video_id="vid1", file_path="/tmp/v.mp4",
+            duration_seconds=3600.0, width=1920, height=1080,
+            fps=30.0, has_audio=True, file_size_bytes=100,
+        )
+        adapter.insert_clip(
+            clip_id="clip1", video_id="vid1",
+            start_time=0.0, end_time=45.0, duration=45.0,
+        )
+
+        # Write only youtube_id — other platform IDs stay NULL
+        adapter.update_clip_platform_ids(
+            clip_id="clip1",
+            youtube_id="yt_abc123",
+            published_at="2026-06-19T08:00:00Z",
+        )
+        row = test_db.execute(
+            "SELECT youtube_id, tiktok_id, instagram_id, facebook_id FROM clips WHERE clip_id = ?",
+            ("clip1",),
+        ).fetchone()
+        assert row["youtube_id"] == "yt_abc123"
+        assert row["tiktok_id"] is None
+        assert row["instagram_id"] is None
+        assert row["facebook_id"] is None
+
+    def test_update_clip_platform_ids_does_not_overwrite_existing(self, test_db):
+        """update_clip_platform_ids never overwrites an existing platform ID with None."""
+        adapter = DatabaseAdapter(test_db)
+        adapter.insert_video(
+            video_id="vid1", file_path="/tmp/v.mp4",
+            duration_seconds=3600.0, width=1920, height=1080,
+            fps=30.0, has_audio=True, file_size_bytes=100,
+        )
+        adapter.insert_clip(
+            clip_id="clip1", video_id="vid1",
+            start_time=0.0, end_time=45.0, duration=45.0,
+        )
+
+        # First partial upload — only YouTube succeeded
+        adapter.update_clip_platform_ids(clip_id="clip1", youtube_id="yt_abc123")
+
+        # Second partial upload — only TikTok succeeded; youtube_id must be preserved
+        adapter.update_clip_platform_ids(clip_id="clip1", tiktok_id="tt_xyz789")
+
+        row = test_db.execute(
+            "SELECT youtube_id, tiktok_id FROM clips WHERE clip_id = ?",
+            ("clip1",),
+        ).fetchone()
+        assert row["youtube_id"] == "yt_abc123"   # preserved from first call
+        assert row["tiktok_id"] == "tt_xyz789"    # set by second call
+
+    def test_update_clip_platform_ids_noop_when_all_none(self, test_db):
+        """update_clip_platform_ids with all-None args is a safe no-op."""
+        adapter = DatabaseAdapter(test_db)
+        adapter.insert_video(
+            video_id="vid1", file_path="/tmp/v.mp4",
+            duration_seconds=3600.0, width=1920, height=1080,
+            fps=30.0, has_audio=True, file_size_bytes=100,
+        )
+        adapter.insert_clip(
+            clip_id="clip1", video_id="vid1",
+            start_time=0.0, end_time=45.0, duration=45.0,
+        )
+        # Should not raise
+        adapter.update_clip_platform_ids(clip_id="clip1")
+
 
 class TestPipelineRunOperations:
     """Tests for pipeline run CRUD operations."""

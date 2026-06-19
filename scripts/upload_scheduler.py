@@ -35,7 +35,6 @@ from core.logging import configure_logging                                     #
 from contracts.storage import StorageRecord                                    # noqa: E402
 from database.adapter import DatabaseAdapter                                   # noqa: E402
 from database.connection import initialize_database                            # noqa: E402
-from modules.publisher.publish import publish_single                           # noqa: E402
 from modules.publisher.youtube_client import YouTubeClient                     # noqa: E402
 from modules.publisher.multi_platform import publish_to_all_platforms          # noqa: E402
 from modules.publisher.visibility import check_visibility_transitions          # noqa: E402
@@ -343,9 +342,9 @@ def main() -> int:
             record,
             status="published",
             youtube_id=platform_results.youtube_id or record.youtube_id,
-            tiktok_id=platform_results.tiktok_id,
-            instagram_id=platform_results.instagram_id,
-            facebook_id=platform_results.facebook_id,
+            tiktok_id=platform_results.tiktok_id or record.tiktok_id,
+            instagram_id=platform_results.instagram_id or record.instagram_id,
+            facebook_id=platform_results.facebook_id or record.facebook_id,
             published_at=now_iso,
             error_message=platform_results.error_summary,  # partial failures logged
         )
@@ -387,7 +386,7 @@ def main() -> int:
         except Exception as exc:
             logger.warning("upload_scheduler: visibility transition failed", extra={"stage": "upload_scheduler", "error": str(exc)})
 
-    # ── On success: delete artefacts ──────────────────────────────────────
+    # ── On success: delete artefacts only when all enabled platforms succeeded ──
     if updated.status == "published":
         logger.info(
             "upload_scheduler: publish succeeded — YT:%s TT:%s IG:%s FB:%s",
@@ -397,7 +396,14 @@ def main() -> int:
             platform_results.facebook_id,
             extra={"stage": "upload_scheduler"},
         )
-        _delete_clip_artefacts(updated, config)
+        if not platform_results.errors:
+            _delete_clip_artefacts(updated, config)
+        else:
+            logger.warning(
+                "upload_scheduler: partial failure on %s — artefacts kept for retry",
+                ", ".join(platform_results.errors.keys()),
+                extra={"stage": "upload_scheduler", "clip_id": updated.clip_id},
+            )
         _notify_telegram(updated, config, platform_results, now_iso)
 
         # Check if queue is now empty → spawn generation

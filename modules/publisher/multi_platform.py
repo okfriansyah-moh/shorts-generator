@@ -13,7 +13,7 @@ for the caller to persist.
 from __future__ import annotations
 
 import logging
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
 from contracts.storage import StorageRecord
@@ -78,7 +78,7 @@ def publish_to_all_platforms(
     with ThreadPoolExecutor(max_workers=4, thread_name_prefix="publisher") as pool:
 
         # ── YouTube ───────────────────────────────────────────────────────
-        if _is_platform_enabled(config, "youtube"):
+        if _is_platform_enabled(config, "youtube") and not record.youtube_id:
             if youtube_client is None:
                 try:
                     youtube_client = YouTubeClient(config.get("publisher", {}))
@@ -107,7 +107,7 @@ def publish_to_all_platforms(
                 futures["youtube"] = pool.submit(_yt_upload)
 
         # ── TikTok ───────────────────────────────────────────────────────
-        if _is_platform_enabled(config, "tiktok"):
+        if _is_platform_enabled(config, "tiktok") and not record.tiktok_id:
             try:
                 tiktok = TikTokClient(config)
                 tiktok.authenticate()
@@ -127,7 +127,8 @@ def publish_to_all_platforms(
                 results.errors["tiktok"] = f"Auth failed: {exc}"
 
         # ── Meta (Instagram + Facebook) ───────────────────────────────────
-        if _is_platform_enabled(config, "instagram") or _is_platform_enabled(config, "facebook"):
+        if (_is_platform_enabled(config, "instagram") and not record.instagram_id) or \
+           (_is_platform_enabled(config, "facebook") and not record.facebook_id):
             # Build a merged meta config section with per-platform enable flags
             meta_cfg = dict(config.get("meta", {}))
             meta_cfg["instagram_enabled"] = _is_platform_enabled(config, "instagram")

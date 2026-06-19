@@ -12,9 +12,9 @@ Required credentials file (JSON):
     }
 
 Token lifetime:
-    Long-lived Page Access Tokens expire in ~60 days.  The Meta API
-    returns a new long-lived token on each refresh call; this client
-    auto-rotates it back to disk when a fresh token is returned.
+    Long-lived Page Access Tokens expire in ~60 days.  This client
+    validates the token at startup; rotate the token in the credentials
+    file when needed.
 
 Instagram video hosting:
     Instagram's API requires a publicly reachable video URL — it does not
