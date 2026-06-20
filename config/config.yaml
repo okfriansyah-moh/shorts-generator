@@ -170,9 +170,7 @@ thumbnail:
   contrast_boost: 1.10
 
 metadata:
-  # Language is set per-account in config/accounts/<name>/account.yaml
-  # (metadata.language).  This global fallback is used only when running
-  # scripts without an account context.
+  # Global fallback — overridden per-account in account.yaml.
   language: "en"
   title_min_chars: 40
   title_max_chars: 60
@@ -192,11 +190,12 @@ ai_metadata:
   temperature: 0.7
 
 scheduler:
+  # Global defaults — override per-account in account.yaml.
   max_daily_uploads: 3
   min_gap_hours: 4
-  preferred_hours: [9, 13, 18]
+  preferred_hours: [2, 7, 12]  # UTC → 09:00, 14:00, 19:00 WIB
   posts_per_day: 1
-  publish_time_utc: "06:00"
+  publish_time_utc: "06:00"    # 13:00 WIB
 
 # publisher / platforms / tiktok / meta sections have moved to per-account config.
 # See config/accounts/<account-name>/account.yaml for platform credentials and
@@ -209,15 +208,16 @@ publisher:
   max_retries: 3
   retry_delays: [60, 300, 900]
 
-# Telegram notifications — sent after each successful publish.
-# Set SF_TELEGRAM_BOT_TOKEN and SF_TELEGRAM_CHAT_ID in your environment, or
-# override the env var names below (or hardcode values — not recommended).
+# Telegram — bot_token is global (shared bot), chat_id is per-account in account.yaml.
+# Set SF_TELEGRAM_BOT_TOKEN in your environment or hardcode bot_token below.
 telegram:
   enabled: true
   bot_token_env: "SF_TELEGRAM_BOT_TOKEN"
   chat_id_env: "SF_TELEGRAM_CHAT_ID"
+  bot_token: "bot8677433931:AAFCogp3vbuwaG02CJ0tRIq7eIZU7uGj0fI"
 
 channel:
+  # Global fallback — override per-account in account.yaml.
   name: ""
   hashtags: []
   static_tags: []

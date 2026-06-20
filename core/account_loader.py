@@ -16,9 +16,17 @@ Account directory layout:
 Merged config guarantees:
   paths.output_dir → output/<account-name>/
   paths.raw_dir    → raw/<account-name>/
-  metadata.language overridden from account.yaml when specified
   publisher / tiktok / meta / platforms keys populated for backward compat
   _account_name, _account_dir injected for path resolution
+
+Per-account overrideable sections (deep-merged on top of global defaults):
+  metadata, scheduler, channel, telegram, tts, compositor, subtitle,
+  thumbnail, scoring, clip_builder, hook_generator, pipeline, ingestion,
+  video_type (top-level string).
+
+Any key in account.yaml that is not an account-meta key (name, description,
+enabled, min_score, platforms) is deep-merged into the global config, so
+accounts only need to specify what differs from global defaults.
 """
 
 from __future__ import annotations
@@ -28,6 +36,32 @@ import os
 from typing import Any
 
 import yaml
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+# Keys in account.yaml that are account-meta — NOT deep-merged into pipeline config.
+# They are either handled specifically below or are documentation-only.
+_ACCOUNT_META_KEYS = frozenset({
+    "name", "description", "enabled", "min_score", "platforms",
+})
+
+
+def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    """Recursively merge *override* into *base*. Override wins at every leaf.
+
+    Neither input dict is mutated — a new dict is always returned.
+    Non-dict values in override fully replace the corresponding base value.
+    """
+    result: dict[str, Any] = copy.deepcopy(base)
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(result.get(key), dict):
+            result[key] = _deep_merge(result[key], value)
+        else:
+            result[key] = copy.deepcopy(value)
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -168,11 +202,18 @@ def load_account_config(
     merged["paths"]["output_dir"] = os.path.join(base_output, account_name)
     merged["paths"]["raw_dir"]    = os.path.join(base_raw,    account_name)
 
-    # ── Metadata language override ─────────────────────────────────────────
-    acct_lang = (account_cfg.get("metadata") or {}).get("language")
-    if acct_lang:
-        merged.setdefault("metadata", {})
-        merged["metadata"]["language"] = acct_lang
+    # ── Generic deep-merge of per-account pipeline overrides ──────────────
+    # Any key in account.yaml that is not an account-meta key is deep-merged
+    # on top of the global config.  This covers: metadata, scheduler, channel,
+    # telegram, tts, compositor, subtitle, thumbnail, scoring, clip_builder,
+    # hook_generator, pipeline, ingestion, video_type, and any future keys.
+    for key, value in account_cfg.items():
+        if key in _ACCOUNT_META_KEYS:
+            continue
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _deep_merge(merged[key], value)
+        else:
+            merged[key] = copy.deepcopy(value)
 
     # ── Platform configs ───────────────────────────────────────────────────
     platforms_cfg: dict[str, Any] = account_cfg.get("platforms") or {}

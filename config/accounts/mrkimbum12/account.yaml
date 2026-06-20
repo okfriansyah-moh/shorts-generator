@@ -1,6 +1,6 @@
-# Shorts Factory — Publishing Account Config
-# One account.yaml per channel. Add more folders under config/accounts/ for
-# additional channels — zero code changes required.
+# Shorts Factory — Account Config: mrkimbum12
+# Only specify keys that differ from global defaults in config/config.yaml.
+# Everything here is deep-merged on top of the global config at runtime.
 #
 # paths.output_dir → output/mrkimbum12/
 # paths.raw_dir    → raw/mrkimbum12/
@@ -11,13 +11,79 @@ description: "Main Ninja Gaiden gameplay shorts channel"
 enabled: true
 min_score: 0.0    # 0.0 = publish all clips; raise to e.g. 0.7 for quality gate
 
-# Language for AI-generated titles, descriptions, tags, and thumbnail text.
-# Overrides global metadata.language in config.yaml.
-# "id" → Bahasa Indonesia casual/conversational
-# "en" → English
-metadata:
-  language: "id"
+video_type: "gameplay"
 
+# ── Metadata ───────────────────────────────────────────────────────────────
+metadata:
+  language: "id"         # Bahasa Indonesia casual/conversational
+  title_min_chars: 40
+  title_max_chars: 60
+  description_min_chars: 150
+  description_max_chars: 300
+  tag_count_min: 10
+  tag_count_max: 15
+
+# ── Upload schedule ────────────────────────────────────────────────────────
+scheduler:
+  posts_per_day: 1
+  publish_time_utc: "06:00"    # 13:00 WIB
+  preferred_hours: [2, 7, 12]  # UTC → 09:00, 14:00, 19:00 WIB
+
+# ── Channel branding ───────────────────────────────────────────────────────
+channel:
+  name: "mrkimbum12"
+  hashtags:
+    - "#ninjagaiden"
+    - "#gaming"
+    - "#shorts"
+    - "#ninjagaidensigma"
+  static_tags:
+    - "ninja gaiden"
+    - "ryu hayabusa"
+    - "tecmo"
+    - "team ninja"
+    - "ninja gaiden sigma"
+
+# ── Telegram notifications ─────────────────────────────────────────────────
+# bot_token inherited from global config.yaml (shared bot across accounts)
+telegram:
+  chat_id: "-5208074363"   # "Shorts Video" group
+
+# ── Compositor ─────────────────────────────────────────────────────────────
+compositor:
+  default_layout: "gameplay_only"
+  face_region: "middle_left"
+
+# ── Thumbnail style ────────────────────────────────────────────────────────
+thumbnail:
+  saturation_boost: 1.15
+  contrast_boost: 1.10
+  max_text_words: 3
+  font_size: 72
+
+# ── TTS voice ──────────────────────────────────────────────────────────────
+tts:
+  voice: "en-US-AriaNeural"
+
+# ── Scoring weights (gameplay-optimised) ──────────────────────────────────
+scoring:
+  weights:
+    keyword: 3
+    audio_energy: 2
+    face_presence: 2
+    scene_activity: 1
+    sentence_density: 1
+    image_quality: 2
+  min_composite_score: 0.2
+
+# ── Clip builder ───────────────────────────────────────────────────────────
+clip_builder:
+  max_clips_per_video: 15
+  min_clips_per_video: 1
+  target_duration_min: 45
+  target_duration_max: 60
+
+# ── Platforms ──────────────────────────────────────────────────────────────
 platforms:
 
   youtube:
@@ -29,19 +95,17 @@ platforms:
   tiktok:
     enabled: false
     credentials: "tiktok_credentials.json"
-    privacy_level: "PUBLIC_TO_EVERYONE"       # PUBLIC_TO_EVERYONE | MUTUAL_FOLLOW_FRIENDS | SELF_ONLY
+    privacy_level: "PUBLIC_TO_EVERYONE"
     disable_duet: false
     disable_stitch: false
     disable_comment: false
 
   instagram:
     enabled: false
-    credentials: "meta_credentials.json"      # same file as facebook
-    # Instagram requires a publicly reachable video URL.
-    # Forward serve_port on your router to this machine (one-time setup).
+    credentials: "meta_credentials.json"
     serve_port: 8080
-    public_ip: ""                             # blank = auto-detect via api.ipify.org
+    public_ip: ""
 
   facebook:
     enabled: false
-    credentials: "meta_credentials.json"      # same file as instagram
+    credentials: "meta_credentials.json"
