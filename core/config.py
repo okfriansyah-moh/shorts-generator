@@ -32,8 +32,11 @@ REQUIRED_SECTIONS = (
     "thumbnail",
     "metadata",
     "scheduler",
-    "publisher",
     "channel",
+    # NOTE: "publisher" is intentionally absent — platform credentials and
+    # enable/disable toggles live in config/accounts/<name>/account.yaml.
+    # The account loader populates "publisher", "tiktok", "meta", "platforms"
+    # keys at runtime via core.account_loader.load_account_config().
 )
 
 # Required keys within each section

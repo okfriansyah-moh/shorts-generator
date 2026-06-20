@@ -218,15 +218,37 @@ class DatabaseAdapter:
         ).fetchall()
         return [dict(r) for r in rows]
 
-    def get_clips_by_status(self, statuses: list[str]) -> list[dict[str, Any]]:
-        """Retrieve all clips matching any of the given statuses."""
+    def get_clips_by_status(
+        self,
+        statuses: list[str],
+        account_name: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Retrieve all clips matching any of the given statuses.
+
+        Args:
+            statuses:     List of status values to match (e.g. ["scheduled"]).
+            account_name: Optional account filter.  When provided, only clips
+                          belonging to that account are returned.  When None,
+                          clips from all accounts are returned (backward compat).
+        """
         if not statuses:
             return []
         placeholders = ",".join("?" * len(statuses))
-        rows = self._conn.execute(
-            f"SELECT * FROM clips WHERE status IN ({placeholders}) ORDER BY scheduled_at ASC, clip_id ASC",
-            tuple(statuses),
-        ).fetchall()
+        params: tuple = tuple(statuses)
+        if account_name:
+            sql = (
+                f"SELECT * FROM clips "
+                f"WHERE status IN ({placeholders}) AND account_name = ? "
+                f"ORDER BY scheduled_at ASC, clip_id ASC"
+            )
+            params = tuple(statuses) + (account_name,)
+        else:
+            sql = (
+                f"SELECT * FROM clips "
+                f"WHERE status IN ({placeholders}) "
+                f"ORDER BY scheduled_at ASC, clip_id ASC"
+            )
+        rows = self._conn.execute(sql, params).fetchall()
         return [dict(r) for r in rows]
 
     def update_clip_publish_info(

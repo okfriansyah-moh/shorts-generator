@@ -33,10 +33,11 @@ _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
-from core.config import load_config          # noqa: E402
-from core.logging import configure_logging   # noqa: E402
-from database.adapter import DatabaseAdapter # noqa: E402
-from database.connection import initialize_database  # noqa: E402
+from core.config import load_config                              # noqa: E402
+from core.account_loader import load_account_config, resolve_account  # noqa: E402
+from core.logging import configure_logging                       # noqa: E402
+from database.adapter import DatabaseAdapter                     # noqa: E402
+from database.connection import initialize_database              # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -446,13 +447,45 @@ def cmd_status(adapter: DatabaseAdapter) -> int:
 
 
 def main() -> int:
+    import argparse
+    parser = argparse.ArgumentParser(description="Shorts Factory — AI Enricher", add_help=False)
+    parser.add_argument("--account", default=None,
+                        help="Account name (folder under config/accounts/). Auto-discovered when only one exists.")
+    parser.add_argument("command", nargs="?", default="--status",
+                        choices=["--status", "--export", "--apply"])
+    parser.add_argument("apply_path", nargs="?", default=None,
+                        help="Path to enriched_batch.json (required for --apply)")
+    # Parse known args so legacy positional usage still works
+    known, remaining = parser.parse_known_args()
+
+    # Reconstruct original args for backward compat with positional usage
+    raw_args = [a for a in sys.argv[1:] if a not in ("--account", known.account or "")]
+    # Strip --account <value> pair
+    clean_args: list[str] = []
+    skip_next = False
+    for tok in sys.argv[1:]:
+        if skip_next:
+            skip_next = False
+            continue
+        if tok == "--account":
+            skip_next = True
+            continue
+        clean_args.append(tok)
+
     os.chdir(_PROJECT_ROOT)
-    args = sys.argv[1:]
 
     try:
         config = load_config()
     except Exception as exc:
         print(f"[ai_enricher] FATAL: config load failed: {exc}", file=sys.stderr)
+        return 1
+
+    # ── Resolve + load account config ─────────────────────────────────────
+    try:
+        account_name = resolve_account(known.account)
+        config = load_account_config(account_name, config, project_root=_PROJECT_ROOT)
+    except (FileNotFoundError, ValueError) as exc:
+        print(f"[ai_enricher] FATAL: account config error: {exc}", file=sys.stderr)
         return 1
 
     configure_logging(
@@ -467,12 +500,12 @@ def main() -> int:
         logger.error(f"DB error: {exc}")
         return 1
 
-    if not args or args[0] == "--status":
+    if not clean_args or clean_args[0] == "--status":
         return cmd_status(adapter)
-    elif args[0] == "--export":
+    elif clean_args[0] == "--export":
         return cmd_export(adapter, config)
-    elif args[0] == "--apply" and len(args) >= 2:
-        return cmd_apply(adapter, config, args[1])
+    elif clean_args[0] == "--apply" and len(clean_args) >= 2:
+        return cmd_apply(adapter, config, clean_args[1])
     else:
         print(__doc__)
         return 1

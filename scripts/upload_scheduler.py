@@ -31,6 +31,7 @@ if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
 from core.config import load_config                                            # noqa: E402
+from core.account_loader import load_account_config, resolve_account          # noqa: E402
 from core.logging import configure_logging                                     # noqa: E402
 from contracts.storage import StorageRecord                                    # noqa: E402
 from database.adapter import DatabaseAdapter                                   # noqa: E402
@@ -51,6 +52,18 @@ def _db_path(config: dict) -> str:
     return path if os.path.isabs(path) else os.path.join(_PROJECT_ROOT, path)
 
 
+def _resolve_path(path: str) -> str:
+    """Resolve a DB-stored path to absolute, using output/ as base for relative paths."""
+    if not path or os.path.isabs(path):
+        return path
+    # Relative paths are stored relative to the output/ directory
+    resolved = os.path.join(_PROJECT_ROOT, "output", path)
+    if os.path.exists(resolved):
+        return resolved
+    # Fallback: relative to project root
+    return os.path.join(_PROJECT_ROOT, path)
+
+
 def _row_to_storage_record(row: dict) -> StorageRecord:
     tags_raw = row.get("tags", "")
     if isinstance(tags_raw, str) and tags_raw:
@@ -69,8 +82,8 @@ def _row_to_storage_record(row: dict) -> StorageRecord:
         status=row.get("status", "scheduled"),
         composite_score=float(row.get("composite_score", 0.0) or 0.0),
         file_paths={
-            "video":      row.get("video_path", "") or "",
-            "thumbnail":  row.get("thumbnail_path", "") or "",
+            "video":      _resolve_path(row.get("video_path", "") or ""),
+            "thumbnail":  _resolve_path(row.get("thumbnail_path", "") or ""),
             "metadata":   "",
             "subtitles":  "",
             "narration":  "",
@@ -123,10 +136,10 @@ def _check_duplicate_upload(record: StorageRecord, adapter: DatabaseAdapter) -> 
     return False
 
 
-def _next_due_record(adapter: DatabaseAdapter) -> StorageRecord | None:
+def _next_due_record(adapter: DatabaseAdapter, account_name: str) -> StorageRecord | None:
     """Return the oldest scheduled clip whose scheduled_at <= now, or None."""
     now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    rows = adapter.get_clips_by_status(["scheduled"])
+    rows = adapter.get_clips_by_status(["scheduled"], account_name=account_name)
     due = [
         r for r in rows
         if r.get("scheduled_at") and r["scheduled_at"] <= now_iso
@@ -137,8 +150,8 @@ def _next_due_record(adapter: DatabaseAdapter) -> StorageRecord | None:
     return _row_to_storage_record(due[0])
 
 
-def _remaining_scheduled_count(adapter: DatabaseAdapter) -> int:
-    return len(adapter.get_clips_by_status(["scheduled"]))
+def _remaining_scheduled_count(adapter: DatabaseAdapter, account_name: str) -> int:
+    return len(adapter.get_clips_by_status(["scheduled"], account_name=account_name))
 
 
 def _delete_clip_artefacts(record: StorageRecord, config: dict) -> None:
@@ -180,14 +193,14 @@ def _delete_clip_artefacts(record: StorageRecord, config: dict) -> None:
     )
 
 
-def _spawn_generation() -> None:
+def _spawn_generation(account_name: str) -> None:
     """Fire-and-forget: launch generation_scheduler.py in the background."""
     script = os.path.join(_PROJECT_ROOT, "scripts", "generation_scheduler.py")
     log_path = os.path.join(_PROJECT_ROOT, "output", "generation_scheduler.log")
     os.makedirs(os.path.dirname(log_path), exist_ok=True)
     with open(log_path, "a") as logf:
         subprocess.Popen(
-            [sys.executable, script],
+            [sys.executable, script, "--account", account_name],
             cwd=_PROJECT_ROOT,
             stdout=logf,
             stderr=logf,
@@ -250,6 +263,15 @@ def _notify_telegram(record, config: dict, platform_results, published_at: str) 
 # ---------------------------------------------------------------------------
 
 def main() -> int:
+    import argparse
+    parser = argparse.ArgumentParser(description="Shorts Factory — Upload Scheduler")
+    parser.add_argument(
+        "--account", default=None,
+        help="Account name (folder under config/accounts/). "
+             "Auto-discovered when only one account exists.",
+    )
+    args = parser.parse_args()
+
     os.chdir(_PROJECT_ROOT)
 
     try:
@@ -258,11 +280,23 @@ def main() -> int:
         print(f"[upload_scheduler] FATAL: config load failed: {exc}", file=sys.stderr)
         return 2
 
+    # ── Resolve + load account config ─────────────────────────────────────
+    try:
+        account_name = resolve_account(args.account)
+        config = load_account_config(account_name, config, project_root=_PROJECT_ROOT)
+    except (FileNotFoundError, ValueError) as exc:
+        print(f"[upload_scheduler] FATAL: account config error: {exc}", file=sys.stderr)
+        return 2
+
     configure_logging(
         level=config.get("logging", {}).get("level", "INFO"),
         log_file=config.get("logging", {}).get("log_file"),
     )
-    logger.info("upload_scheduler: starting", extra={"stage": "upload_scheduler", "video_id": ""})
+    logger.info(
+        "upload_scheduler: starting (account=%s)",
+        account_name,
+        extra={"stage": "upload_scheduler", "video_id": ""},
+    )
 
     # ── DB ────────────────────────────────────────────────────────────────
     try:
@@ -273,16 +307,16 @@ def main() -> int:
         return 1
 
     # ── Find next due clip ─────────────────────────────────────────────────
-    record = _next_due_record(adapter)
+    record = _next_due_record(adapter, account_name)
 
     if record is None:
-        remaining = _remaining_scheduled_count(adapter)
+        remaining = _remaining_scheduled_count(adapter, account_name)
         if remaining == 0:
             logger.info(
                 "upload_scheduler: queue exhausted — spawning generation",
                 extra={"stage": "upload_scheduler"},
             )
-            _spawn_generation()
+            _spawn_generation(account_name)
         else:
             logger.info(
                 "upload_scheduler: %d clip(s) scheduled but none due yet",
@@ -407,7 +441,7 @@ def main() -> int:
         _notify_telegram(updated, config, platform_results, now_iso)
 
         # Check if queue is now empty → spawn generation
-        remaining = _remaining_scheduled_count(adapter)
+        remaining = _remaining_scheduled_count(adapter, account_name)
         logger.info(
             "upload_scheduler: %d clip(s) still in queue",
             remaining,
@@ -418,7 +452,7 @@ def main() -> int:
                 "upload_scheduler: queue exhausted after last upload — spawning generation",
                 extra={"stage": "upload_scheduler"},
             )
-            _spawn_generation()
+            _spawn_generation(account_name)
     else:
         logger.error(
             "upload_scheduler: upload failed for clip %s — %s",
