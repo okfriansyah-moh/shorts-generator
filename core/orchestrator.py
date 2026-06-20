@@ -843,6 +843,7 @@ class Orchestrator:
                 clip_list = self.run_clip_builder(scored_scenes)
 
             # Insert clip records into the database
+            account_name = self._config.get("_account_name", "")
             for clip in clip_list.clips:
                 self._adapter.insert_clip(
                     clip_id=clip.clip_id,
@@ -851,6 +852,7 @@ class Orchestrator:
                     end_time=clip.end_time,
                     duration=clip.duration,
                     composite_score=clip.average_score,
+                    account_name=account_name,
                 )
 
             # Transition to building phase
@@ -891,6 +893,7 @@ class Orchestrator:
                             composite_score=record.composite_score,
                             video_path=record.file_paths.get("video"),
                             thumbnail_path=record.file_paths.get("thumbnail"),
+                            account_name=account_name,
                         )
                         self._adapter.update_clip_status(
                             clip_id=record.clip_id,

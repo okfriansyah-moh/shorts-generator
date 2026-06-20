@@ -1,8 +1,307 @@
 # Shorts Factory — Progress Report
 
-**Last Updated:** 2026-04-01
-**Active Phase:** All Phases — Full Pipeline + NVIDIA GPU Mode + Podcast Video Type Support + Speaker Detection
-**Phase Status:** ✅ COMPLETE — All 16 stages wired in orchestrator, gameplay + podcast video types supported
+**Last Updated:** 2026-06-20
+**Active Phase:** Operations & Multi-Account Infrastructure
+**Phase Status:** ✅ COMPLETE — Pipeline operational, multi-account architecture implemented, per-account config system live
+
+---
+
+## Multi-Account Config System & Operations Hardening (2026-06-20)
+
+**Status:** ✅ COMPLETE — Per-account config deep-merge, upload path fix, scheduling fixes, Telegram WIB timestamps
+
+### Summary
+
+Six independent fixes applied during live operations of the `mrkimbum12` account. The most impactful change is the per-account config deep-merge system which enables zero-code-change multi-account operation — each account only specifies what differs from global defaults.
+
+---
+
+### 1. Upload Scheduler — Relative Path Fix
+
+**Problem:** Clips failing at upload with `Video file not found: 3e2e7da700671dba_.../clips/shorts-5/final.mp4`. The `video_path` and `thumbnail_path` stored in the DB are relative (relative to `output/`), but `youtube_client.py` calls `os.path.isfile()` which requires absolute paths.
+
+**Fix:** Added `_resolve_path()` helper to `scripts/upload_scheduler.py` that resolves relative DB paths to absolute at upload time.
+
+| File | Change |
+|------|--------|
+| `scripts/upload_scheduler.py` | Added `_resolve_path()` — prepends `output/` for relative paths, falls back to project root. Applied to `video_path` and `thumbnail_path` in `_row_to_storage_record()` |
+
+```python
+def _resolve_path(path: str) -> str:
+    if not path or os.path.isabs(path):
+        return path
+    resolved = os.path.join(_PROJECT_ROOT, "output", path)
+    if os.path.exists(resolved):
+        return resolved
+    return os.path.join(_PROJECT_ROOT, path)
+```
+
+---
+
+### 2. Generation Scheduler — Sort Order Fix
+
+**Problem:** `_next_raw_video()` sorted candidates by `os.path.getmtime` (modification time). This is non-deterministic — file modification times change on copy, download, or filesystem operations.
+
+**Fix:** Sort by filename alphabetically ascending (`os.path.basename().lower()`), matching the user's intent of "process in name order".
+
+| File | Change |
+|------|--------|
+| `scripts/generation_scheduler.py` | `_next_raw_video()`: `min(..., key=os.path.getmtime)` → `min(..., key=lambda p: os.path.basename(p).lower())` |
+
+---
+
+### 3. Ingestion Minimum Duration — 600s → 300s
+
+**Problem:** Pipeline rejected valid ~8 minute source videos with `Video duration 484.2s is outside the allowed range [600s, 7200s]`.
+
+**Fix:** Lowered minimum duration to 5 minutes (300s) to accommodate shorter gameplay sessions.
+
+| File | Change |
+|------|--------|
+| `config/config.yaml` | `ingestion.min_duration_seconds`: `600` → `300` |
+
+---
+
+### 4. Account Rename — ninja-gaiden-main → mrkimbum12
+
+Full rename across all artifacts to match the real YouTube channel handle.
+
+| Artifact | Change |
+|----------|--------|
+| `config/accounts/ninja-gaiden-main/` | Renamed to `config/accounts/mrkimbum12/` |
+| `config/accounts/mrkimbum12/account.yaml` | `name:` field updated to `"mrkimbum12"` |
+| `raw/ninja-gaiden-main/` | Renamed to `raw/mrkimbum12/` |
+| `output/ninja-gaiden-main/` | Renamed to `output/mrkimbum12/` |
+| `output/shorts_factory.db` | `UPDATE clips SET account_name='mrkimbum12'` — 17 rows |
+
+---
+
+### 5. Per-Account Config Deep-Merge System
+
+**Problem:** All pipeline config (scheduler, channel branding, Telegram chat, compositor layout, scoring weights, etc.) lived only in `config.yaml` with no per-account override mechanism. Scaling to multiple accounts was impossible without code changes.
+
+**Fix:** Added `_deep_merge()` utility and a generic merge loop to `core/account_loader.py`. Any key in `account.yaml` that is not an account-meta key (`name`, `description`, `enabled`, `min_score`, `platforms`) is now deep-merged on top of the global config at runtime. No pipeline module changes required.
+
+| File | Change |
+|------|--------|
+| `core/account_loader.py` | Added `_deep_merge(base, override)` utility function. Added `_ACCOUNT_META_KEYS` frozenset. Added generic deep-merge loop after platform-specific handling. Updated module docstring. |
+| `config/accounts/mrkimbum12/account.yaml` | Expanded with full per-account sections: `video_type`, `metadata` (full), `scheduler`, `channel`, `telegram.chat_id`, `compositor`, `thumbnail`, `tts`, `scoring`, `clip_builder` |
+| `config/config.yaml` | Updated comments to reflect global-default-only role. `channel` and `telegram.chat_id` are now per-account. `scheduler` kept as global fallback. |
+
+**Per-account overrideable sections** (deep-merged, override wins at every leaf):
+
+| Section | Per-account use case |
+|---------|---------------------|
+| `video_type` | gameplay vs podcast per channel |
+| `metadata` | language, title/description length constraints |
+| `scheduler` | posts_per_day, publish_time_utc per channel |
+| `channel` | name, hashtags, static_tags |
+| `telegram` | chat_id per channel (shared bot token in global) |
+| `compositor` | layout, face_region |
+| `thumbnail` | saturation/contrast/font per channel brand |
+| `tts` | voice per channel |
+| `scoring` | weights tuned per content type |
+| `clip_builder` | clip count/duration per channel strategy |
+
+**New account setup** (zero code changes required):
+```
+config/accounts/<new-account>/
+    account.yaml       # only override what differs from global defaults
+    youtube_credentials.json
+```
+
+---
+
+### 6. Telegram Notifier — WIB Timezone
+
+**Problem:** Timestamps in Telegram upload notifications displayed as raw UTC ISO strings (e.g. `2026-06-20T06:00:00Z`), confusing for a WIB-based operator.
+
+**Fix:** Added `_to_wib()` helper and `_WIB = timezone(timedelta(hours=7))` constant. Both `scheduled_at` and `published_at` fields in `build_publish_message()` now display as `YYYY-MM-DD HH:MM WIB`.
+
+| File | Change |
+|------|--------|
+| `modules/notifier/telegram.py` | Added `_WIB` timezone constant. Added `_to_wib(iso_utc)` helper. Applied to both timestamp lines in `build_publish_message()`. |
+
+---
+
+### 7. Scheduling Alignment
+
+**Problem:** `publish_time_utc` in `config.yaml` was `"10:00"` but all generated clips landed at `09:00Z` (matching `preferred_hours[0] = 9`). Inconsistency between config and actual DB state.
+
+**Additional:** All clips were rescheduled to start from `2026-06-20T06:00:00Z` (13:00 WIB) — one per day through June 30.
+
+| File | Change |
+|------|--------|
+| `config/config.yaml` | `scheduler.publish_time_utc`: `"10:00"` → `"06:00"` (= 13:00 WIB) |
+| `config/accounts/mrkimbum12/account.yaml` | `scheduler.publish_time_utc: "06:00"`, `preferred_hours: [2, 7, 12]` |
+| `output/shorts_factory.db` | 11 scheduled clips rescheduled to `2026-06-20..2026-06-30` at `06:00Z` |
+
+---
+
+### 8. Secrets & Repository Hygiene
+
+| File | Change |
+|------|--------|
+| `.gitignore` | Added `config/accounts/**/*_credentials.json`, `config/**/*_credentials.json`, `config/config.yaml`, `.env` |
+| `.env.example` | Created — documents all env vars: `SF_TELEGRAM_BOT_TOKEN`, `SF_TELEGRAM_CHAT_ID`, `ANTHROPIC_API_KEY`, `SF_*` config overrides |
+| `config/config.yaml` | `telegram.bot_token` added as hardcoded fallback (config.yaml is now gitignored) |
+
+---
+
+### Crontab — Final Configuration (10-account-ready)
+
+```
+# Upload — 3 waves/day per account (WIB local time on macOS)
+# Wave 1: 09:00 WIB  |  Wave 2: 14:00 WIB  |  Wave 3: 19:00 WIB
+# Stagger accounts 5 min apart within each wave
+
+# Generation — once nightly per account, stagger 10 min apart
+# 02:00 WIB onwards
+```
+
+Single-account active crontab:
+```
+0 9,13,18 * * * cd /Users/mekari/Developer/personal-project/shorts-generator && /opt/homebrew/bin/python3 scripts/upload_scheduler.py >> output/upload_cron.log 2>&1
+```
+
+---
+
+### Current Queue State (as of 2026-06-20)
+
+| # | Clip | Scheduled (WIB) | Status |
+|---|------|-----------------|--------|
+| 1 | Dragon Sword Habisi Mini-Boss | Jun 20, 13:00 | scheduled |
+| 2 | Lagi Wall Run, Tiba-tiba Headless | Jun 21, 13:00 | scheduled |
+| 3 | Dikepung 4 Musuh yang Grab | Jun 22, 13:00 | scheduled |
+| 4 | Ryu Tangkap Shuriken | Jun 23, 13:00 | scheduled |
+| 5 | Tiap Hit di Combo Ini Damage Maksimal | Jun 24, 13:00 | scheduled |
+| 6 | Serangan Mendadak Spider Clan | Jun 25, 13:00 | scheduled |
+| 7 | Dark Dragon Blade Habisin Seluruh Ruangan | Jun 26, 13:00 | scheduled |
+| 8 | Stage Air Ninja Gaiden Sigma | Jun 27, 13:00 | scheduled |
+| 9 | Boss Alma Fase 2 | Jun 28, 13:00 | scheduled |
+| 10 | Windmill Shuriken Habisin 3 Musuh | Jun 29, 13:00 | scheduled |
+| 11 | Room Paling Susah di Chapter 14 | Jun 30, 13:00 | scheduled |
+
+Queue runs out **June 30** — new source video needed before then.
+
+---
+
+## Multi-Platform Publisher (YouTube + TikTok + Instagram + Facebook)
+
+**Status:** ✅ COMPLETE — Concurrent fan-out publisher with per-platform isolation
+
+Extends the Phase 9 YouTube-only publisher into a full multi-platform fan-out system. A single clip upload fans out to all enabled platforms concurrently. One platform failing never blocks another. The clip is considered published if at least one platform succeeds.
+
+### Architecture
+
+```
+upload_scheduler.py
+    └─ publish_to_all_platforms(record, config)
+            ├─ YouTubeClient   (thread 1) → UploadResult
+            ├─ TikTokClient    (thread 2) → TikTokUploadResult
+            └─ MetaClient      (thread 3) → MetaUploadResult
+                    ├─ Instagram Reels
+                    └─ Facebook Reels
+```
+
+Concurrency: `ThreadPoolExecutor(max_workers=4)` — all enabled platforms upload in parallel. Per-platform timeout: 700 seconds.
+
+### Files
+
+| File | Purpose |
+|------|---------|
+| `modules/publisher/multi_platform.py` | Fan-out orchestrator — `publish_to_all_platforms()`, `PlatformResults` dataclass |
+| `modules/publisher/youtube_client.py` | YouTube Data API v3 — OAuth2, video upload, thumbnail upload, privacy control |
+| `modules/publisher/tiktok_client.py` | TikTok Content Posting API — OAuth2 token refresh, file-based upload, publish status polling |
+| `modules/publisher/meta_client.py` | Meta Graph API — Instagram Reels + Facebook Reels, temp HTTP server for video URL serving |
+| `modules/publisher/visibility.py` | Delayed unlisted → public transition after configurable delay |
+
+### Per-Platform Details
+
+**YouTube**
+- OAuth2 credentials from `config/accounts/<name>/youtube_credentials.json`
+- Uploads as `unlisted`, transitions to `public` after `public_delay_minutes` (default 30)
+- Thumbnail uploaded separately via `thumbnails.set` API after video confirmation
+- Pre-authenticated client passed from `upload_scheduler` to avoid double-auth
+
+**TikTok**
+- OAuth2 refresh token flow — access token refreshed on each run, written back to credentials file
+- File-based upload (not URL-based): video streamed directly via multipart POST
+- Publish status polled after upload (TikTok processes async): up to 12 attempts × 5s
+- Credentials: `client_key`, `client_secret`, `refresh_token` in `tiktok_credentials.json`
+
+**Instagram Reels + Facebook Reels (Meta)**
+- Shared credentials file `meta_credentials.json` (`access_token`, `instagram_user_id`, `facebook_page_id`)
+- Instagram requires a **publicly reachable video URL** — Meta's API fetches the video from a URL, it cannot receive a direct file upload
+- Solution: `_TempFileServer` spins up a local HTTP server on `serve_port` (default 8080), serves the video file at `http://<public_ip>:<port>/<filename>`, tears down after upload
+- Public IP auto-detected via `api.ipify.org` if `meta.public_ip` is not set in config
+- Requires port-forwarding `serve_port` on your router (one-time setup)
+- Instagram and Facebook share one MetaClient instance per upload run
+
+### PlatformResults
+
+```python
+@dataclass
+class PlatformResults:
+    youtube_id:   str | None  # e.g. "oqi0jrFq90M"
+    tiktok_id:    str | None
+    instagram_id: str | None
+    facebook_id:  str | None
+    errors:       dict[str, str]  # platform → error message
+
+    @property
+    def any_success(self) -> bool: ...   # True if at least one platform succeeded
+    @property
+    def error_summary(self) -> str | None: ...  # joined error string for logging
+```
+
+### Enabling Platforms
+
+Platforms are enabled per-account in `account.yaml`. Disabled platforms are skipped entirely — no auth attempt, no thread spawned.
+
+```yaml
+platforms:
+  youtube:
+    enabled: true
+    credentials: "youtube_credentials.json"
+    initial_visibility: "unlisted"
+    public_delay_minutes: 30
+
+  tiktok:
+    enabled: false                          # flip to true + add credentials to activate
+    credentials: "tiktok_credentials.json"
+    privacy_level: "PUBLIC_TO_EVERYONE"
+
+  instagram:
+    enabled: false                          # requires public IP + port forward
+    credentials: "meta_credentials.json"
+    serve_port: 8080
+    public_ip: ""                           # blank = auto-detect via api.ipify.org
+
+  facebook:
+    enabled: false
+    credentials: "meta_credentials.json"
+```
+
+### Failure Isolation
+
+| Scenario | Behaviour |
+|----------|-----------|
+| One platform auth fails | That platform skipped, others proceed |
+| One platform upload fails | Error stored in `PlatformResults.errors`, others unaffected |
+| ALL platforms fail | Clip status set to `failed`, error logged |
+| At least one succeeds | Clip status set to `published`, all IDs persisted to DB |
+| Telegram notification | Sent on any success — shows all platform IDs |
+
+### Credentials Setup per Platform
+
+| Platform | File | Required fields |
+|----------|------|-----------------|
+| YouTube | `youtube_credentials.json` | `client_id`, `client_secret`, `refresh_token`, `token_uri` |
+| TikTok | `tiktok_credentials.json` | `client_key`, `client_secret`, `refresh_token` |
+| Instagram + Facebook | `meta_credentials.json` | `access_token`, `instagram_user_id`, `facebook_page_id` |
+
+All credential files live under `config/accounts/<account-name>/` and are gitignored by the account-level `.gitignore`.
 
 ---
 

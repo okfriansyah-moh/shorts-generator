@@ -209,8 +209,19 @@ __marimo__/
 output/
 models/
 models/
-config/youtube_credentials.json
+# Account credentials — all platforms, all accounts (current and future)
+config/accounts/**/*_credentials.json
+config/**/*_credentials.json
+
+# Global config contains secrets (Telegram token)
+config/config.yaml
+
+# Local env file (never commit — use .env.example as template)
+.env
 raw/
 .DS_Store
 *.bak
+.DS_Store
+.DS_Store
+.DS_Store
 .DS_Store

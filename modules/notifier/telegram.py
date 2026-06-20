@@ -29,7 +29,9 @@ import os
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+
+_WIB = timezone(timedelta(hours=7))
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -208,11 +210,11 @@ def build_publish_message(
         lines.extend(platform_lines)
         lines.append("")
 
-    # Timestamps
+    # Timestamps (displayed in WIB = UTC+7)
     if scheduled_at:
-        lines.append(f"🕐 Scheduled: {_esc(scheduled_at)}")
+        lines.append(f"🕐 Scheduled: {_esc(_to_wib(scheduled_at))}")
     ts = published_at or datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    lines.append(f"✅ Published: {_esc(ts)}")
+    lines.append(f"✅ Published: {_esc(_to_wib(ts))}")
 
     # Partial failure note
     if error_summary:
@@ -220,6 +222,16 @@ def build_publish_message(
         lines.append(f"⚠️ Partial failures: {_esc(error_summary)}")
 
     return "\n".join(lines)
+
+
+def _to_wib(iso_utc: str) -> str:
+    """Convert an ISO 8601 UTC string to a WIB (UTC+7) human-readable string."""
+    try:
+        dt = datetime.fromisoformat(iso_utc.replace("Z", "+00:00"))
+        wib = dt.astimezone(_WIB)
+        return wib.strftime("%Y-%m-%d %H:%M WIB")
+    except Exception:
+        return iso_utc
 
 
 def _esc(text: str) -> str:

@@ -35,15 +35,14 @@ _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
-from core.config import load_config          # noqa: E402
-from core.logging import configure_logging   # noqa: E402
-from database.adapter import DatabaseAdapter  # noqa: E402
-from database.connection import initialize_database  # noqa: E402
+from core.config import load_config                              # noqa: E402
+from core.account_loader import load_account_config, resolve_account  # noqa: E402
+from core.logging import configure_logging                       # noqa: E402
+from database.adapter import DatabaseAdapter                     # noqa: E402
+from database.connection import initialize_database              # noqa: E402
 
 logger = logging.getLogger(__name__)
 
-RAW_FOLDER = os.path.join(_PROJECT_ROOT, "raw")
-PROCESSED_LEDGER = os.path.join(RAW_FOLDER, ".processed")
 VIDEO_EXTENSIONS = (".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v")
 
 # Bytes read for content fingerprinting — must match modules/ingestion/ingest.py
@@ -54,35 +53,37 @@ _FINGERPRINT_BYTES = 10 * 1024 * 1024  # 10 MB
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _load_processed() -> set[str]:
-    if not os.path.exists(PROCESSED_LEDGER):
+def _load_processed(raw_dir: str) -> set[str]:
+    ledger = os.path.join(raw_dir, ".processed")
+    if not os.path.exists(ledger):
         return set()
-    with open(PROCESSED_LEDGER) as fh:
+    with open(ledger) as fh:
         return {line.strip() for line in fh if line.strip()}
 
 
-def _mark_processed(basename: str) -> None:
-    processed = _load_processed()
+def _mark_processed(basename: str, raw_dir: str) -> None:
+    processed = _load_processed(raw_dir)
     processed.add(basename)
-    os.makedirs(RAW_FOLDER, exist_ok=True)
-    with open(PROCESSED_LEDGER, "w") as fh:
+    os.makedirs(raw_dir, exist_ok=True)
+    ledger = os.path.join(raw_dir, ".processed")
+    with open(ledger, "w") as fh:
         fh.write("\n".join(sorted(processed)) + "\n")
 
 
-def _next_raw_video() -> str | None:
-    """Return the oldest unprocessed video in raw/, or None."""
-    os.makedirs(RAW_FOLDER, exist_ok=True)
+def _next_raw_video(raw_dir: str) -> str | None:
+    """Return the next unprocessed video in raw/<account>/ using deterministic filename ordering."""
+    os.makedirs(raw_dir, exist_ok=True)
     candidates: list[str] = []
     for ext in VIDEO_EXTENSIONS:
-        candidates.extend(glob.glob(os.path.join(RAW_FOLDER, f"*{ext}")))
-        candidates.extend(glob.glob(os.path.join(RAW_FOLDER, f"*{ext.upper()}")))
+        candidates.extend(glob.glob(os.path.join(raw_dir, f"*{ext}")))
+        candidates.extend(glob.glob(os.path.join(raw_dir, f"*{ext.upper()}")))
 
-    processed = _load_processed()
+    processed = _load_processed(raw_dir)
     unprocessed = [p for p in candidates if os.path.basename(p) not in processed]
     if not unprocessed:
         return None
-    # Oldest first (process in upload order)
-    return min(unprocessed, key=os.path.getmtime)
+    # Alphabetical ascending by filename (process in name order)
+    return min(unprocessed, key=lambda p: os.path.basename(p).lower())
 
 
 def _compute_video_id(file_path: str) -> str:
@@ -165,23 +166,25 @@ def _export_pending_ai_metadata(config: dict) -> str | None:
     # Derive the video output folder from clip thumbnail paths so all
     # per-video artefacts land under output/{video_id}_name/ rather than output/
     import glob as _glob
-    def _video_dir(rows_: list) -> str:
+    def _video_dir(rows_: list, output_dir_: str) -> str:
         for r_ in rows_:
             thumb_ = (r_.get("thumbnail_path") or "").replace("\\", "/")
-            if thumb_:
-                parts_ = thumb_.split("/")
-                if len(parts_) >= 2:
-                    candidate_ = os.path.join(_PROJECT_ROOT, parts_[0], parts_[1])
-                    if os.path.isdir(candidate_):
+            if thumb_ and os.path.isabs(thumb_):
+                # Absolute path — walk up to find the video-level folder
+                parts_ = thumb_.split(os.sep)
+                for i_ in range(len(parts_) - 1, 0, -1):
+                    candidate_ = os.sep.join(parts_[:i_])
+                    if os.path.isdir(candidate_) and os.path.dirname(candidate_) == os.path.join(_PROJECT_ROOT, output_dir_):
                         return candidate_
             vid_ = r_.get("video_id", "")
             if vid_:
-                matches_ = _glob.glob(os.path.join(_PROJECT_ROOT, "output", f"{vid_}_*"))
+                matches_ = _glob.glob(os.path.join(_PROJECT_ROOT, output_dir_, f"{vid_}_*"))
                 if matches_:
                     return matches_[0]
-        return os.path.join(_PROJECT_ROOT, "output")  # fallback
+        return os.path.join(_PROJECT_ROOT, output_dir_)  # fallback
 
-    video_dir = _video_dir(rows)
+    output_dir = config.get("paths", {}).get("output_dir", "output")
+    video_dir = _video_dir(rows, output_dir)
     export_path = os.path.join(video_dir, "pending_ai_metadata.json")
 
     video_type = config.get("video_type", "gameplay")
@@ -216,6 +219,15 @@ def _export_pending_ai_metadata(config: dict) -> str | None:
 # ---------------------------------------------------------------------------
 
 def main() -> int:
+    import argparse
+    parser = argparse.ArgumentParser(description="Shorts Factory — Generation Scheduler")
+    parser.add_argument(
+        "--account", default=None,
+        help="Account name (folder under config/accounts/). "
+             "Auto-discovered when only one account exists.",
+    )
+    args = parser.parse_args()
+
     os.chdir(_PROJECT_ROOT)
 
     try:
@@ -224,17 +236,35 @@ def main() -> int:
         print(f"[generation_scheduler] FATAL: config load failed: {exc}", file=sys.stderr)
         return 2
 
+    # ── Resolve + load account config ─────────────────────────────────────
+    try:
+        account_name = resolve_account(args.account)
+        config = load_account_config(account_name, config, project_root=_PROJECT_ROOT)
+    except (FileNotFoundError, ValueError) as exc:
+        print(f"[generation_scheduler] FATAL: account config error: {exc}", file=sys.stderr)
+        return 2
+
     configure_logging(
         level=config.get("logging", {}).get("level", "INFO"),
         log_file=config.get("logging", {}).get("log_file"),
     )
-    logger.info("generation_scheduler: starting", extra={"stage": "generation_scheduler", "video_id": ""})
+    logger.info(
+        "generation_scheduler: starting (account=%s)",
+        account_name,
+        extra={"stage": "generation_scheduler", "video_id": ""},
+    )
+
+    # ── Resolve account-scoped raw dir ─────────────────────────────────────
+    raw_dir = config["paths"].get("raw_dir", os.path.join("raw", account_name))
+    if not os.path.isabs(raw_dir):
+        raw_dir = os.path.join(_PROJECT_ROOT, raw_dir)
 
     # ── Find next video ────────────────────────────────────────────────────
-    video_path = _next_raw_video()
+    video_path = _next_raw_video(raw_dir)
     if video_path is None:
         logger.info(
-            "generation_scheduler: no unprocessed videos in raw/ — nothing to do",
+            "generation_scheduler: no unprocessed videos in %s — nothing to do",
+            raw_dir,
             extra={"stage": "generation_scheduler", "video_id": ""},
         )
         return 0
@@ -251,7 +281,7 @@ def main() -> int:
             basename, video_id,
             extra={"stage": "generation_scheduler", "video_id": video_id},
         )
-        _mark_processed(basename)
+        _mark_processed(basename, raw_dir)
         return 0
 
     logger.info(
@@ -262,7 +292,12 @@ def main() -> int:
 
     # ── Run pipeline ───────────────────────────────────────────────────────
     result = subprocess.run(
-        [sys.executable, os.path.join(_PROJECT_ROOT, "run_pipeline.py"), video_path],
+        [
+            sys.executable,
+            os.path.join(_PROJECT_ROOT, "run_pipeline.py"),
+            "--account", account_name,
+            video_path,
+        ],
         cwd=_PROJECT_ROOT,
     )
 
@@ -276,7 +311,7 @@ def main() -> int:
         return 1
 
     # ── Mark processed ─────────────────────────────────────────────────────
-    _mark_processed(basename)
+    _mark_processed(basename, raw_dir)
     logger.info(
         "generation_scheduler: pipeline complete — %s marked as processed",
         basename,

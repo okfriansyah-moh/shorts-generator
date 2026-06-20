@@ -164,18 +164,19 @@ class DatabaseAdapter:
         composite_score: float | None = None,
         video_path: str | None = None,
         thumbnail_path: str | None = None,
+        account_name: str = "",
     ) -> None:
         """Insert a clip record. Idempotent via ON CONFLICT DO NOTHING."""
         self._conn.execute(
             """INSERT INTO clips
                (clip_id, video_id, start_time, end_time, duration, composite_score,
-                video_path, thumbnail_path)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                video_path, thumbnail_path, account_name)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT (clip_id) DO UPDATE SET
                  video_path = COALESCE(excluded.video_path, clips.video_path),
                  thumbnail_path = COALESCE(excluded.thumbnail_path, clips.thumbnail_path)""",
             (clip_id, video_id, start_time, end_time, duration, composite_score,
-             video_path, thumbnail_path),
+             video_path, thumbnail_path, account_name),
         )
         self._conn.commit()
 
@@ -218,15 +219,37 @@ class DatabaseAdapter:
         ).fetchall()
         return [dict(r) for r in rows]
 
-    def get_clips_by_status(self, statuses: list[str]) -> list[dict[str, Any]]:
-        """Retrieve all clips matching any of the given statuses."""
+    def get_clips_by_status(
+        self,
+        statuses: list[str],
+        account_name: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Retrieve all clips matching any of the given statuses.
+
+        Args:
+            statuses:     List of status values to match (e.g. ["scheduled"]).
+            account_name: Optional account filter.  When provided, only clips
+                          belonging to that account are returned.  When None,
+                          clips from all accounts are returned (backward compat).
+        """
         if not statuses:
             return []
         placeholders = ",".join("?" * len(statuses))
-        rows = self._conn.execute(
-            f"SELECT * FROM clips WHERE status IN ({placeholders}) ORDER BY scheduled_at ASC, clip_id ASC",
-            tuple(statuses),
-        ).fetchall()
+        if account_name:
+            sql = (
+                f"SELECT * FROM clips "
+                f"WHERE account_name = ? AND status IN ({placeholders}) "
+                f"ORDER BY scheduled_at ASC, clip_id ASC"
+            )
+            params: tuple = (account_name,) + tuple(statuses)
+        else:
+            sql = (
+                f"SELECT * FROM clips "
+                f"WHERE status IN ({placeholders}) "
+                f"ORDER BY scheduled_at ASC, clip_id ASC"
+            )
+            params: tuple = tuple(statuses)
+        rows = self._conn.execute(sql, params).fetchall()
         return [dict(r) for r in rows]
 
     def update_clip_publish_info(

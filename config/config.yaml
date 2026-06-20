@@ -22,7 +22,7 @@ pipeline:
   disk_min_free_mb: 500
 
 ingestion:
-  min_duration_seconds: 600
+  min_duration_seconds: 300
   max_duration_seconds: 7200
   supported_formats: ["mp4", "mkv", "avi", "mov", "webm"]
 
@@ -170,10 +170,8 @@ thumbnail:
   contrast_boost: 1.10
 
 metadata:
-  # Language for AI-generated titles, descriptions, tags, and thumbnail text.
-  # "en"  → English
-  # "id"  → Bahasa Indonesia (casual/conversational — bukan bahasa formal)
-  language: "id"
+  # Global fallback — overridden per-account in account.yaml.
+  language: "en"
   title_min_chars: 40
   title_max_chars: 60
   description_min_chars: 150
@@ -192,60 +190,34 @@ ai_metadata:
   temperature: 0.7
 
 scheduler:
+  # Global defaults — override per-account in account.yaml.
   max_daily_uploads: 3
   min_gap_hours: 4
-  preferred_hours: [9, 13, 18]
+  preferred_hours: [2, 7, 12]  # UTC → 09:00, 14:00, 19:00 WIB
   posts_per_day: 1
-  publish_time_utc: "10:00"
+  publish_time_utc: "06:00"    # 13:00 WIB
 
+# publisher / platforms / tiktok / meta sections have moved to per-account config.
+# See config/accounts/<account-name>/account.yaml for platform credentials and
+# enable/disable toggles.  The account loader merges these into the config at
+# runtime so all publisher modules continue to work without changes.
+
+# publisher.max_retries and retry_delays are kept here as global defaults;
+# they can be overridden per-account if needed.
 publisher:
-  platform: "youtube"
-  credentials_path: "config/youtube_credentials.json"
   max_retries: 3
   retry_delays: [60, 300, 900]
-  initial_visibility: "unlisted"
-  public_delay_minutes: 30
 
-# Multi-platform publishing.
-# Set each platform to "enabled" or "disabled".
-# Credentials files must exist before enabling a platform.
-platforms:
-  youtube: "enabled"
-  tiktok: "disabled"       # fill in config/tiktok_credentials.json first
-  instagram: "disabled"    # fill in config/meta_credentials.json first
-  facebook: "disabled"     # fill in config/meta_credentials.json first
-
-# TikTok Content Posting API settings.
-tiktok:
-  credentials_path: "config/tiktok_credentials.json"
-  privacy_level: "PUBLIC_TO_EVERYONE"  # PUBLIC_TO_EVERYONE | MUTUAL_FOLLOW_FRIENDS | SELF_ONLY
-  disable_duet: false
-  disable_stitch: false
-  disable_comment: false
-
-# Meta Graph API settings (Instagram Reels + Facebook Reels share one token).
-meta:
-  credentials_path: "config/meta_credentials.json"
-  # Instagram Reels requires a publicly reachable video URL (Meta's API limitation).
-  # This is solved by spinning up a temporary HTTP server on your machine using
-  # your public IP. Forward the serve_port on your router to this machine (one-time).
-  #
-  # serve_port: the local port to listen on (must be forwarded on your router)
-  # public_ip:  leave blank to auto-detect via api.ipify.org, or hardcode your IP
-  serve_port: 8080
-  public_ip: ""  # e.g. "203.0.113.42" — leave blank for auto-detection
-
-# Telegram notifications — sent after each successful publish.
-# Set SF_TELEGRAM_BOT_TOKEN and SF_TELEGRAM_CHAT_ID in your environment, or
-# override the env var names below (or hardcode values — not recommended).
+# Telegram — bot_token is global (shared bot), chat_id is per-account in account.yaml.
+# Set SF_TELEGRAM_BOT_TOKEN in your environment or hardcode bot_token below.
 telegram:
   enabled: true
   bot_token_env: "SF_TELEGRAM_BOT_TOKEN"
   chat_id_env: "SF_TELEGRAM_CHAT_ID"
-  # bot_token: ""   # fallback if env var is missing
-  # chat_id: ""     # fallback if env var is missing
+  bot_token: ""  # set SF_TELEGRAM_BOT_TOKEN env var instead
 
 channel:
+  # Global fallback — override per-account in account.yaml.
   name: ""
   hashtags: []
   static_tags: []

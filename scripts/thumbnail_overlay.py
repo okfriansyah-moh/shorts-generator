@@ -27,6 +27,15 @@ if _PROJECT_ROOT not in sys.path:
 
 from PIL import Image, ImageDraw, ImageFilter, ImageFont, ImageStat
 
+# Defer account_loader import until needed (avoids circular imports at module level)
+_account_loader_imported = False
+def _get_account_loader():
+    global _account_loader_imported
+    if not _account_loader_imported:
+        global load_account_config, resolve_account
+        from core.account_loader import load_account_config, resolve_account  # noqa: F811
+        _account_loader_imported = True
+
 # ── Constants ──────────────────────────────────────────────────────────────
 
 SHORTS_W, SHORTS_H = 1080, 1920  # 9:16
@@ -366,19 +375,23 @@ def add_text_overlay(
 
 # ── --regen-originals mode ────────────────────────────────────────────────
 
-def regen_originals() -> int:
+def regen_originals(config: dict | None = None) -> int:
     """Re-extract clean thumbnail frames from the raw video using FFmpeg (no text)."""
     import glob
     import subprocess
 
-    from core.config import load_config
-
-    os.chdir(_PROJECT_ROOT)
-    config = load_config()
+    if config is None:
+        from core.config import load_config
+        os.chdir(_PROJECT_ROOT)
+        config = load_config()
 
     output_dir = config.get("paths", {}).get("output_dir", "output")
     if not os.path.isabs(output_dir):
         output_dir = os.path.join(_PROJECT_ROOT, output_dir)
+
+    raw_dir = config.get("paths", {}).get("raw_dir", "raw")
+    if not os.path.isabs(raw_dir):
+        raw_dir = os.path.join(_PROJECT_ROOT, raw_dir)
 
     sat = config.get("thumbnail", {}).get("saturation_boost", 1.15)
     con = config.get("thumbnail", {}).get("contrast_boost", 1.10)
@@ -394,7 +407,7 @@ def regen_originals() -> int:
         # Find raw source video
         video_dir_name = os.path.basename(video_dir)
         raw_name = "_".join(video_dir_name.split("_")[1:])  # strip video_id prefix
-        raw_video = os.path.join(_PROJECT_ROOT, "raw", f"{raw_name}.mp4")
+        raw_video = os.path.join(raw_dir, f"{raw_name}.mp4")
         if not os.path.isfile(raw_video):
             print(f"  SKIP {video_dir_name} — raw video not found: {raw_video}")
             continue
@@ -437,16 +450,17 @@ def regen_originals() -> int:
 
 # ── --all mode ─────────────────────────────────────────────────────────────
 
-def process_all() -> int:
-    from core.config import load_config
+def process_all(config: dict | None = None) -> int:
+    if config is None:
+        from core.config import load_config
+        os.chdir(_PROJECT_ROOT)
+        config = load_config()
 
-    os.chdir(_PROJECT_ROOT)
-    config = load_config()
     db_path = config.get("paths", {}).get("database", "output/shorts_factory.db")
     if not os.path.isabs(db_path):
         db_path = os.path.join(_PROJECT_ROOT, db_path)
 
-    # Read language from config
+    # Read language from config (account.yaml overrides global)
     language = config.get("metadata", {}).get("language", "en")
 
     # Derive per-video state file from the first clip's thumbnail_path
@@ -509,20 +523,39 @@ def process_all() -> int:
 # ── CLI ────────────────────────────────────────────────────────────────────
 
 def main() -> int:
-    args = sys.argv[1:]
+    import argparse
+    # Pre-parse --account before positional args so it works in any position
+    pre = argparse.ArgumentParser(add_help=False)
+    pre.add_argument("--account", default=None)
+    known_pre, remaining_args = pre.parse_known_args()
+
+    # Load config with account context
+    _get_account_loader()
+    from core.config import load_config
+    os.chdir(_PROJECT_ROOT)
+    try:
+        config = load_config()
+        account_name = resolve_account(known_pre.account)
+        config = load_account_config(account_name, config, project_root=_PROJECT_ROOT)
+    except (FileNotFoundError, ValueError) as exc:
+        print(f"[thumbnail_overlay] FATAL: {exc}", file=sys.stderr)
+        return 1
+
+    args = remaining_args
     if not args:
         print(__doc__)
         return 1
     if args[0] == "--regen-originals":
-        return regen_originals()
+        return regen_originals(config)
     if args[0] == "--all":
-        return process_all()
+        return process_all(config)
     if len(args) >= 2:
         path, text = args[0], " ".join(args[1:])
         if not os.path.isfile(path):
             print(f"File not found: {path}")
             return 1
-        out = add_text_overlay(path, text)
+        language = config.get("metadata", {}).get("language", "en")
+        out = add_text_overlay(path, text, language=language)
         print(f"Saved: {out}")
         return 0
     print(__doc__)

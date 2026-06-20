@@ -565,7 +565,7 @@ def test_estimate_pip_region_right_side_face():
 def test_fallback_filter_contains_blurred_bg():
     """build_fallback_filter includes blurred background with overlay."""
     f = build_fallback_filter("[0:v]", "[v]", duration_seconds=35.0, fps=30)
-    assert "boxblur" in f
+    assert "scale=108:192" in f  # poor-man's blur: scale down then back up
     assert "overlay" in f
     assert "split=2" in f
     assert f"scale={1080}:{1920}" in f
@@ -578,14 +578,14 @@ def test_fallback_filter_frame_count():
     f = build_fallback_filter("[0:v]", "[v]", duration_seconds=duration, fps=fps)
     # No zoompan — replaced with blurred background
     assert "zoompan" not in f
-    assert "boxblur" in f
+    assert "scale=108:192" in f  # poor-man's blur: scale down then back up
 
 
 def test_fallback_filter_simple_no_zoompan():
     """build_fallback_filter_simple uses blurred background, no zoompan."""
     f = build_fallback_filter_simple("[0:v]", "[v]")
     assert "zoompan" not in f
-    assert "boxblur" in f
+    assert "scale=108:192" in f  # poor-man's blur: scale down then back up
     assert "overlay" in f
     assert "crop=ih*9/16:ih" in f
 
