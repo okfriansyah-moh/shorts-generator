@@ -53,12 +53,24 @@ def _db_path(config: dict) -> str:
 
 
 def _resolve_path(path: str, output_dir: str) -> str:
-    """Resolve a DB-stored path to absolute using the account-scoped output_dir as base."""
+    """Resolve a DB-stored path to absolute using the account-scoped output_dir as base.
+
+    Resolution order:
+      1. account-scoped:  output/<account>/<path>      (new clips)
+      2. legacy unscoped: output/<path>                (clips generated before account scoping)
+      3. project-root:    <project_root>/<path>        (absolute paths stored without prefix)
+    """
     if not path or os.path.isabs(path):
         return path
+    # 1. Account-scoped (e.g. output/mrkimbum12/3e2e7.../clips/shorts-N/final.mp4)
     resolved = os.path.join(output_dir, path)
     if os.path.exists(resolved):
         return resolved
+    # 2. Legacy unscoped — clips generated before account scoping live in output/<path>
+    legacy = os.path.join(os.path.dirname(output_dir), path)
+    if os.path.exists(legacy):
+        return legacy
+    # 3. Project-root relative (last resort)
     return os.path.join(_PROJECT_ROOT, path)
 
 

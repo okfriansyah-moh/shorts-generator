@@ -24,10 +24,10 @@ metadata:
   tag_count_max: 15
 
 # ── Upload schedule ────────────────────────────────────────────────────────
+# Crontab: 0 9,13,18 * * * WIB  =  0 2,6,11 * * * UTC
 scheduler:
-  posts_per_day: 1
-  publish_time_utc: "06:00"    # 13:00 WIB
-  preferred_hours: [2, 7, 12]  # UTC → 09:00, 14:00, 19:00 WIB
+  posts_per_day: 3
+  preferred_hours: [2, 6, 11]  # UTC → 09:00, 13:00, 18:00 WIB (must match crontab)
 
 # ── Channel branding ───────────────────────────────────────────────────────
 channel:
