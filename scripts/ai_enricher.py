@@ -456,10 +456,8 @@ def main() -> int:
     parser.add_argument("apply_path", nargs="?", default=None,
                         help="Path to enriched_batch.json (required for --apply)")
     # Parse known args so legacy positional usage still works
-    known, remaining = parser.parse_known_args()
+    known, _ = parser.parse_known_args()
 
-    # Reconstruct original args for backward compat with positional usage
-    raw_args = [a for a in sys.argv[1:] if a not in ("--account", known.account or "")]
     # Strip --account <value> pair
     clean_args: list[str] = []
     skip_next = False

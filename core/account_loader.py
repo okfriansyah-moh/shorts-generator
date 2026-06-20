@@ -215,6 +215,14 @@ def load_account_config(
         else:
             merged[key] = copy.deepcopy(value)
 
+    # ── Re-apply path scoping after deep-merge ─────────────────────────────
+    # account.yaml may include a paths: section for other keys (e.g. temp_dir).
+    # Re-enforce output_dir and raw_dir so the account scoping guarantee holds
+    # regardless of what the deep-merge loop wrote to merged["paths"].
+    merged.setdefault("paths", {})
+    merged["paths"]["output_dir"] = os.path.join(base_output, account_name)
+    merged["paths"]["raw_dir"]    = os.path.join(base_raw,    account_name)
+
     # ── Platform configs ───────────────────────────────────────────────────
     platforms_cfg: dict[str, Any] = account_cfg.get("platforms") or {}
 

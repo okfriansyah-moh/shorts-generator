@@ -71,7 +71,7 @@ def _mark_processed(basename: str, raw_dir: str) -> None:
 
 
 def _next_raw_video(raw_dir: str) -> str | None:
-    """Return the oldest unprocessed video in raw/<account>/, or None."""
+    """Return the next unprocessed video in raw/<account>/ using deterministic filename ordering."""
     os.makedirs(raw_dir, exist_ok=True)
     candidates: list[str] = []
     for ext in VIDEO_EXTENSIONS:
@@ -292,7 +292,12 @@ def main() -> int:
 
     # ── Run pipeline ───────────────────────────────────────────────────────
     result = subprocess.run(
-        [sys.executable, os.path.join(_PROJECT_ROOT, "run_pipeline.py"), video_path],
+        [
+            sys.executable,
+            os.path.join(_PROJECT_ROOT, "run_pipeline.py"),
+            "--account", account_name,
+            video_path,
+        ],
         cwd=_PROJECT_ROOT,
     )
 

@@ -216,6 +216,110 @@ class TestClipOperations:
         adapter.update_clip_platform_ids(clip_id="clip1")
 
 
+class TestClipAccountFiltering:
+    """Tests for account_name column and get_clips_by_status account filtering."""
+
+    def _insert_video(self, adapter, video_id="vid1"):
+        adapter.insert_video(
+            video_id=video_id, file_path=f"/tmp/{video_id}.mp4",
+            duration_seconds=60.0, width=1920, height=1080,
+            fps=30.0, has_audio=True, file_size_bytes=100,
+        )
+
+    def test_insert_clip_stores_account_name(self, test_db):
+        adapter = DatabaseAdapter(test_db)
+        self._insert_video(adapter)
+        adapter.insert_clip(
+            clip_id="clip_acct1", video_id="vid1",
+            start_time=0.0, end_time=30.0, duration=30.0,
+            account_name="ch-alpha",
+        )
+        row = test_db.execute(
+            "SELECT account_name FROM clips WHERE clip_id = ?", ("clip_acct1",)
+        ).fetchone()
+        assert row["account_name"] == "ch-alpha"
+
+    def test_insert_clip_defaults_account_name_to_empty(self, test_db):
+        adapter = DatabaseAdapter(test_db)
+        self._insert_video(adapter)
+        adapter.insert_clip(
+            clip_id="clip_noname", video_id="vid1",
+            start_time=0.0, end_time=30.0, duration=30.0,
+        )
+        row = test_db.execute(
+            "SELECT account_name FROM clips WHERE clip_id = ?", ("clip_noname",)
+        ).fetchone()
+        assert row["account_name"] == ""
+
+    def test_get_clips_by_status_filters_by_account(self, test_db):
+        adapter = DatabaseAdapter(test_db)
+        self._insert_video(adapter, "vid1")
+        self._insert_video(adapter, "vid2")
+        adapter.insert_clip(
+            clip_id="clip_alpha", video_id="vid1",
+            start_time=0.0, end_time=30.0, duration=30.0,
+            account_name="ch-alpha",
+        )
+        adapter.insert_clip(
+            clip_id="clip_beta", video_id="vid2",
+            start_time=0.0, end_time=30.0, duration=30.0,
+            account_name="ch-beta",
+        )
+        result = adapter.get_clips_by_status(["generated"], account_name="ch-alpha")
+        assert len(result) == 1
+        assert result[0]["clip_id"] == "clip_alpha"
+
+    def test_get_clips_by_status_no_account_returns_all(self, test_db):
+        adapter = DatabaseAdapter(test_db)
+        self._insert_video(adapter, "vid1")
+        self._insert_video(adapter, "vid2")
+        adapter.insert_clip(
+            clip_id="clip_alpha", video_id="vid1",
+            start_time=0.0, end_time=30.0, duration=30.0,
+            account_name="ch-alpha",
+        )
+        adapter.insert_clip(
+            clip_id="clip_beta", video_id="vid2",
+            start_time=0.0, end_time=30.0, duration=30.0,
+            account_name="ch-beta",
+        )
+        result = adapter.get_clips_by_status(["generated"])
+        assert len(result) == 2
+
+    def test_get_clips_by_status_account_none_is_backward_compat(self, test_db):
+        adapter = DatabaseAdapter(test_db)
+        self._insert_video(adapter, "vid1")
+        adapter.insert_clip(
+            clip_id="clip1", video_id="vid1",
+            start_time=0.0, end_time=30.0, duration=30.0,
+            account_name="ch-alpha",
+        )
+        result_none = adapter.get_clips_by_status(["generated"], account_name=None)
+        result_omit = adapter.get_clips_by_status(["generated"])
+        assert result_none == result_omit
+
+    def test_get_clips_by_status_wrong_account_returns_empty(self, test_db):
+        adapter = DatabaseAdapter(test_db)
+        self._insert_video(adapter, "vid1")
+        adapter.insert_clip(
+            clip_id="clip1", video_id="vid1",
+            start_time=0.0, end_time=30.0, duration=30.0,
+            account_name="ch-alpha",
+        )
+        result = adapter.get_clips_by_status(["generated"], account_name="nonexistent")
+        assert result == []
+
+    def test_get_clips_by_status_empty_statuses_returns_empty(self, test_db):
+        adapter = DatabaseAdapter(test_db)
+        self._insert_video(adapter, "vid1")
+        adapter.insert_clip(
+            clip_id="clip1", video_id="vid1",
+            start_time=0.0, end_time=30.0, duration=30.0,
+            account_name="ch-alpha",
+        )
+        assert adapter.get_clips_by_status([], account_name="ch-alpha") == []
+
+
 class TestPipelineRunOperations:
     """Tests for pipeline run CRUD operations."""
 

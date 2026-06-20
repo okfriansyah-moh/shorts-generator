@@ -52,19 +52,17 @@ def _db_path(config: dict) -> str:
     return path if os.path.isabs(path) else os.path.join(_PROJECT_ROOT, path)
 
 
-def _resolve_path(path: str) -> str:
-    """Resolve a DB-stored path to absolute, using output/ as base for relative paths."""
+def _resolve_path(path: str, output_dir: str) -> str:
+    """Resolve a DB-stored path to absolute using the account-scoped output_dir as base."""
     if not path or os.path.isabs(path):
         return path
-    # Relative paths are stored relative to the output/ directory
-    resolved = os.path.join(_PROJECT_ROOT, "output", path)
+    resolved = os.path.join(output_dir, path)
     if os.path.exists(resolved):
         return resolved
-    # Fallback: relative to project root
     return os.path.join(_PROJECT_ROOT, path)
 
 
-def _row_to_storage_record(row: dict) -> StorageRecord:
+def _row_to_storage_record(row: dict, output_dir: str) -> StorageRecord:
     tags_raw = row.get("tags", "")
     if isinstance(tags_raw, str) and tags_raw:
         try:
@@ -82,8 +80,8 @@ def _row_to_storage_record(row: dict) -> StorageRecord:
         status=row.get("status", "scheduled"),
         composite_score=float(row.get("composite_score", 0.0) or 0.0),
         file_paths={
-            "video":      _resolve_path(row.get("video_path", "") or ""),
-            "thumbnail":  _resolve_path(row.get("thumbnail_path", "") or ""),
+            "video":      _resolve_path(row.get("video_path", "") or "", output_dir),
+            "thumbnail":  _resolve_path(row.get("thumbnail_path", "") or "", output_dir),
             "metadata":   "",
             "subtitles":  "",
             "narration":  "",
@@ -136,7 +134,7 @@ def _check_duplicate_upload(record: StorageRecord, adapter: DatabaseAdapter) -> 
     return False
 
 
-def _next_due_record(adapter: DatabaseAdapter, account_name: str) -> StorageRecord | None:
+def _next_due_record(adapter: DatabaseAdapter, account_name: str, output_dir: str) -> StorageRecord | None:
     """Return the oldest scheduled clip whose scheduled_at <= now, or None."""
     now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     rows = adapter.get_clips_by_status(["scheduled"], account_name=account_name)
@@ -147,7 +145,7 @@ def _next_due_record(adapter: DatabaseAdapter, account_name: str) -> StorageReco
     if not due:
         return None
     due.sort(key=lambda r: (r.get("scheduled_at", ""), r.get("clip_id", "")))
-    return _row_to_storage_record(due[0])
+    return _row_to_storage_record(due[0], output_dir)
 
 
 def _remaining_scheduled_count(adapter: DatabaseAdapter, account_name: str) -> int:
@@ -306,8 +304,13 @@ def main() -> int:
         logger.error("upload_scheduler: DB error", extra={"stage": "upload_scheduler", "error": str(exc)})
         return 1
 
+    # ── Resolve account-scoped output dir for path resolution ─────────────
+    output_dir = config.get("paths", {}).get("output_dir", "output")
+    if not os.path.isabs(output_dir):
+        output_dir = os.path.join(_PROJECT_ROOT, output_dir)
+
     # ── Find next due clip ─────────────────────────────────────────────────
-    record = _next_due_record(adapter, account_name)
+    record = _next_due_record(adapter, account_name, output_dir)
 
     if record is None:
         remaining = _remaining_scheduled_count(adapter, account_name)

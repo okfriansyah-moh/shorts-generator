@@ -21,6 +21,7 @@ import logging
 import os
 import sys
 
+from core.account_loader import load_account_config
 from core.config import load_config
 from core.dependencies import check_all_dependencies
 from core.logging import configure_logging
@@ -96,6 +97,12 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         choices=["gameplay", "podcast"],
         dest="video_type",
         help="Video type: 'gameplay' (default) or 'podcast'. Selects per-type config overrides and compositor strategy.",
+    )
+    parser.add_argument(
+        "--account",
+        default=None,
+        metavar="NAME",
+        help="Account name (folder under config/accounts/). Loads per-account config overrides.",
     )
     return parser.parse_args(argv)
 
@@ -203,6 +210,21 @@ def main(argv: list[str] | None = None) -> int:
             extra={"stage": "startup", "video_id": "", "error": str(exc)},
         )
         return 1
+
+    # Apply per-account config overrides when --account is given
+    if args.account:
+        try:
+            config = load_account_config(
+                args.account,
+                config,
+                project_root=os.path.dirname(os.path.abspath(__file__)),
+            )
+        except (FileNotFoundError, ValueError) as exc:
+            logger.critical(
+                "Account config error",
+                extra={"stage": "startup", "video_id": "", "error": str(exc)},
+            )
+            return 1
 
     # Apply --gpu CLI override
     if args.gpu:

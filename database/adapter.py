@@ -164,18 +164,19 @@ class DatabaseAdapter:
         composite_score: float | None = None,
         video_path: str | None = None,
         thumbnail_path: str | None = None,
+        account_name: str = "",
     ) -> None:
         """Insert a clip record. Idempotent via ON CONFLICT DO NOTHING."""
         self._conn.execute(
             """INSERT INTO clips
                (clip_id, video_id, start_time, end_time, duration, composite_score,
-                video_path, thumbnail_path)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                video_path, thumbnail_path, account_name)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                ON CONFLICT (clip_id) DO UPDATE SET
                  video_path = COALESCE(excluded.video_path, clips.video_path),
                  thumbnail_path = COALESCE(excluded.thumbnail_path, clips.thumbnail_path)""",
             (clip_id, video_id, start_time, end_time, duration, composite_score,
-             video_path, thumbnail_path),
+             video_path, thumbnail_path, account_name),
         )
         self._conn.commit()
 
@@ -234,20 +235,20 @@ class DatabaseAdapter:
         if not statuses:
             return []
         placeholders = ",".join("?" * len(statuses))
-        params: tuple = tuple(statuses)
         if account_name:
             sql = (
                 f"SELECT * FROM clips "
-                f"WHERE status IN ({placeholders}) AND account_name = ? "
+                f"WHERE account_name = ? AND status IN ({placeholders}) "
                 f"ORDER BY scheduled_at ASC, clip_id ASC"
             )
-            params = tuple(statuses) + (account_name,)
+            params: tuple = (account_name,) + tuple(statuses)
         else:
             sql = (
                 f"SELECT * FROM clips "
                 f"WHERE status IN ({placeholders}) "
                 f"ORDER BY scheduled_at ASC, clip_id ASC"
             )
+            params: tuple = tuple(statuses)
         rows = self._conn.execute(sql, params).fetchall()
         return [dict(r) for r in rows]
 
