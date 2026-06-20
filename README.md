@@ -1,33 +1,101 @@
 # Shorts Factory
 
-An autonomous, local-only content production pipeline that transforms long-form gameplay recordings into fully packaged YouTube Shorts — ready for scheduled publishing with zero cloud cost.
+An autonomous, local-only content production pipeline that transforms long-form gameplay and podcast recordings into fully packaged short-form videos — published to YouTube, TikTok, Instagram Reels, and Facebook Reels on a schedule, with zero cloud cost.
 
 ## What It Does
 
-**Input:** 1 long-form gameplay video (30–120 minutes)
+**Input:** 1 long-form video (5–120 minutes) — gameplay or podcast
 
-**Output:** 10–15 YouTube Shorts, each including:
+**Output:** 10–15 short clips per run, each including:
 
 - Vertical video (1080×1920, 30–60s, H.264)
-- Composite layout — gameplay (top 65%) + face cam (bottom 35%)
+- Composite layout — gameplay (top 65%) + face cam (bottom 35%), or smart speaker-crop for podcasts
 - TTS narration + burned-in subtitles (ASS format, word-level karaoke)
 - Thumbnail (1280×720, face + text overlay)
 - Title, description, and tags
-- Scheduled publish queue entry
+- Scheduled multi-platform publish across YouTube, TikTok, Instagram Reels, and Facebook Reels
+
+---
+
+## Quick Start
+
+```bash
+# Single video — gameplay (default)
+python run_pipeline.py input.mp4
+
+# Single video — podcast mode
+python run_pipeline.py --video-type podcast input.mp4
+
+# GPU-accelerated (NVIDIA)
+python run_pipeline.py --gpu input.mp4
+
+# Upload scheduled clips (runs via cron)
+python scripts/upload_scheduler.py
+
+# Auto-pick next raw video and run the pipeline
+python scripts/generation_scheduler.py mrkimbum12
+```
+
+**Output layout:**
+
+```
+output/
+├── {account}/
+│   └── {video_id}/
+│       ├── clips/
+│       │   └── {clip_id}/
+│       │       ├── final.mp4
+│       │       ├── thumbnail.jpg
+│       │       ├── subtitles.ass
+│       │       ├── narration.wav
+│       │       └── metadata.json
+│       ├── report.json
+│       └── pipeline.log
+└── shorts_factory.db
+```
+
+---
 
 ## Architecture
 
 Modular monolith — single process, single SQLite database, 16 pipeline stages in strict sequential order:
 
 ```
-ingestion → scene_splitter → transcription → face_detection → scoring →
+ingestion → scene_splitter → transcription → face_detection → audio_analysis → scoring →
 clip_builder → hook_generator → tts → subtitle → compositor → renderer →
 thumbnail → metadata → storage → scheduler → publisher
 ```
 
 Every stage communicates via frozen dataclass DTOs defined in `contracts/`. The orchestrator is the only component that calls modules, manages execution order, performs checkpointing, and writes to the database.
 
-See [docs/architecture.md](docs/architecture.md) for the full 18-section design document.
+### Multi-Platform Fan-Out
+
+A single clip upload fans out to all enabled platforms concurrently. One platform failing never blocks another.
+
+```
+upload_scheduler.py
+    └─ publish_to_all_platforms(record, config)
+            ├─ YouTubeClient   (thread 1) → UploadResult
+            ├─ TikTokClient    (thread 2) → TikTokUploadResult
+            └─ MetaClient      (thread 3) → MetaUploadResult
+                    ├─ Instagram Reels
+                    └─ Facebook Reels
+```
+
+### Multi-Account Architecture
+
+Each account lives under `config/accounts/<name>/` with its own credentials and per-account config overrides deep-merged on top of global defaults at runtime. No code changes needed to add a new account.
+
+```
+config/
+├── config.yaml                 # global defaults
+└── accounts/
+    └── mrkimbum12/
+        ├── account.yaml        # per-account overrides (deep-merged)
+        └── youtube_credentials.json
+```
+
+---
 
 ## Design Principles
 
@@ -41,49 +109,271 @@ See [docs/architecture.md](docs/architecture.md) for the full 18-section design 
 | Orchestrator-Only  | Only the orchestrator calls modules and writes to the database    |
 | Checkpoint/Resume  | Pipeline resumes from the last successful stage on restart        |
 
+---
+
 ## Pipeline Modules
 
-| #   | Module         | Purpose                                                  |
-| --- | -------------- | -------------------------------------------------------- |
-| 1   | Ingestion      | Validate video, compute SHA256 fingerprint               |
-| 2   | Scene Splitter | Detect scene boundaries (PySceneDetect, 3–20s segments)  |
-| 3   | Transcription  | Word-level speech-to-text (faster-whisper, CTranslate2)  |
-| 4   | Face Detection | Track face position (MediaPipe, 2fps sampling, optional) |
-| 5   | Scoring        | Rule-based scene ranking (keywords, audio, face, motion) |
-| 6   | Clip Builder   | Merge top-scored scenes into 30–60s clips                |
-| 7   | Hook Generator | Template-based narration scripts                         |
-| 8   | TTS            | Speech synthesis (Edge TTS, cached by text hash)         |
-| 9   | Subtitle       | Word-level timed subtitles (ASS format, karaoke)         |
-| 10  | Compositor     | Face + gameplay 9:16 vertical layout                     |
-| 11  | Renderer       | Final MP4 with all layers merged (FFmpeg)                |
-| 12  | Thumbnail      | Frame selection + text overlay (Pillow)                  |
-| 13  | Metadata       | Title, description, tags generation                      |
-| 14  | Storage        | SQLite + filesystem persistence                          |
-| 15  | Scheduler      | Daily publish date assignment                            |
-| 16  | Publisher      | YouTube upload via API                                   |
+| #   | Module           | Purpose                                                  |
+| --- | ---------------- | -------------------------------------------------------- |
+| 1   | Ingestion        | Validate video, compute SHA256 fingerprint               |
+| 2   | Scene Splitter   | Detect scene boundaries (PySceneDetect, 3–20s segments)  |
+| 3   | Transcription    | Word-level speech-to-text (faster-whisper, CTranslate2)  |
+| 4   | Face Detection   | Track face position (MediaPipe, 2fps sampling, optional) |
+| 5   | Audio Analysis   | Per-scene RMS energy extraction (FFmpeg)                 |
+| 6   | Scoring          | Rule-based scene ranking (keywords, audio, face, motion) |
+| 7   | Clip Builder     | Merge top-scored scenes into 30–60s clips                |
+| 8   | Hook Generator   | Template-based narration scripts                         |
+| 9   | TTS              | Speech synthesis (Edge TTS, cached by text hash)         |
+| 10  | Subtitle         | Word-level timed subtitles (ASS format, karaoke)         |
+| 11  | Compositor       | Face + gameplay 9:16 vertical layout; speaker-crop for podcasts |
+| 12  | Renderer         | Final MP4 with all layers merged (FFmpeg)                |
+| 13  | Thumbnail        | Frame selection + text overlay (Pillow)                  |
+| 14  | Metadata         | Title, description, tags generation                      |
+| 15  | Storage          | SQLite + filesystem persistence                          |
+| 16  | Scheduler        | Daily publish date assignment                            |
+| 17  | Publisher        | Multi-platform upload (YouTube, TikTok, Instagram, Facebook) |
+| 18  | Analytics        | Pipeline report, quality metrics, publish status         |
 
-## Usage
+---
+
+## Multi-Platform Publishing
+
+Platforms are enabled per-account in `account.yaml`. Disabled platforms are skipped entirely — no auth attempt, no thread spawned.
+
+```yaml
+platforms:
+  youtube:
+    enabled: true
+    credentials: "youtube_credentials.json"
+    initial_visibility: "unlisted"
+    public_delay_minutes: 30
+
+  tiktok:
+    enabled: false
+    credentials: "tiktok_credentials.json"
+    privacy_level: "PUBLIC_TO_EVERYONE"
+
+  instagram:
+    enabled: false                    # requires public IP + port forward
+    credentials: "meta_credentials.json"
+    serve_port: 8080
+
+  facebook:
+    enabled: false
+    credentials: "meta_credentials.json"
+```
+
+**Credentials setup:**
+
+| Platform          | File                        | Required fields                                              |
+| ----------------- | --------------------------- | ------------------------------------------------------------ |
+| YouTube           | `youtube_credentials.json`  | `client_id`, `client_secret`, `refresh_token`, `token_uri`  |
+| TikTok            | `tiktok_credentials.json`   | `client_key`, `client_secret`, `refresh_token`               |
+| Instagram/Facebook| `meta_credentials.json`     | `access_token`, `instagram_user_id`, `facebook_page_id`      |
+
+All credential files live under `config/accounts/<name>/` and are gitignored.
+
+**Failure isolation:**
+
+| Scenario              | Behaviour                                              |
+| --------------------- | ------------------------------------------------------ |
+| One platform fails    | Error stored in results, others unaffected             |
+| All platforms fail    | Clip status → `failed`, error logged                   |
+| At least one succeeds | Clip status → `published`, all platform IDs persisted  |
+| Telegram notification | Sent on any success — shows all platform IDs           |
+
+---
+
+## Multi-Account Support
+
+New account setup requires zero code changes:
+
+```bash
+mkdir config/accounts/<new-account>
+# Add account.yaml with only what differs from global defaults
+# Add platform credential files
+```
+
+Per-account overrideable sections (deep-merged at runtime, override wins at every leaf):
+
+| Section        | Per-account use case                            |
+| -------------- | ----------------------------------------------- |
+| `video_type`   | gameplay vs podcast per channel                 |
+| `metadata`     | language, title/description length constraints  |
+| `scheduler`    | posts_per_day, publish_time_utc per channel     |
+| `channel`      | name, hashtags, static_tags                     |
+| `telegram`     | chat_id per channel (shared bot token globally) |
+| `compositor`   | layout, face_region                             |
+| `thumbnail`    | saturation/contrast/font per channel brand      |
+| `tts`          | voice per channel                               |
+| `scoring`      | weights tuned per content type                  |
+| `clip_builder` | clip count/duration per channel strategy        |
+
+---
+
+## Video Type Support
+
+### Gameplay (default)
+
+Single fixed POV. Gameplay fills 65% of the frame; face cam occupies the bottom 35%.
 
 ```bash
 python run_pipeline.py input.mp4
+python run_pipeline.py --video-type gameplay input.mp4
 ```
 
-Output:
+### Podcast
+
+Talking-head or panel recordings. Uses transcript-aligned speaker detection to identify the primary speaker, then smart-crops the wide shot to 9:16 — no manual camera adjustment needed.
+
+```bash
+python run_pipeline.py --video-type podcast input.mp4
+```
+
+**Speaker detection algorithm:**
 
 ```
-output/
-├── {video_id}/
-│   ├── clips/
-│   │   ├── {clip_id}/
-│   │   │   ├── final.mp4
-│   │   │   ├── thumbnail.jpg
-│   │   │   ├── subtitles.ass
-│   │   │   ├── narration.wav
-│   │   │   └── metadata.json
-│   │   └── ...
-│   └── pipeline.log
-└── shorts.db
+1. Build 1-second time buckets over clip duration
+2. Compute text activity per bucket (character count, proportional overlap)
+3. Cluster face bboxes by centre position (threshold=0.20, greedy, deterministic L→R IDs)
+4. Score clusters: frames × face_weight + frames × norm_text × text_weight
+5. Primary speaker = cluster with highest total score (lower face_id tiebreak)
+6. Median bbox of primary speaker bboxes → expand to 9:16 at 1.4× width → clamp to source bounds
 ```
+
+| Situation              | Layout           | Description                                     |
+| ---------------------- | ---------------- | ----------------------------------------------- |
+| Transcript + faces     | `speaker_crop`   | Primary speaker detected via text-face alignment |
+| No transcript, faces OK| `center_face_crop`| Largest-area face cluster used                  |
+| No faces detected      | `center_crop`    | Simple 9:16 center crop                         |
+
+---
+
+## GPU Acceleration
+
+Optional NVIDIA GPU mode — CPU-only by default, no configuration required.
+
+```bash
+# CLI flag
+python run_pipeline.py --gpu input.mp4
+
+# Or in config
+gpu:
+  enabled: true
+  encoder: h264_nvenc
+```
+
+When GPU mode is active:
+- FFmpeg uses `h264_nvenc` for compositor and renderer encoding
+- faster-whisper uses `device=cuda, compute_type=float16` with automatic CPU fallback
+- Startup validates `nvidia-smi` and FFmpeg NVENC encoder availability
+
+---
+
+## Scheduling & Cron
+
+Two-tier operational split — heavy CPU generation runs via Claude Cowork at night; lightweight platform uploads run via local crontab three times per day.
+
+| Responsibility | Tool           | Why                                                          |
+| -------------- | -------------- | ------------------------------------------------------------ |
+| **Generation** | Claude Cowork  | CPU-heavy (transcription, rendering, AI metadata enrichment) |
+| **Upload**     | Local crontab  | Lightweight API calls only — no Claude needed                |
+
+---
+
+### Generation — Claude Cowork (nightly, per account)
+
+One Cowork scheduled task per account, staggered 10 minutes apart starting at 02:00 WIB. Each task picks the next unprocessed raw video alphabetically and runs the full pipeline including AI metadata enrichment.
+
+| Account    | Schedule (WIB) | Schedule (UTC) |
+| ---------- | -------------- | -------------- |
+| account1   | 02:00          | 19:00          |
+| account2   | 02:10          | 19:10          |
+| account3   | 02:20          | 19:20          |
+| account4   | 02:30          | 19:30          |
+| account5   | 02:40          | 19:40          |
+| account6   | 02:50          | 19:50          |
+| account7   | 03:00          | 20:00          |
+| account8   | 03:10          | 20:10          |
+| account9   | 03:20          | 20:20          |
+| account10  | 03:30          | 20:30          |
+
+Each Cowork task runs:
+
+```bash
+python scripts/generation_scheduler.py <account-name>
+```
+
+---
+
+### Upload — Local Crontab (3 waves/day, per account)
+
+Three upload waves per day. Each wave stagers accounts 5 minutes apart so API rate limits are never hit simultaneously. The upload scheduler checks for clips with `scheduled_at <= now` and publishes them to all enabled platforms.
+
+| Wave   | Time (WIB) | Time (UTC) |
+| ------ | ---------- | ---------- |
+| Wave 1 | 09:00      | 02:00      |
+| Wave 2 | 14:00      | 07:00      |
+| Wave 3 | 19:00      | 12:00      |
+
+**Full crontab for 10 accounts (all times UTC):**
+
+```cron
+SF=/path/to/shorts-generator
+PY=/opt/homebrew/bin/python3
+LOG=$SF/output/upload_cron.log
+
+# ── Wave 1: 09:00 WIB (02:xx UTC) ──────────────────────────────────────────
+ 0  2 * * *  cd $SF && $PY scripts/upload_scheduler.py --account account1  >> $LOG 2>&1  # 09:00 WIB
+ 5  2 * * *  cd $SF && $PY scripts/upload_scheduler.py --account account2  >> $LOG 2>&1  # 09:05 WIB
+10  2 * * *  cd $SF && $PY scripts/upload_scheduler.py --account account3  >> $LOG 2>&1  # 09:10 WIB
+15  2 * * *  cd $SF && $PY scripts/upload_scheduler.py --account account4  >> $LOG 2>&1  # 09:15 WIB
+20  2 * * *  cd $SF && $PY scripts/upload_scheduler.py --account account5  >> $LOG 2>&1  # 09:20 WIB
+25  2 * * *  cd $SF && $PY scripts/upload_scheduler.py --account account6  >> $LOG 2>&1  # 09:25 WIB
+30  2 * * *  cd $SF && $PY scripts/upload_scheduler.py --account account7  >> $LOG 2>&1  # 09:30 WIB
+35  2 * * *  cd $SF && $PY scripts/upload_scheduler.py --account account8  >> $LOG 2>&1  # 09:35 WIB
+40  2 * * *  cd $SF && $PY scripts/upload_scheduler.py --account account9  >> $LOG 2>&1  # 09:40 WIB
+45  2 * * *  cd $SF && $PY scripts/upload_scheduler.py --account account10 >> $LOG 2>&1  # 09:45 WIB
+
+# ── Wave 2: 14:00 WIB (07:xx UTC) ──────────────────────────────────────────
+ 0  7 * * *  cd $SF && $PY scripts/upload_scheduler.py --account account1  >> $LOG 2>&1  # 14:00 WIB
+ 5  7 * * *  cd $SF && $PY scripts/upload_scheduler.py --account account2  >> $LOG 2>&1  # 14:05 WIB
+10  7 * * *  cd $SF && $PY scripts/upload_scheduler.py --account account3  >> $LOG 2>&1  # 14:10 WIB
+15  7 * * *  cd $SF && $PY scripts/upload_scheduler.py --account account4  >> $LOG 2>&1  # 14:15 WIB
+20  7 * * *  cd $SF && $PY scripts/upload_scheduler.py --account account5  >> $LOG 2>&1  # 14:20 WIB
+25  7 * * *  cd $SF && $PY scripts/upload_scheduler.py --account account6  >> $LOG 2>&1  # 14:25 WIB
+30  7 * * *  cd $SF && $PY scripts/upload_scheduler.py --account account7  >> $LOG 2>&1  # 14:30 WIB
+35  7 * * *  cd $SF && $PY scripts/upload_scheduler.py --account account8  >> $LOG 2>&1  # 14:35 WIB
+40  7 * * *  cd $SF && $PY scripts/upload_scheduler.py --account account9  >> $LOG 2>&1  # 14:40 WIB
+45  7 * * *  cd $SF && $PY scripts/upload_scheduler.py --account account10 >> $LOG 2>&1  # 14:45 WIB
+
+# ── Wave 3: 19:00 WIB (12:xx UTC) ──────────────────────────────────────────
+ 0 12 * * *  cd $SF && $PY scripts/upload_scheduler.py --account account1  >> $LOG 2>&1  # 19:00 WIB
+ 5 12 * * *  cd $SF && $PY scripts/upload_scheduler.py --account account2  >> $LOG 2>&1  # 19:05 WIB
+10 12 * * *  cd $SF && $PY scripts/upload_scheduler.py --account account3  >> $LOG 2>&1  # 19:10 WIB
+15 12 * * *  cd $SF && $PY scripts/upload_scheduler.py --account account4  >> $LOG 2>&1  # 19:15 WIB
+20 12 * * *  cd $SF && $PY scripts/upload_scheduler.py --account account5  >> $LOG 2>&1  # 19:20 WIB
+25 12 * * *  cd $SF && $PY scripts/upload_scheduler.py --account account6  >> $LOG 2>&1  # 19:25 WIB
+30 12 * * *  cd $SF && $PY scripts/upload_scheduler.py --account account7  >> $LOG 2>&1  # 19:30 WIB
+35 12 * * *  cd $SF && $PY scripts/upload_scheduler.py --account account8  >> $LOG 2>&1  # 19:35 WIB
+40 12 * * *  cd $SF && $PY scripts/upload_scheduler.py --account account9  >> $LOG 2>&1  # 19:40 WIB
+45 12 * * *  cd $SF && $PY scripts/upload_scheduler.py --account account10 >> $LOG 2>&1  # 19:45 WIB
+```
+
+To apply:
+
+```bash
+crontab -e
+# paste the block above (replace SF and PY paths)
+```
+
+Each `upload_scheduler.py --account <name>` run:
+1. Queries the DB for `status = 'scheduled' AND scheduled_at <= now AND account_name = <name>`
+2. Fans out to all enabled platforms concurrently (YouTube, TikTok, Instagram, Facebook)
+3. Sends a Telegram notification on success with all platform IDs
+4. Marks the clip `published` if at least one platform succeeds; `failed` if all fail
+
+---
 
 ## Performance Targets
 
@@ -98,6 +388,8 @@ For a 1-hour input video on consumer hardware (8-core CPU, 16GB RAM, no GPU):
 | Scoring        | < 5 seconds          |
 | Output         | 10–15 Shorts per run |
 
+---
+
 ## Tech Stack
 
 - **Python 3.10+** — type hints on all public interfaces
@@ -108,173 +400,111 @@ For a 1-hour input video on consumer hardware (8-core CPU, 16GB RAM, no GPU):
 - **Edge TTS** — text-to-speech synthesis
 - **Pillow** — thumbnail generation
 - **SQLite** — pipeline state, clip lifecycle, and queue management
+- **YouTube Data API v3** — OAuth2 upload with unlisted → public visibility transition
+- **TikTok Content Posting API** — OAuth2 token refresh, file-based upload, async status polling
+- **Meta Graph API** — Instagram Reels + Facebook Reels via temp local HTTP server
+
+---
 
 ## Project Structure
 
 ```
 shorts-generator/
-├── run_pipeline.py              # Single entry point
-├── contracts/                   # Frozen dataclass DTO definitions
-│   ├── ingestion.py             # IngestionResult (Phase 1)
-│   ├── scene.py                 # SceneSegment, SceneList (Phase 1)
-│   ├── transcript.py            # Word, TranscriptSegment, Transcript (Phase 2)
-│   ├── face.py                  # FaceBBox, SceneFaceData, FaceDetectionResult (Phase 2)
-│   ├── audio.py                 # SceneAudioEnergy, AudioEnergyData (Phase 2)
-│   ├── scoring.py               # ScoredScene, ScoreBreakdown (Phase 3)
-│   ├── clip.py                  # ClipCandidate, ClipBatch (Phase 4)
-│   ├── compositor.py            # CompositorLayout, CompositorResult (Phase 5)
-│   ├── hook.py                  # HookScript, HookScriptList (Phase 6)
-│   ├── tts.py                   # TTSAudio, TTSResult (Phase 6)
-│   ├── subtitle.py              # SubtitleFile, SubtitleResult (Phase 6)
-│   ├── render.py                # RenderResult (Phase 6)
-│   ├── thumbnail.py             # ThumbnailResult (Phase 7)
-│   ├── metadata.py              # MetadataResult (Phase 7)
-│   ├── storage.py               # StorageRecord, StorageBatch (Phase 8)
-│   ├── analytics.py             # ScoreBin, QualityMetrics, PublishReport, PipelineReport (Phase 10)
-│   └── errors.py                # PipelineError base classes
+├── run_pipeline.py                  # Single entry point
+├── contracts/                       # Frozen dataclass DTO definitions
+│   ├── ingestion.py
+│   ├── scene.py
+│   ├── transcript.py
+│   ├── face.py
+│   ├── audio.py
+│   ├── scoring.py
+│   ├── clip.py
+│   ├── compositor.py
+│   ├── hook.py
+│   ├── tts.py
+│   ├── subtitle.py
+│   ├── render.py
+│   ├── thumbnail.py
+│   ├── metadata.py
+│   ├── storage.py
+│   ├── strategies.py
+│   ├── analytics.py
+│   └── errors.py
 ├── modules/
-│   ├── ingestion/               # Video validation + SHA-256 fingerprinting [Phase 1]
-│   ├── scene_splitter/          # Scene boundary detection [Phase 1]
-│   ├── transcription/           # Speech-to-text, word-level timestamps [Phase 2]
-│   ├── face_detection/          # Face tracking, EMA smoothing [Phase 2]
-│   ├── audio_analysis/          # Per-scene RMS energy extraction [Phase 2]
-│   ├── scoring/                 # Rule-based scene ranking [Phase 3+]
-│   ├── clip_builder/            # Scene → clip assembly [Phase 4+]
-│   ├── hook_generator/          # Narration script templates [Phase 6]
-│   ├── tts/                     # Text-to-speech synthesis [Phase 6]
-│   ├── subtitle/                # ASS subtitle generation [Phase 6]
-│   ├── compositor/              # 9:16 layout composition [Phase 5]
-│   ├── renderer/                # Final MP4 rendering [Phase 6]
-│   ├── thumbnail/               # Thumbnail generation [Phase 7]
-│   ├── metadata/                # Title/description/tags [Phase 7]
-│   ├── storage/                 # Filesystem persistence [Phase 8]
-│   ├── scheduler/               # Publish date assignment [Phase 8]
-│   ├── publisher/               # YouTube upload [Phase 9]
-│   └── analytics/               # Observability & reports [Phase 10]
+│   ├── ingestion/
+│   ├── scene_splitter/
+│   ├── transcription/
+│   ├── face_detection/
+│   ├── audio_analysis/
+│   ├── scoring/
+│   ├── clip_builder/
+│   ├── hook_generator/
+│   ├── tts/
+│   ├── subtitle/
+│   ├── compositor/
+│   │   ├── compose.py             # Dispatcher — gameplay or podcast
+│   │   ├── gameplay_crop.py
+│   │   ├── face_crop.py
+│   │   ├── fallback.py
+│   │   └── podcast.py
+│   ├── renderer/
+│   ├── thumbnail/
+│   ├── metadata/
+│   ├── storage/
+│   ├── scheduler/
+│   ├── publisher/
+│   │   ├── multi_platform.py      # Fan-out orchestrator
+│   │   ├── youtube_client.py
+│   │   ├── tiktok_client.py
+│   │   ├── meta_client.py         # Instagram + Facebook Reels
+│   │   └── visibility.py
+│   ├── strategies/
+│   │   └── podcast_strategy.py    # Transcript-aligned speaker detection
+│   ├── notifier/
+│   │   └── telegram.py            # Upload + error notifications
+│   └── analytics/
 ├── core/
-│   ├── config.py                # YAML config loader + env overrides
-│   ├── logging.py               # Structured JSON logging
-│   ├── dependencies.py          # FFmpeg/FFprobe/Python checks
-│   └── orchestrator.py          # Pipeline orchestrator (ingestion + scene_splitter wired)
-├── database/                    # DB adapter + migrations
-│   ├── adapter.py               # Single entry point for all DB access
-│   ├── connection.py            # SQLite WAL mode + migration runner
-│   └── migrations/              # Timestamped SQL migrations (4 tables)
+│   ├── config.py                  # YAML config loader + env overrides
+│   ├── logging.py                 # Structured JSON logging
+│   ├── dependencies.py            # FFmpeg/FFprobe/Python checks
+│   ├── gpu.py                     # GPU configuration resolver
+│   ├── account_loader.py          # Per-account config deep-merge
+│   └── orchestrator.py            # Pipeline orchestrator
+├── database/
+│   ├── adapter.py
+│   ├── connection.py
+│   └── migrations/
 ├── config/
-│   └── config.yaml              # All default configuration values
+│   ├── config.yaml                # Global defaults
+│   └── accounts/
+│       └── <account-name>/
+│           ├── account.yaml       # Per-account overrides
+│           └── *_credentials.json # Platform credentials (gitignored)
 ├── scripts/
-│   ├── run_parallel.sh          # Parallel development orchestrator
-│   └── publish_cron.py          # Standalone YouTube publish cron job
-├── tests/                       # Unit + integration tests (517 passing)
-│   ├── unit/                    # Module unit tests
-│   └── integration/             # Pipeline integration tests
-├── output/                      # Generated clips (gitignored)
-├── docs/                        # Architecture + specifications
-│   ├── architecture.md          # 18-section system architecture
-│   ├── implementation_roadmap.md # 11-phase roadmap (Phase 0–10)
-│   ├── orchestrator_spec.md     # Orchestrator execution model
-│   ├── dto_contracts.md         # 22 DTO definitions + validation rules
-│   ├── db_adapter_spec.md       # Database abstraction layer spec
-│   ├── progress_report.md       # Per-phase implementation status
-│   ├── PARALLEL_DEV.md          # Parallel development guide (3 modes)
-│   └── AGENTS_AND_SKILLS.md     # Agent/skill system documentation
-└── .github/
-    ├── copilot-instructions.md  # Hard architectural constraints
-    ├── agents/                  # 9 AI agent definitions
-    └── skills/                  # 26 domain skill definitions
+│   ├── upload_scheduler.py        # Cron-driven upload runner
+│   ├── generation_scheduler.py    # Picks next raw video and runs pipeline
+│   ├── scheduled_run.py           # Wrapper for cron-based pipeline runs
+│   ├── ai_enricher.py             # AI metadata enrichment
+│   ├── apply_ai_metadata.py       # Applies AI-generated metadata to DB
+│   ├── thumbnail_overlay.py       # Standalone thumbnail re-generation
+│   ├── rebuild_db.py              # DB state rebuild from filesystem
+│   └── run_parallel.sh            # Parallel development orchestrator
+├── tests/
+│   ├── unit/
+│   └── integration/
+├── output/                        # Generated clips (gitignored)
+└── docs/
+    ├── architecture.md
+    ├── implementation_roadmap.md
+    ├── orchestrator_spec.md
+    ├── dto_contracts.md
+    ├── db_adapter_spec.md
+    ├── progress_report.md
+    ├── PARALLEL_DEV.md
+    └── AGENTS_AND_SKILLS.md
 ```
 
-## Implementation Status
-
-| Phase | Name                     | Status       | Key Deliverables                                               |
-| ----- | ------------------------ | ------------ | -------------------------------------------------------------- |
-| 0     | Core Infrastructure      | ✅ Complete  | Config, logging, DB migrations, FFmpeg checks                  |
-| 1     | Core Pipeline Skeleton   | ✅ Complete  | Ingestion, scene splitting, orchestrator wiring                |
-| 2     | Signal Extraction        | ✅ Complete  | Transcription, face detection, audio analysis                  |
-| 3     | Scoring Engine           | ✅ Complete  | Rule-based scoring, normalization, ranking                     |
-| 4     | Clip Builder             | ✅ Complete  | Deterministic clip assembly (30–60s), rejection/threshold flow |
-| 5     | Composition Engine       | ⚠️ Partial   | Compositor module + DTO + unit tests (orchestrator wiring TBD) |
-| 6     | Rendering Pipeline       | ⚠️ Partial   | Hook/TTS/subtitle/renderer modules + DTOs + unit tests         |
-| 7     | Metadata & Thumbnail      | ⚠️ Partial | Thumbnail/metadata modules + DTOs + unit tests (orchestrator/integration pending) |
-| 8     | Storage & Scheduling      | ⚠️ Partial | Storage/scheduler modules + DTO + unit tests (DB/orchestrator integration pending) |
-| 9     | Publisher                 | ✅ Complete | YouTube upload, OAuth2, retry, visibility transition, cron entry point |
-| 10    | Observability & Analytics | ✅ Complete | Pipeline report, quality metrics, publish status, JSON report output |
-
-## Development System
-
-### AI Agent Pipeline
-
-Development is driven by a **4-step agent pipeline** that runs for every phase implementation:
-
-```
-┌────────────────┐     ┌───────────────┐     ┌───────────────┐     ┌───────────────┐
-│ phase-builder  │ ──→ │ dto-guardian   │ ──→ │ integration   │ ──→ │ refactor      │
-│ (implement)    │     │ (validate DTOs)│     │ (validate     │     │ (fix quality  │
-│                │     │               │     │  wiring)      │     │  gates)       │
-└────────────────┘     └───────────────┘     └───────────────┘     └───────────────┘
-```
-
-| Agent               | Purpose                                                 |
-| ------------------- | ------------------------------------------------------- |
-| `phase-builder`     | Implement phase modules, tests, and contracts           |
-| `dto-guardian`      | Validate frozen DTOs match `contracts/` definitions     |
-| `integration`       | Validate module wiring, no cross-module imports         |
-| `refactor`          | Fix quality gate failures without changing architecture |
-| `module-builder`    | Build a single module (not a full phase)                |
-| `orchestrator`      | Build/review the pipeline orchestrator                  |
-| `conflict-resolver` | Architecture-aware merge conflict resolution            |
-| `merge-reviewer`    | Post-merge integration review                           |
-| `code-fixer`        | Automated quality gate remediation                      |
-
-### 26 Domain Skills
-
-Skills provide compressed, tested instructions for specific domains. Agents load skills instead of reading full documentation (~90% token savings):
-
-**Architectural** (loaded by every agent): `dto`, `pipeline`, `modularity`, `determinism`, `idempotency`, `testing`, `failure`, `config-validation`, `logging`
-
-**Technical** (loaded per phase): `ffmpeg`, `pyscenedetect`, `faster-whisper`, `mediapipe`, `edge-tts`, `pillow`, `sqlite`, `ass-subtitle`
-
-**Development** (loaded on demand): `code-quality-fixer`, `conflict-resolver`, `merge-reviewer`, `docs-sync`, `doc-standardization`, `repo-structure-analysis`, `refactor-with-architecture`, `token-optimization`, `architecture-reader`
-
-### Parallel Development
-
-Three execution modes for running multiple phases simultaneously:
-
-```bash
-# Mode 1 — Full Parallel (max speed, one agent pipeline per phase)
-./scripts/run_parallel.sh start --mode=1 2 7
-
-# Mode 2 — Token-Optimized (single session, sequential phases)
-./scripts/run_parallel.sh start --mode=2 2 3 4
-
-# Mode 3 — Hybrid (default: parallel across groups, sequential within)
-./scripts/run_parallel.sh start 2 3 4 7 8
-```
-
-Each mode uses the same agent pipeline (phase-builder → dto-guardian → integration → refactor) and enforces:
-
-- **9 quality gates**: imports, lint, tests, raw SQL, cross-module, print statements, DTO validation, orchestrator integrity, and protected file checks
-- **Skill-based execution**: agents use `.github/skills/` instead of reading full docs
-- **Architecture-aware merging**: integration agent resolves conflicts (no `git checkout --theirs`)
-- **Agent execution logging**: every step logged with timestamps to `agent-chain.log`
-
-See [docs/PARALLEL_DEV.md](docs/PARALLEL_DEV.md) for the full guide.
-
-### Quality Gates
-
-Every phase runs through these automated checks:
-
-| Gate                   | Validates                                            | Blocking |
-| ---------------------- | ---------------------------------------------------- | -------- |
-| Import check           | All modules importable                               | Yes      |
-| Lint check             | No lint errors (ruff/flake8)                         | Yes      |
-| Test check             | `pytest tests/` passes                               | Yes      |
-| SQL check              | No `sqlite3`/`psycopg2` imports in `modules/`        | Yes      |
-| Cross-module check     | No `from modules.X` in other modules                 | Yes      |
-| Print check            | No `print()` in `modules/`                           | Yes      |
-| DTO validation         | All DTOs frozen, no raw dicts crossing boundaries    | Yes      |
-| Orchestrator integrity | No database access outside orchestrator              | Yes      |
-| Protected files        | Warns if `contracts/`, `database/`, `docs/` modified | Advisory |
+---
 
 ## Key Invariants
 
@@ -283,6 +513,9 @@ Every phase runs through these automated checks:
 - **Module isolation**: modules communicate only through frozen DTOs in `contracts/`, no cross-module imports
 - **Orchestrator authority**: only the orchestrator calls modules, writes to the database, and handles checkpointing
 - **Database adapter**: all database access through `database/adapter.py` — modules never touch the database directly
+- **Platform isolation**: one platform failing never blocks another; clip is published if at least one platform succeeds
+
+---
 
 ## Documentation
 
@@ -291,10 +524,13 @@ Every phase runs through these automated checks:
 | [architecture.md](docs/architecture.md)                     | 18-section system architecture                   |
 | [implementation_roadmap.md](docs/implementation_roadmap.md) | 11-phase roadmap (Phase 0–10) with exit criteria |
 | [orchestrator_spec.md](docs/orchestrator_spec.md)           | Orchestrator execution model + checkpointing     |
-| [dto_contracts.md](docs/dto_contracts.md)                   | 22 DTO definitions with validation rules         |
+| [dto_contracts.md](docs/dto_contracts.md)                   | DTO definitions with validation rules            |
 | [db_adapter_spec.md](docs/db_adapter_spec.md)               | Database abstraction layer + migration strategy  |
+| [progress_report.md](docs/progress_report.md)               | Full implementation history and change log       |
 | [PARALLEL_DEV.md](docs/PARALLEL_DEV.md)                     | 3-mode parallel development guide                |
 | [AGENTS_AND_SKILLS.md](docs/AGENTS_AND_SKILLS.md)           | 9 agents, 26 skills, composition matrices        |
+
+---
 
 ## Non-Goals
 
@@ -302,8 +538,9 @@ Every phase runs through these automated checks:
 - No paid APIs (OpenAI, Anthropic, cloud services)
 - No real-time or streaming processing
 - No web UI, dashboard, or mobile interface
-- No multi-language support
 - No cloud deployment or scaling
+
+---
 
 ## License
 
