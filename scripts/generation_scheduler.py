@@ -35,7 +35,8 @@ _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PROJECT_ROOT not in sys.path:
     sys.path.insert(0, _PROJECT_ROOT)
 
-from core.config import load_config                              # noqa: E402
+from core.config import load_config, load_dotenv                 # noqa: E402
+load_dotenv(os.path.join(_PROJECT_ROOT, ".env"))
 from core.account_loader import load_account_config, resolve_account  # noqa: E402
 from core.logging import configure_logging                       # noqa: E402
 from database.adapter import DatabaseAdapter                     # noqa: E402

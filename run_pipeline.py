@@ -191,6 +191,8 @@ def _apply_video_type_overrides(config: dict) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     """Main entry point for the pipeline."""
+    from core.config import load_dotenv as _load_dotenv
+    _load_dotenv()
     args = parse_args(argv)
 
     # Configure logging first

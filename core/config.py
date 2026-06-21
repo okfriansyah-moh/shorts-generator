@@ -14,6 +14,39 @@ import yaml
 
 logger = logging.getLogger(__name__)
 
+
+def load_dotenv(dotenv_path: str | None = None) -> None:
+    """Load a .env file into os.environ without requiring python-dotenv.
+
+    Values already present in the environment are never overwritten, so
+    real environment variables (e.g. injected by cron or CI) take precedence.
+
+    Supports:
+      KEY=value
+      KEY="quoted value"
+      KEY='single-quoted'
+      # comment lines and blank lines are skipped
+    """
+    if dotenv_path is None:
+        dotenv_path = os.path.join(os.getcwd(), ".env")
+
+    if not os.path.isfile(dotenv_path):
+        return
+
+    with open(dotenv_path) as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, raw = line.partition("=")
+            key = key.strip()
+            if not key:
+                continue
+            value = raw.strip()
+            if len(value) >= 2 and value[0] == value[-1] and value[0] in ('"', "'"):
+                value = value[1:-1]
+            os.environ.setdefault(key, value)
+
 # Required top-level sections in config.yaml
 REQUIRED_SECTIONS = (
     "paths",
