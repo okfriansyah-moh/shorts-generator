@@ -491,9 +491,21 @@ class Orchestrator:
         from modules.compositor.compose import process as comp_process
 
         plan = None
-        if self._config.get("video_type") == "podcast":
+        video_type = self._config.get("video_type", "gameplay")
+
+        if video_type == "podcast":
             from modules.strategies.podcast_strategy import generate_plan
             plan = generate_plan(clip, transcript, face_result, ingestion_result, self._config)
+
+        elif video_type.startswith("sports_"):
+            compositor_config = self._config.get("compositor", {})
+            layout = (
+                compositor_config.get("override_layout")
+                or compositor_config.get("default_layout", "sports_center_crop")
+            )
+            if layout == "sports_action_crop":
+                from modules.strategies.sports_strategy import generate_plan as generate_sports_plan
+                plan = generate_sports_plan(clip, face_result, ingestion_result, self._config)
 
         return comp_process(clip, face_result, ingestion_result, self._config, plan)
 

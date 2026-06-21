@@ -143,6 +143,104 @@ podcast_strategy:
   cluster_threshold: 0.20 # max normalised distance to merge face centres into one cluster
   bbox_expand_scale: 1.4 # expand base 9:16 crop width by this factor for framing context
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Sports video type — shared defaults (applied as layer 1 for all sports_*)
+# ──────────────────────────────────────────────────────────────────────────────
+
+sports_ingestion:
+  min_duration_seconds: 120 # broadcast clips can be shorter than gameplay recordings
+
+sports_scene_splitter:
+  threshold: 30.0 # broadcast hard cuts are more abrupt than gameplay scene changes
+  min_scene_duration: 3.0
+  max_scene_duration: 20.0
+  fallback_threshold: 30.0
+  fallback_target_duration: 10.0
+
+sports_face_detection:
+  sample_fps: 1 # athletes are small and move fast; faces less useful than in podcast
+  min_confidence: 0.5
+  min_face_size: 0.03 # athletes occupy a small fraction of the broadcast frame
+  ema_alpha: 0.3
+
+sports_scoring:
+  weights:
+    keyword: 2
+    audio_energy: 4 # crowd noise and commentary peaks signal exciting moments
+    face_presence: 0 # athlete faces are not the primary content signal
+    scene_activity: 4 # fast motion is the primary engagement signal
+    sentence_density: 1
+    image_quality: 2
+  min_composite_score: 0.15
+
+sports_compositor:
+  default_layout: "sports_center_crop" # safe default; overridden per sport below
+  output_width: 1080
+  output_height: 1920
+
+sports_strategy:
+  min_face_visibility: 0.2 # lower than gameplay (0.3) — athletes appear briefly
+  ema_alpha: 0.3
+  pose_sample_fps: 1 # keyframes per second for MediaPipe Pose analysis
+  motion_sample_fps: 2 # keyframes per second for FFmpeg motion energy analysis
+  motion_thumb_width: 64 # thumbnail width for motion diff (matches scoring activity_frame_width)
+  motion_thumb_height: 36 # thumbnail height for motion diff
+
+# ── Tennis-specific overrides (layer 2 on top of sports_*) ───────────────────
+
+sports_tennis_scene_splitter:
+  min_scene_duration: 4.0 # tennis rallies are longer; avoid splitting mid-point
+
+sports_tennis_scoring:
+  weights:
+    keyword: 2
+    audio_energy: 3 # crowd cheers at point endings
+    face_presence: 0
+    scene_activity: 3
+    sentence_density: 2 # commentary calls ("Ace!", "Fault") matter more in tennis
+    image_quality: 2
+  min_composite_score: 0.15
+
+sports_tennis_compositor:
+  default_layout: "sports_center_crop" # court is filmed from center — center crop works well
+
+# ── Football-specific overrides (layer 2 on top of sports_*) ─────────────────
+
+sports_football_scene_splitter:
+  threshold: 25.0 # football broadcast edits more frequently than tennis
+  min_scene_duration: 2.0
+
+sports_football_scoring:
+  weights:
+    keyword: 2
+    audio_energy: 5 # crowd roar peaks signal goals and near-misses
+    face_presence: 0
+    scene_activity: 5 # fast ball movement and player sprints are primary signal
+    sentence_density: 1
+    image_quality: 2
+  min_composite_score: 0.15
+
+sports_football_compositor:
+  default_layout: "sports_action_crop" # ball and players move across full width — track them
+
+# ── Padel-specific overrides (layer 2 on top of sports_*) ────────────────────
+
+sports_padel_scene_splitter:
+  min_scene_duration: 3.0 # padel points are shorter/faster than tennis due to wall play
+
+sports_padel_scoring:
+  weights:
+    keyword: 2
+    audio_energy: 3 # crowd cheers at point endings
+    face_presence: 0
+    scene_activity: 4 # faster exchanges than tennis via wall bounces
+    sentence_density: 1
+    image_quality: 2
+  min_composite_score: 0.15
+
+sports_padel_compositor:
+  default_layout: "sports_center_crop" # enclosed court filmed from fixed high camera — center works well
+
 subtitle:
   font_size: 48
   font_name: "Arial"

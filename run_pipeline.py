@@ -94,9 +94,16 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--video-type",
         default=None,
-        choices=["gameplay", "podcast"],
+        choices=["gameplay", "podcast", "sports_tennis", "sports_football", "sports_padel"],
         dest="video_type",
-        help="Video type: 'gameplay' (default) or 'podcast'. Selects per-type config overrides and compositor strategy.",
+        help="Video type. Selects per-type config overlays and compositor strategy.",
+    )
+    parser.add_argument(
+        "--sports-layout",
+        default=None,
+        choices=["sports_center_crop", "sports_letterbox", "sports_action_crop"],
+        dest="sports_layout",
+        help="Override the default compositor layout for sports video types.",
     )
     parser.add_argument(
         "--account",
@@ -131,13 +138,74 @@ def setup_output_dirs(config: dict) -> None:
     os.makedirs(temp_dir, exist_ok=True)
 
 
-# Podcast-prefixed config sections that overlay over base sections
-_PODCAST_OVERLAY_MAP: dict[str, str] = {
-    "podcast_ingestion": "ingestion",
-    "podcast_scene_splitter": "scene_splitter",
-    "podcast_face_detection": "face_detection",
-    "podcast_scoring": "scoring",
-    "podcast_compositor": "compositor",
+# Registry mapping video_type → ordered list of overlay maps.
+# Each entry is a list of {config_key: base_section} dicts applied in order
+# (later layers win). Sports types use two layers: shared sports_* then
+# sport-specific sports_<subtype>_*.
+_OVERLAY_REGISTRY: dict[str, list[dict[str, str]]] = {
+    "podcast": [
+        {
+            "podcast_ingestion": "ingestion",
+            "podcast_scene_splitter": "scene_splitter",
+            "podcast_face_detection": "face_detection",
+            "podcast_scoring": "scoring",
+            "podcast_compositor": "compositor",
+        },
+    ],
+    "sports_tennis": [
+        # Layer 1: shared sports defaults
+        {
+            "sports_ingestion": "ingestion",
+            "sports_scene_splitter": "scene_splitter",
+            "sports_face_detection": "face_detection",
+            "sports_scoring": "scoring",
+            "sports_compositor": "compositor",
+        },
+        # Layer 2: tennis-specific overrides (applied on top of layer 1)
+        {
+            "sports_tennis_ingestion": "ingestion",
+            "sports_tennis_scene_splitter": "scene_splitter",
+            "sports_tennis_face_detection": "face_detection",
+            "sports_tennis_scoring": "scoring",
+            "sports_tennis_compositor": "compositor",
+        },
+    ],
+    "sports_football": [
+        # Layer 1: shared sports defaults
+        {
+            "sports_ingestion": "ingestion",
+            "sports_scene_splitter": "scene_splitter",
+            "sports_face_detection": "face_detection",
+            "sports_scoring": "scoring",
+            "sports_compositor": "compositor",
+        },
+        # Layer 2: football-specific overrides
+        {
+            "sports_football_ingestion": "ingestion",
+            "sports_football_scene_splitter": "scene_splitter",
+            "sports_football_face_detection": "face_detection",
+            "sports_football_scoring": "scoring",
+            "sports_football_compositor": "compositor",
+        },
+    ],
+    "sports_padel": [
+        # Layer 1: shared sports defaults
+        {
+            "sports_ingestion": "ingestion",
+            "sports_scene_splitter": "scene_splitter",
+            "sports_face_detection": "face_detection",
+            "sports_scoring": "scoring",
+            "sports_compositor": "compositor",
+        },
+        # Layer 2: padel-specific overrides
+        {
+            "sports_padel_ingestion": "ingestion",
+            "sports_padel_scene_splitter": "scene_splitter",
+            "sports_padel_face_detection": "face_detection",
+            "sports_padel_scoring": "scoring",
+            "sports_padel_compositor": "compositor",
+        },
+    ],
 }
 
 
@@ -160,31 +228,30 @@ def _deep_merge(base: dict, overlay: dict) -> dict:
 
 
 def _apply_video_type_overrides(config: dict) -> None:
-    """Merge podcast-specific config overrides when video_type is 'podcast'.
+    """Merge video-type-specific config overlays based on video_type.
 
-    For each ``podcast_<section>`` key in config, deep-merge its values
-    into the base ``<section>``. The base section is preserved for gameplay;
-    podcast overrides are additive — only the keys present in the podcast
-    section are replaced; base keys not mentioned are kept (including nested
-    keys such as ``scoring.weights`` sub-entries).
+    Looks up the video_type in _OVERLAY_REGISTRY and applies each layer's
+    overlay map in order via deep merge. Later layers win over earlier ones;
+    both win over the base config. Sections absent from a layer are skipped
+    (partial overrides work — only specified keys are replaced).
 
-    This function is a no-op when video_type is 'gameplay' (or absent).
+    This function is a no-op for 'gameplay' (or absent video_type).
     """
     video_type = config.get("video_type", "gameplay")
-    if video_type != "podcast":
+    layers = _OVERLAY_REGISTRY.get(video_type)
+    if not layers:
         return
 
-    for podcast_key, base_key in _PODCAST_OVERLAY_MAP.items():
-        overlay = config.get(podcast_key)
-        if overlay is None:
-            continue
-        base = config.get(base_key, {})
-        # Deep merge: podcast values win; nested dicts are merged recursively
-        # so that base keys absent from the overlay section are preserved.
-        config[base_key] = _deep_merge(base, overlay)
+    for layer in layers:
+        for overlay_key, base_key in layer.items():
+            overlay = config.get(overlay_key)
+            if overlay is None:
+                continue
+            base = config.get(base_key, {})
+            config[base_key] = _deep_merge(base, overlay)
 
     logger.info(
-        "Podcast config overrides applied",
+        "Video type config overlays applied",
         extra={"stage": "startup", "video_id": "", "video_type": video_type},
     )
 
@@ -265,10 +332,16 @@ def main(argv: list[str] | None = None) -> int:
             config["compositor"] = {}
         config["compositor"]["default_layout"] = "gameplay_only"
 
-    # Apply --video-type CLI override and merge podcast-specific config
+    # Apply --video-type CLI override and merge type-specific config overlays
     if args.video_type:
         config["video_type"] = args.video_type
     _apply_video_type_overrides(config)
+
+    # Apply --sports-layout CLI override (sets override_layout in compositor config)
+    if args.sports_layout:
+        if "compositor" not in config:
+            config["compositor"] = {}
+        config["compositor"]["override_layout"] = args.sports_layout
 
     # Check dependencies
     check_all_dependencies(config)

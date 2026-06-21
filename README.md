@@ -1,10 +1,10 @@
 # Shorts Factory
 
-An autonomous, local-only content production pipeline that transforms long-form gameplay and podcast recordings into fully packaged short-form videos — published to YouTube, TikTok, Instagram Reels, and Facebook Reels on a schedule, with zero cloud cost.
+An autonomous, local-only content production pipeline that transforms long-form gameplay, podcast, and sports recordings into fully packaged short-form videos — published to YouTube, TikTok, Instagram Reels, and Facebook Reels on a schedule, with zero cloud cost.
 
 ## What It Does
 
-**Input:** 1 long-form video (5–120 minutes) — gameplay or podcast
+**Input:** 1 long-form video (5–120 minutes) — gameplay, podcast, or sports broadcast
 
 **Output:** 10–15 short clips per run, each including:
 
@@ -25,6 +25,15 @@ python run_pipeline.py input.mp4
 
 # Single video — podcast mode
 python run_pipeline.py --video-type podcast input.mp4
+
+# Sports — tennis (center crop, default)
+python run_pipeline.py --video-type sports_tennis match.mp4
+
+# Sports — football (action crop with hybrid tracking)
+python run_pipeline.py --video-type sports_football match.mp4
+
+# Sports — padel with explicit layout override
+python run_pipeline.py --video-type sports_padel --sports-layout sports_letterbox match.mp4
 
 # GPU-accelerated (NVIDIA)
 python run_pipeline.py --gpu input.mp4
@@ -125,7 +134,7 @@ config/
 | 8   | Hook Generator   | Template-based narration scripts                         |
 | 9   | TTS              | Speech synthesis (Edge TTS, cached by text hash)         |
 | 10  | Subtitle         | Word-level timed subtitles (ASS format, karaoke)         |
-| 11  | Compositor       | Face + gameplay 9:16 vertical layout; speaker-crop for podcasts |
+| 11  | Compositor       | Face + gameplay 9:16 vertical layout; speaker-crop for podcasts; letterbox/center/action-crop for sports |
 | 12  | Renderer         | Final MP4 with all layers merged (FFmpeg)                |
 | 13  | Thumbnail        | Frame selection + text overlay (Pillow)                  |
 | 14  | Metadata         | Title, description, tags generation                      |
@@ -198,7 +207,7 @@ Per-account overrideable sections (deep-merged at runtime, override wins at ever
 
 | Section        | Per-account use case                            |
 | -------------- | ----------------------------------------------- |
-| `video_type`   | gameplay vs podcast per channel                 |
+| `video_type`   | gameplay vs podcast vs sports_* per channel     |
 | `metadata`     | language, title/description length constraints  |
 | `scheduler`    | posts_per_day, publish_time_utc per channel     |
 | `channel`      | name, hashtags, static_tags                     |
@@ -246,6 +255,51 @@ python run_pipeline.py --video-type podcast input.mp4
 | Transcript + faces     | `speaker_crop`   | Primary speaker detected via text-face alignment |
 | No transcript, faces OK| `center_face_crop`| Largest-area face cluster used                  |
 | No faces detected      | `center_crop`    | Simple 9:16 center crop                         |
+
+### Sports (tennis / football / padel)
+
+Broadcast and match recordings. Supports three compositor layouts selectable per clip via `--sports-layout`. The `sports_action_crop` layout runs a hybrid tracking strategy to anchor the crop on the action.
+
+```bash
+python run_pipeline.py --video-type sports_tennis match.mp4
+python run_pipeline.py --video-type sports_football match.mp4
+python run_pipeline.py --video-type sports_padel match.mp4
+
+# Override the default layout for any sport
+python run_pipeline.py --video-type sports_tennis --sports-layout sports_action_crop match.mp4
+```
+
+**Compositor layouts:**
+
+| Layout | Description | Default for |
+| ------------------- | -------------------------------------------- | ----------- |
+| `sports_center_crop` | Center column crop to 9:16 | tennis, padel |
+| `sports_letterbox` | Fit full frame, pad with black bars | — (manual) |
+| `sports_action_crop` | Crop anchored on detected action point | football |
+
+**Hybrid action-tracking strategy (for `sports_action_crop`):**
+
+```
+1. Face centroid    — weighted average of face bbox centers (face_visible_ratio ≥ 0.2)
+2. MediaPipe Pose   — 1fps keyframes, average body landmark centroid
+3. Motion energy    — 2fps 64×36 thumbnails, column-sum of pixel difference
+4. Center fallback  — (0.5, 0.5), always succeeds
+```
+
+**Per-sport config tuning:**
+
+| Sport | Min scene | `scene_activity` weight | `audio_energy` weight |
+| -------- | --------- | ----------------------- | --------------------- |
+| Tennis | 4.0s | 3 | 3 |
+| Football | 2.0s | 5 | 5 |
+| Padel | 3.0s | 4 | 3 |
+
+**Adding a new sport — 4 file changes, zero architectural changes:**
+
+1. `modules/compositor/sports_<name>.py` — thin wrapper, set `_SPORT` and `_DEFAULT_LAYOUT`
+2. `run_pipeline.py` — add to `--video-type` choices + `_OVERLAY_REGISTRY` (2-layer entry)
+3. `modules/compositor/compose.py` — add dispatch branch
+4. `config/config.yaml` — add `sports_<name>_*` config sections
 
 ---
 
@@ -442,11 +496,15 @@ shorts-generator/
 │   ├── tts/
 │   ├── subtitle/
 │   ├── compositor/
-│   │   ├── compose.py             # Dispatcher — gameplay or podcast
+│   │   ├── compose.py             # Dispatcher — gameplay, podcast, or sports
 │   │   ├── gameplay_crop.py
 │   │   ├── face_crop.py
 │   │   ├── fallback.py
-│   │   └── podcast.py
+│   │   ├── podcast.py
+│   │   ├── sports_utils.py        # Universal crop filters + shared FFmpeg executor
+│   │   ├── sports_tennis.py       # Tennis wrapper (center_crop default)
+│   │   ├── sports_football.py     # Football wrapper (action_crop default)
+│   │   └── sports_padel.py        # Padel wrapper (center_crop default)
 │   ├── renderer/
 │   ├── thumbnail/
 │   ├── metadata/
@@ -459,7 +517,8 @@ shorts-generator/
 │   │   ├── meta_client.py         # Instagram + Facebook Reels
 │   │   └── visibility.py
 │   ├── strategies/
-│   │   └── podcast_strategy.py    # Transcript-aligned speaker detection
+│   │   ├── podcast_strategy.py    # Transcript-aligned speaker detection
+│   │   └── sports_strategy.py     # Hybrid action-tracking cascade → SportsFramePlan
 │   ├── notifier/
 │   │   └── telegram.py            # Upload + error notifications
 │   └── analytics/
