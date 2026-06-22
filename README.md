@@ -41,26 +41,25 @@ python run_pipeline.py --gpu input.mp4
 # Upload scheduled clips (runs via cron)
 python scripts/upload_scheduler.py
 
-# Auto-pick next raw video and run the pipeline
-python scripts/generation_scheduler.py mrkimbum12
+# Auto-pick next raw video and run the pipeline (account required)
+python scripts/generation_scheduler.py --account mrkimbum12
 ```
 
 **Output layout:**
 
 ```
 output/
-├── {account}/
-│   └── {video_id}/
-│       ├── clips/
-│       │   └── {clip_id}/
-│       │       ├── final.mp4
-│       │       ├── thumbnail.jpg
-│       │       ├── subtitles.ass
-│       │       ├── narration.wav
-│       │       └── metadata.json
-│       ├── report.json
-│       └── pipeline.log
-└── shorts_factory.db
+├── shorts_factory.db                        # global SQLite DB
+└── {account}/                               # e.g. mrkimbum12/
+    └── {video_id}_{video_name}/             # e.g. c9e10a40da590d0d_ultra_instinct-dbz/
+        ├── clips/
+        │   └── shorts-{n}/                  # e.g. shorts-1/, shorts-2/
+        │       ├── clip.mp4
+        │       └── thumbnail.jpg
+        ├── pending_ai_metadata.json          # exported by generation_scheduler
+        ├── ai_metadata_results_new.json      # written by Claude, applied to DB
+        ├── enriched_batch.json               # written by Claude during 8am enrichment
+        └── pipeline.log
 ```
 
 ---
@@ -99,9 +98,26 @@ Each account lives under `config/accounts/<name>/` with its own credentials and 
 config/
 ├── config.yaml                 # global defaults
 └── accounts/
-    └── mrkimbum12/
+    └── mrkimbum12/             # one folder per account
         ├── account.yaml        # per-account overrides (deep-merged)
         └── youtube_credentials.json
+
+output/
+├── shorts_factory.db           # global SQLite DB (single source of truth)
+└── mrkimbum12/                 # account-scoped output
+    └── {video_id}_{video_name}/
+        ├── clips/
+        │   └── shorts-{n}/
+        │       ├── clip.mp4
+        │       └── thumbnail.jpg
+        ├── pending_ai_metadata.json
+        ├── ai_metadata_results_new.json
+        └── pipeline.log
+
+raw/
+└── mrkimbum12/                 # drop source videos here
+    ├── myvideo.mp4
+    └── .processed              # ledger of already-processed filenames
 ```
 
 ---
@@ -337,25 +353,38 @@ Two-tier operational split — heavy CPU generation runs via Claude Cowork at ni
 
 ### Generation — Claude Cowork (nightly, per account)
 
-One Cowork scheduled task per account, staggered 10 minutes apart starting at 02:00 WIB. Each task picks the next unprocessed raw video alphabetically and runs the full pipeline including AI metadata enrichment.
+Two Cowork tasks per account: one for **video generation** (runs the pipeline + AI metadata), one for **AI enrichment** (polishes metadata + regenerates thumbnails + checks queue depth). Tasks are staggered 10 minutes apart per account.
 
-| Account    | Schedule (WIB) | Schedule (UTC) |
-| ---------- | -------------- | -------------- |
-| account1   | 02:00          | 19:00          |
-| account2   | 02:10          | 19:10          |
-| account3   | 02:20          | 19:20          |
-| account4   | 02:30          | 19:30          |
-| account5   | 02:40          | 19:40          |
-| account6   | 02:50          | 19:50          |
-| account7   | 03:00          | 20:00          |
-| account8   | 03:10          | 20:10          |
-| account9   | 03:20          | 20:20          |
-| account10  | 03:30          | 20:30          |
+**Current setup:**
 
-Each Cowork task runs:
+| Task name                  | Account     | Schedule (WIB) | Schedule (UTC) | Purpose                              |
+| -------------------------- | ----------- | -------------- | -------------- | ------------------------------------ |
+| `shorts-generator-8pm`     | mrkimbum12  | 20:00          | 13:00          | Pipeline + AI viral metadata         |
+| `shorts-generator-8am`     | mrkimbum12  | 08:00          | 01:00          | AI enrichment + thumbnails + queue   |
+
+**Adding a new account** — create two new Cowork tasks staggered 10 minutes after the existing ones:
+
+| Task name                  | Account          | Schedule (WIB) | Schedule (UTC) |
+| -------------------------- | ---------------- | -------------- | -------------- |
+| `shorts-generator-8pm-2`   | newaccount       | 20:10          | 13:10          |
+| `shorts-generator-8am-2`   | newaccount       | 08:10          | 01:10          |
+
+Each generation task loops `generation_scheduler.py` until all clips for the current video are fully rendered before exiting:
 
 ```bash
-python scripts/generation_scheduler.py <account-name>
+# Loop until all clips rendered (run inside the Cowork task prompt)
+python scripts/generation_scheduler.py --account mrkimbum12
+# Repeat until unrendered clip count = 0
+```
+
+Each enrichment task runs:
+
+```bash
+python scripts/ai_enricher.py --account mrkimbum12 --export   # export clips needing enrichment
+# Claude rewrites titles/descriptions/tags, then:
+python scripts/ai_enricher.py --account mrkimbum12 --apply output/mrkimbum12/{video_folder}/enriched_batch.json
+python scripts/thumbnail_overlay.py --all
+python scripts/ai_enricher.py --account mrkimbum12 --status   # check queue depth
 ```
 
 ---
@@ -370,48 +399,34 @@ Three upload waves per day. Each wave stagers accounts 5 minutes apart so API ra
 | Wave 2 | 14:00      | 07:00      |
 | Wave 3 | 19:00      | 12:00      |
 
-**Full crontab for 10 accounts (all times UTC):**
+**Current crontab (mrkimbum12, all times UTC):**
 
 ```cron
-SF=/path/to/shorts-generator
+SF=/Users/mekari/Developer/personal-project/shorts-generator
 PY=/opt/homebrew/bin/python3
 LOG=$SF/output/upload_cron.log
 
-# ── Wave 1: 09:00 WIB (02:xx UTC) ──────────────────────────────────────────
- 0  2 * * *  cd $SF && $PY scripts/upload_scheduler.py --account account1  >> $LOG 2>&1  # 09:00 WIB
- 5  2 * * *  cd $SF && $PY scripts/upload_scheduler.py --account account2  >> $LOG 2>&1  # 09:05 WIB
-10  2 * * *  cd $SF && $PY scripts/upload_scheduler.py --account account3  >> $LOG 2>&1  # 09:10 WIB
-15  2 * * *  cd $SF && $PY scripts/upload_scheduler.py --account account4  >> $LOG 2>&1  # 09:15 WIB
-20  2 * * *  cd $SF && $PY scripts/upload_scheduler.py --account account5  >> $LOG 2>&1  # 09:20 WIB
-25  2 * * *  cd $SF && $PY scripts/upload_scheduler.py --account account6  >> $LOG 2>&1  # 09:25 WIB
-30  2 * * *  cd $SF && $PY scripts/upload_scheduler.py --account account7  >> $LOG 2>&1  # 09:30 WIB
-35  2 * * *  cd $SF && $PY scripts/upload_scheduler.py --account account8  >> $LOG 2>&1  # 09:35 WIB
-40  2 * * *  cd $SF && $PY scripts/upload_scheduler.py --account account9  >> $LOG 2>&1  # 09:40 WIB
-45  2 * * *  cd $SF && $PY scripts/upload_scheduler.py --account account10 >> $LOG 2>&1  # 09:45 WIB
+# ── Wave 1: 09:00 WIB (02:00 UTC) ──────────────────────────────────────────
+ 0  2 * * *  cd $SF && $PY scripts/upload_scheduler.py --account mrkimbum12  >> $LOG 2>&1
 
-# ── Wave 2: 14:00 WIB (07:xx UTC) ──────────────────────────────────────────
- 0  7 * * *  cd $SF && $PY scripts/upload_scheduler.py --account account1  >> $LOG 2>&1  # 14:00 WIB
- 5  7 * * *  cd $SF && $PY scripts/upload_scheduler.py --account account2  >> $LOG 2>&1  # 14:05 WIB
-10  7 * * *  cd $SF && $PY scripts/upload_scheduler.py --account account3  >> $LOG 2>&1  # 14:10 WIB
-15  7 * * *  cd $SF && $PY scripts/upload_scheduler.py --account account4  >> $LOG 2>&1  # 14:15 WIB
-20  7 * * *  cd $SF && $PY scripts/upload_scheduler.py --account account5  >> $LOG 2>&1  # 14:20 WIB
-25  7 * * *  cd $SF && $PY scripts/upload_scheduler.py --account account6  >> $LOG 2>&1  # 14:25 WIB
-30  7 * * *  cd $SF && $PY scripts/upload_scheduler.py --account account7  >> $LOG 2>&1  # 14:30 WIB
-35  7 * * *  cd $SF && $PY scripts/upload_scheduler.py --account account8  >> $LOG 2>&1  # 14:35 WIB
-40  7 * * *  cd $SF && $PY scripts/upload_scheduler.py --account account9  >> $LOG 2>&1  # 14:40 WIB
-45  7 * * *  cd $SF && $PY scripts/upload_scheduler.py --account account10 >> $LOG 2>&1  # 14:45 WIB
+# ── Wave 2: 14:00 WIB (07:00 UTC) ──────────────────────────────────────────
+ 0  7 * * *  cd $SF && $PY scripts/upload_scheduler.py --account mrkimbum12  >> $LOG 2>&1
 
-# ── Wave 3: 19:00 WIB (12:xx UTC) ──────────────────────────────────────────
- 0 12 * * *  cd $SF && $PY scripts/upload_scheduler.py --account account1  >> $LOG 2>&1  # 19:00 WIB
- 5 12 * * *  cd $SF && $PY scripts/upload_scheduler.py --account account2  >> $LOG 2>&1  # 19:05 WIB
-10 12 * * *  cd $SF && $PY scripts/upload_scheduler.py --account account3  >> $LOG 2>&1  # 19:10 WIB
-15 12 * * *  cd $SF && $PY scripts/upload_scheduler.py --account account4  >> $LOG 2>&1  # 19:15 WIB
-20 12 * * *  cd $SF && $PY scripts/upload_scheduler.py --account account5  >> $LOG 2>&1  # 19:20 WIB
-25 12 * * *  cd $SF && $PY scripts/upload_scheduler.py --account account6  >> $LOG 2>&1  # 19:25 WIB
-30 12 * * *  cd $SF && $PY scripts/upload_scheduler.py --account account7  >> $LOG 2>&1  # 19:30 WIB
-35 12 * * *  cd $SF && $PY scripts/upload_scheduler.py --account account8  >> $LOG 2>&1  # 19:35 WIB
-40 12 * * *  cd $SF && $PY scripts/upload_scheduler.py --account account9  >> $LOG 2>&1  # 19:40 WIB
-45 12 * * *  cd $SF && $PY scripts/upload_scheduler.py --account account10 >> $LOG 2>&1  # 19:45 WIB
+# ── Wave 3: 19:00 WIB (12:00 UTC) ──────────────────────────────────────────
+ 0 12 * * *  cd $SF && $PY scripts/upload_scheduler.py --account mrkimbum12  >> $LOG 2>&1
+```
+
+**Adding a second account** — append staggered lines (5 min apart per wave):
+
+```cron
+# ── Wave 1 ──────────────────────────────────────────────────────────────────
+ 5  2 * * *  cd $SF && $PY scripts/upload_scheduler.py --account newaccount  >> $LOG 2>&1
+
+# ── Wave 2 ──────────────────────────────────────────────────────────────────
+ 5  7 * * *  cd $SF && $PY scripts/upload_scheduler.py --account newaccount  >> $LOG 2>&1
+
+# ── Wave 3 ──────────────────────────────────────────────────────────────────
+ 5 12 * * *  cd $SF && $PY scripts/upload_scheduler.py --account newaccount  >> $LOG 2>&1
 ```
 
 To apply:
