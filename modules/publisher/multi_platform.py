@@ -13,6 +13,7 @@ for the caller to persist.
 from __future__ import annotations
 
 import logging
+import os
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
@@ -176,6 +177,22 @@ def publish_to_all_platforms(
                         "YouTube upload success: %s", outcome.youtube_id,
                         extra={"stage": "publisher", "clip_id": record.clip_id},
                     )
+                    # Set custom thumbnail after video is uploaded
+                    thumbnail_path = record.file_paths.get("thumbnail", "")
+                    if thumbnail_path and os.path.isfile(thumbnail_path):
+                        thumb_result = youtube_client.set_thumbnail(outcome.youtube_id, thumbnail_path)
+                        if not thumb_result.success:
+                            logger.warning(
+                                "YouTube thumbnail upload failed: %s", thumb_result.error_message,
+                                extra={"stage": "publisher", "clip_id": record.clip_id,
+                                       "youtube_id": outcome.youtube_id},
+                            )
+                    else:
+                        logger.warning(
+                            "YouTube thumbnail file not found, skipping",
+                            extra={"stage": "publisher", "clip_id": record.clip_id,
+                                   "thumbnail_path": thumbnail_path},
+                        )
                 else:
                     results.errors["youtube"] = outcome.error_message or "Unknown error"
                     logger.warning(

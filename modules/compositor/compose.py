@@ -315,11 +315,20 @@ def process(
         RuntimeError: If composition fails after one retry.
     """
     # ── Video type dispatch ─────────────────────────────────────────
-    # Podcast videos use a completely separate composition path.
-    # Gameplay code below is never executed for podcast — full isolation.
+    # Podcast and sports use completely separate composition paths.
+    # Gameplay code below is never executed for non-gameplay types.
     video_type = config.get("video_type", "gameplay")
     if video_type == "podcast":
         return process_podcast(clip, face_result, ingestion_result, config, plan)
+    elif video_type == "sports_tennis":
+        from .sports_tennis import process_sports_tennis
+        return process_sports_tennis(clip, face_result, ingestion_result, config, plan)
+    elif video_type == "sports_football":
+        from .sports_football import process_sports_football
+        return process_sports_football(clip, face_result, ingestion_result, config, plan)
+    elif video_type == "sports_padel":
+        from .sports_padel import process_sports_padel
+        return process_sports_padel(clip, face_result, ingestion_result, config, plan)
 
     pipeline_config = config.get("pipeline", {})
     compositor_config = config.get("compositor", {})

@@ -51,8 +51,8 @@ telegram:
 
 # ── Compositor ─────────────────────────────────────────────────────────────
 compositor:
-  default_layout: "gameplay_only"
-  face_region: "middle_left"
+  default_layout: "split"
+  face_region: "bottom_left"
 
 # ── Thumbnail style ────────────────────────────────────────────────────────
 thumbnail:

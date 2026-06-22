@@ -1,8 +1,141 @@
 # Shorts Factory — Progress Report
 
-**Last Updated:** 2026-06-20
-**Active Phase:** Operations & Multi-Account Infrastructure
-**Phase Status:** ✅ COMPLETE — Pipeline operational, multi-account architecture implemented, per-account config system live
+**Last Updated:** 2026-06-21
+**Active Phase:** Sports Video Type
+**Phase Status:** ✅ COMPLETE — Sports video type implemented with 3 sub-types (tennis, football, padel), 3 layouts, and hybrid action-tracking strategy
+
+---
+
+## Sports Video Type (2026-06-21)
+
+**Status:** ✅ COMPLETE — Sports sub-types (tennis, football, padel), 3 compositor layouts, hybrid tracking strategy
+
+### Summary
+
+Added `sports` as a new first-class video type alongside `gameplay` and `podcast`. Sports is further divided into sport-specific sub-types (`sports_tennis`, `sports_football`, `sports_padel`), each with its own config overlay and compositor defaults. All crop logic is centralized in a shared utility module — no duplication across sports. The architecture is fully additive: adding a new sport requires exactly 4 file changes.
+
+---
+
+### Architecture
+
+**Per-sport wrapper + shared utils:**
+
+```
+run_pipeline.py
+  └─ _OVERLAY_REGISTRY["sports_padel"]
+       ├─ Layer 1: sports_* shared defaults  (ingestion, scene_splitter, face_detection, scoring, compositor)
+       └─ Layer 2: sports_padel_* overrides  (only what differs from shared)
+
+core/orchestrator.py
+  └─ run_compositor()
+       └─ video_type.startswith("sports_") → build SportsFramePlan if layout=sports_action_crop
+
+modules/compositor/compose.py
+  └─ dispatch → sports_tennis.py / sports_football.py / sports_padel.py
+                     └─ process_sports()  (sports_utils.py)
+                           ├─ sports_letterbox_filter
+                           ├─ sports_center_crop_filter
+                           └─ sports_action_crop_filter  ← uses SportsFramePlan
+```
+
+**Hybrid action-tracking cascade (sports_strategy.py):**
+
+```
+1. Face centroid     — weighted avg of face bbox centers (face_visible_ratio ≥ 0.2)
+2. MediaPipe Pose    — extract 1fps frames, run static Pose, avg body landmark centroid
+3. Motion energy     — extract 2fps 64×36 thumbnails, Pillow ImageChops.difference, column-sum peak
+4. Center fallback   — (0.5, 0.5) always succeeds
+```
+
+`tracking_method` field in `SportsFramePlan` records which cascade level succeeded.
+
+---
+
+### Files
+
+| File | Change |
+|------|--------|
+| `modules/compositor/sports_utils.py` | **NEW** — universal crop filter builders + shared FFmpeg executor + `process_sports()` dispatcher |
+| `modules/compositor/sports_tennis.py` | **NEW** — thin wrapper: `_SPORT="tennis"`, `_DEFAULT_LAYOUT="sports_center_crop"` |
+| `modules/compositor/sports_football.py` | **NEW** — thin wrapper: `_SPORT="football"`, `_DEFAULT_LAYOUT="sports_action_crop"` |
+| `modules/compositor/sports_padel.py` | **NEW** — thin wrapper: `_SPORT="padel"`, `_DEFAULT_LAYOUT="sports_center_crop"` |
+| `modules/strategies/sports_strategy.py` | **NEW** — hybrid tracking cascade → `SportsFramePlan` |
+| `contracts/strategies.py` | **MODIFIED** — added `SportsFramePlan` frozen dataclass alongside `PodcastFramePlan` |
+| `core/orchestrator.py` | **MODIFIED** — added `video_type.startswith("sports_")` branch in `run_compositor()` |
+| `modules/compositor/compose.py` | **MODIFIED** — dispatch branches for `sports_tennis`, `sports_football`, `sports_padel` |
+| `run_pipeline.py` | **MODIFIED** — `_OVERLAY_REGISTRY` with 2-layer merge per sport; `--video-type` choices; `--sports-layout` flag |
+| `config/config.yaml` | **MODIFIED** — `sports_*` shared sections + `sports_tennis_*`, `sports_football_*`, `sports_padel_*` overrides |
+
+---
+
+### Layouts
+
+| Layout | Description | Default for |
+|--------|-------------|-------------|
+| `sports_center_crop` | Center column crop to 9:16 | tennis, padel |
+| `sports_letterbox` | Fit full frame, pad with black bars | any (manual override) |
+| `sports_action_crop` | Plan-based crop targeting action anchor | football |
+
+Layout resolution order: `--sports-layout` CLI → `compositor.override_layout` config → sport `_DEFAULT_LAYOUT`. If `sports_action_crop` is requested but strategy produced no plan, falls back to `sports_center_crop` with a warning.
+
+---
+
+### Config Overlay System
+
+Two-layer deep-merge per sport — later layer wins at every leaf:
+
+| Layer | Source | Wins over |
+|-------|--------|-----------|
+| Layer 1 | `sports_*` shared sections | global defaults |
+| Layer 2 | `sports_<subtype>_*` sections | layer 1 |
+
+Per-sport tuning:
+
+| Sport | `min_scene_duration` | `scene_activity` weight | `audio_energy` weight | Default layout |
+|-------|---------------------|------------------------|----------------------|----------------|
+| Tennis | 4.0s | 3 | 3 | `sports_center_crop` |
+| Football | 2.0s | 5 | 5 | `sports_action_crop` |
+| Padel | 3.0s | 4 | 3 | `sports_center_crop` |
+
+---
+
+### SportsFramePlan DTO
+
+```python
+@dataclass(frozen=True)
+class SportsFramePlan:
+    layout: str           # "sports_action_crop" | "sports_center_crop" | "sports_letterbox"
+    sport: str            # "tennis" | "football" | "padel"
+    tracking_method: str  # "face_centroid" | "pose" | "motion_energy" | "center"
+    crop_x: int
+    crop_y: int
+    crop_width: int
+    crop_height: int
+```
+
+---
+
+### Adding a New Sport
+
+Exactly 4 file changes, zero architectural changes:
+
+1. **`modules/compositor/sports_<name>.py`** — copy `sports_padel.py`, set `_SPORT` and `_DEFAULT_LAYOUT`
+2. **`run_pipeline.py`** — add `"sports_<name>"` to `--video-type` choices + `_OVERLAY_REGISTRY` entry (2-layer)
+3. **`modules/compositor/compose.py`** — add `elif video_type == "sports_<name>":` dispatch branch
+4. **`config/config.yaml`** — add `sports_<name>_scene_splitter`, `sports_<name>_scoring`, `sports_<name>_compositor` sections
+
+`contracts/strategies.py`, `core/orchestrator.py`, and `modules/strategies/sports_strategy.py` need **zero changes**.
+
+---
+
+### Architecture Compliance
+
+- ✅ All new compositors are **pure executors** — no tracking/strategy logic inside compositor wrappers
+- ✅ `SportsFramePlan` is a frozen dataclass in `contracts/` (additive, no existing DTO modified)
+- ✅ Gameplay and podcast paths **completely untouched** — zero regression risk
+- ✅ `video_type.startswith("sports_")` covers all current and future sports sub-types in orchestrator
+- ✅ Deterministic — strategy cascade always terminates at center fallback; same inputs = same plan
+- ✅ No cross-module imports — each sport compositor imports only from `contracts/` and `.sports_utils`
 
 ---
 
