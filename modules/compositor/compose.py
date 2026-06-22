@@ -321,13 +321,13 @@ def process(
     if video_type == "podcast":
         return process_podcast(clip, face_result, ingestion_result, config, plan)
     elif video_type == "sports_tennis":
-        from modules.compositor.sports_tennis import process_sports_tennis
+        from .sports_tennis import process_sports_tennis
         return process_sports_tennis(clip, face_result, ingestion_result, config, plan)
     elif video_type == "sports_football":
-        from modules.compositor.sports_football import process_sports_football
+        from .sports_football import process_sports_football
         return process_sports_football(clip, face_result, ingestion_result, config, plan)
     elif video_type == "sports_padel":
-        from modules.compositor.sports_padel import process_sports_padel
+        from .sports_padel import process_sports_padel
         return process_sports_padel(clip, face_result, ingestion_result, config, plan)
 
     pipeline_config = config.get("pipeline", {})

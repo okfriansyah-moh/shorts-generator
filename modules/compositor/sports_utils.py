@@ -42,33 +42,34 @@ OUTPUT_HEIGHT = 1920
 # ---------------------------------------------------------------------------
 
 
-def build_sports_letterbox_filter(src_width: int, src_height: int) -> str:
-    """Scale 16:9 source to fit inside 1080×1920, padded with black bars.
-
-    The source is scaled to exactly 1080px wide (preserving aspect ratio), then
-    centered vertically in a 1080×1920 canvas. For a 1920×1080 source this
-    produces ~608px black bars top and bottom (the canonical letterbox look).
-    """
+def build_sports_letterbox_filter(
+    src_width: int,
+    src_height: int,
+    out_width: int = OUTPUT_WIDTH,
+    out_height: int = OUTPUT_HEIGHT,
+) -> str:
+    """Scale 16:9 source to fit inside out_width×out_height, padded with black bars."""
     return (
-        f"scale={OUTPUT_WIDTH}:-2:flags=lanczos,"
-        f"pad={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}:(ow-iw)/2:(oh-ih)/2:black,"
+        f"scale={out_width}:-2:flags=lanczos,"
+        f"pad={out_width}:{out_height}:(ow-iw)/2:(oh-ih)/2:black,"
         f"setsar=1"
     )
 
 
-def build_sports_center_crop_filter(src_width: int, src_height: int) -> str:
-    """Center-crop 16:9 source to 9:16, scale to 1080×1920 (no black bars).
-
-    Crops the maximum 9:16 width from the horizontal center of the source,
-    then scales to 1080×1920 full-bleed. Mirrors podcast.py::_build_center_crop_filter.
-    """
+def build_sports_center_crop_filter(
+    src_width: int,
+    src_height: int,
+    out_width: int = OUTPUT_WIDTH,
+    out_height: int = OUTPUT_HEIGHT,
+) -> str:
+    """Center-crop 16:9 source to 9:16, scale to out_width×out_height (no black bars)."""
     crop_w = int(round(src_height * (9.0 / 16.0)))
     if crop_w > src_width:
         crop_w = src_width
     crop_x = (src_width - crop_w) // 2
     return (
         f"crop={crop_w}:{src_height}:{crop_x}:0,"
-        f"scale={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}:flags=lanczos,"
+        f"scale={out_width}:{out_height}:flags=lanczos,"
         f"setsar=1"
     )
 
@@ -77,16 +78,13 @@ def build_sports_action_crop_filter(
     src_width: int,
     src_height: int,
     plan: SportsFramePlan,
+    out_width: int = OUTPUT_WIDTH,
+    out_height: int = OUTPUT_HEIGHT,
 ) -> str:
-    """Crop source at the action-tracked window from a SportsFramePlan, scale to 1080×1920.
-
-    The plan carries pre-computed (crop_x, crop_y, crop_width, crop_height) in
-    source pixel space, guaranteed 9:16 by the sports strategy. This function
-    is a pure executor — identical pattern to podcast.py::_build_plan_filter.
-    """
+    """Crop source at the action-tracked window from a SportsFramePlan, scale to out_width×out_height."""
     return (
         f"crop={plan.crop_width}:{plan.crop_height}:{plan.crop_x}:{plan.crop_y},"
-        f"scale={OUTPUT_WIDTH}:{OUTPUT_HEIGHT}:flags=lanczos,"
+        f"scale={out_width}:{out_height}:flags=lanczos,"
         f"setsar=1"
     )
 
@@ -163,6 +161,8 @@ def process_sports(
         or compositor_config.get("default_layout")
         or default_layout
     )
+    out_w = int(compositor_config.get("output_width", OUTPUT_WIDTH))
+    out_h = int(compositor_config.get("output_height", OUTPUT_HEIGHT))
 
     source_path = ingestion_result.path
     src_width, src_height = ingestion_result.resolution
@@ -185,19 +185,19 @@ def process_sports(
             video_id=clip.video_id,
             composite_path=output_path,
             source_audio_path=source_path,
-            resolution=(OUTPUT_WIDTH, OUTPUT_HEIGHT),
+            resolution=(out_w, out_h),
             layout=layout,
             duration_seconds=clip.duration,
             has_face=False,
-            source_fps=float(ingestion_result.fps),
+            source_fps=float(fps),
             start_time_ms=clip.start_time,
         )
 
     # Build the filter string for the chosen layout
     if layout == "sports_letterbox":
-        vf = build_sports_letterbox_filter(src_width, src_height)
+        vf = build_sports_letterbox_filter(src_width, src_height, out_w, out_h)
     elif layout == "sports_action_crop" and plan is not None:
-        vf = build_sports_action_crop_filter(src_width, src_height, plan)
+        vf = build_sports_action_crop_filter(src_width, src_height, plan, out_w, out_h)
     else:
         # center_crop is the safe default for any unknown/None-plan case
         if layout == "sports_action_crop" and plan is None:
@@ -207,7 +207,7 @@ def process_sports(
                 extra={"clip_id": clip.clip_id, "stage": "compositor", "sport": sport},
             )
             layout = "sports_center_crop"
-        vf = build_sports_center_crop_filter(src_width, src_height)
+        vf = build_sports_center_crop_filter(src_width, src_height, out_w, out_h)
 
     logger.info(
         "Compositing sports clip",
@@ -228,10 +228,10 @@ def process_sports(
         video_id=clip.video_id,
         composite_path=output_path,
         source_audio_path=source_path,
-        resolution=(OUTPUT_WIDTH, OUTPUT_HEIGHT),
+        resolution=(out_w, out_h),
         layout=layout,
         duration_seconds=clip.duration,
         has_face=False,
-        source_fps=float(ingestion_result.fps),
+        source_fps=float(fps),
         start_time_ms=clip.start_time,
     )

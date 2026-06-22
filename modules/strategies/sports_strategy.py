@@ -36,7 +36,6 @@ _VERTICAL_ASPECT: float = 9.0 / 16.0
 # ── Algorithm defaults (all overridable via config.sports_strategy) ────────────
 
 _DEFAULT_MIN_FACE_VISIBILITY: float = 0.2
-_DEFAULT_EMA_ALPHA: float = 0.3
 _DEFAULT_POSE_SAMPLE_FPS: int = 1
 _DEFAULT_MOTION_SAMPLE_FPS: int = 2
 _DEFAULT_MOTION_THUMB_WIDTH: int = 64

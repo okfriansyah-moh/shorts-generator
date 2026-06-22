@@ -74,14 +74,19 @@ class DatabaseAdapter:
         return dict(row) if row else None
 
     def video_id_exists(self, video_id: str) -> bool:
-        """Return True if a video with this content-hash ID is already in the DB.
+        """Return True only if this video has been *fully processed* (status='processed').
+
+        A video_id that exists in the DB with any other status (e.g. 'ingested')
+        is a partial/interrupted run — it should be resumed, not skipped as a duplicate.
 
         Used by generation_scheduler to skip re-processing renamed duplicates.
         """
         row = self._conn.execute(
-            "SELECT 1 FROM videos WHERE video_id = ? LIMIT 1", (video_id,)
+            "SELECT status FROM videos WHERE video_id = ? LIMIT 1", (video_id,)
         ).fetchone()
-        return row is not None
+        if row is None:
+            return False
+        return row[0] == "processed"
 
     def get_clip_youtube_id(self, clip_id: str) -> str | None:
         """Return the youtube_id for a clip, or None if not yet published.
