@@ -291,49 +291,206 @@ def main() -> int:
         extra={"stage": "generation_scheduler", "video_id": "", "video": basename},
     )
 
-    # ── Run pipeline ───────────────────────────────────────────────────────
-    result = subprocess.run(
-        [
-            sys.executable,
-            os.path.join(_PROJECT_ROOT, "run_pipeline.py"),
-            "--account", account_name,
-            video_path,
-        ],
-        cwd=_PROJECT_ROOT,
-    )
+    # ── Check if clips already built but not yet rendered (resume render) ──
+    #
+    # The Cowork sandbox has a ~45 s per-call limit.  The full pipeline
+    # (audio analysis ~9 s + scoring ~20 s + 7 clips × 8 s FFmpeg ≈ 85 s)
+    # exceeds that budget.  The strategy:
+    #
+    #   Call 1  – run pipeline with a 33 s subprocess timeout so clip_builder
+    #             completes and clips land in the DB, then render the first
+    #             batch of clips (up to RENDER_BATCH_SIZE).
+    #   Call 2+ – skip straight to rendering the next unrendered batch.
+    #   Final   – once all clips have video_path, export metadata and mark done.
+    #
+    RENDER_BATCH_SIZE = 4   # clips per scheduler call (~32 s of FFmpeg)
+    PIPELINE_TIMEOUT  = 33  # seconds — enough for clip_builder; kills compositor
 
-    if result.returncode != 0:
-        logger.error(
-            "generation_scheduler: pipeline failed for %s (exit %d)",
-            basename,
-            result.returncode,
-            extra={"stage": "generation_scheduler", "video_id": "", "exit_code": result.returncode},
-        )
-        return 1
+    db_path = config.get("paths", {}).get("database", "output/shorts_factory.db")
+    if not os.path.isabs(db_path):
+        db_path = os.path.join(_PROJECT_ROOT, db_path)
 
-    # ── Mark processed ─────────────────────────────────────────────────────
-    _mark_processed(basename, raw_dir)
-    logger.info(
-        "generation_scheduler: pipeline complete — %s marked as processed",
-        basename,
-        extra={"stage": "generation_scheduler", "video_id": ""},
-    )
+    def _get_unrendered_clips(vid_id: str) -> list[tuple]:
+        """Return (clip_id, clip_index) pairs for clips that have no video_path yet."""
+        try:
+            conn = initialize_database(db_path)
+            c = conn.cursor()
+            c.execute(
+                "SELECT clip_id FROM clips WHERE video_id=? AND (video_path IS NULL OR video_path='') "
+                "ORDER BY start_time",
+                (vid_id,),
+            )
+            rows = [(r[0], i) for i, r in enumerate(c.fetchall())]
+            conn.close()
+            return rows
+        except Exception as exc:
+            logger.warning("generation_scheduler: DB query failed — %s", exc,
+                           extra={"stage": "generation_scheduler", "video_id": vid_id})
+            return []
 
-    # ── Export metadata for Cowork Claude agent ───────────────────────────
-    export_path = _export_pending_ai_metadata(config)
-    if export_path:
+    def _all_clips_rendered(vid_id: str) -> bool:
+        try:
+            conn = initialize_database(db_path)
+            c = conn.cursor()
+            c.execute(
+                "SELECT COUNT(*) FROM clips WHERE video_id=? AND (video_path IS NULL OR video_path='')",
+                (vid_id,),
+            )
+            count = c.fetchone()[0]
+            c.execute("SELECT COUNT(*) FROM clips WHERE video_id=?", (vid_id,))
+            total = c.fetchone()[0]
+            conn.close()
+            return total > 0 and count == 0
+        except Exception:
+            return False
+
+    # Compute the video_id so we can query clips before / after pipeline run
+    computed_video_id = video_id  # may be "" if _is_duplicate_source returned no match
+    if not computed_video_id:
+        computed_video_id = _compute_video_id(video_path)
+
+    unrendered_before = _get_unrendered_clips(computed_video_id)
+    clips_exist = len(unrendered_before) > 0 or _all_clips_rendered(computed_video_id)
+
+    # ── Run pipeline (with timeout so clip_builder can complete) ───────────
+    if not clips_exist:
         logger.info(
-            "generation_scheduler: exported pending AI metadata → %s\n"
-            "  → Open Cowork and ask Claude to generate viral metadata from this file,\n"
-            "    then run: python3 scripts/apply_ai_metadata.py",
-            export_path,
+            "generation_scheduler: running pipeline on %s (video_id=%s, timeout=%ds)",
+            basename, computed_video_id or "pending", PIPELINE_TIMEOUT,
             extra={"stage": "generation_scheduler", "video_id": ""},
         )
+        try:
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    os.path.join(_PROJECT_ROOT, "run_pipeline.py"),
+                    "--account", account_name,
+                    video_path,
+                ],
+                cwd=_PROJECT_ROOT,
+                timeout=PIPELINE_TIMEOUT,
+            )
+            pipeline_exit = result.returncode
+        except subprocess.TimeoutExpired:
+            logger.warning(
+                "generation_scheduler: pipeline subprocess hit %ds timeout — "
+                "clip_builder should have finished; proceeding to render phase.",
+                PIPELINE_TIMEOUT,
+                extra={"stage": "generation_scheduler", "video_id": ""},
+            )
+            pipeline_exit = 0  # treat as partial success; clips may be in DB
+        except Exception as exc:
+            logger.error("generation_scheduler: pipeline error — %s", exc,
+                         extra={"stage": "generation_scheduler", "video_id": ""})
+            return 1
+
+        if pipeline_exit not in (0, None):
+            logger.error(
+                "generation_scheduler: pipeline failed for %s (exit %d)",
+                basename, pipeline_exit,
+                extra={"stage": "generation_scheduler", "video_id": "", "exit_code": pipeline_exit},
+            )
+            return 1
     else:
         logger.info(
-            "generation_scheduler: no clips exported (pipeline may have produced none)",
+            "generation_scheduler: clips already in DB for %s — skipping pipeline, resuming render",
+            computed_video_id,
+            extra={"stage": "generation_scheduler", "video_id": computed_video_id},
+        )
+
+    # ── Render unrendered clips (batched to fit within sandbox time limit) ─
+    unrendered = _get_unrendered_clips(computed_video_id)
+
+    if unrendered:
+        batch = unrendered[:RENDER_BATCH_SIZE]
+        start_idx = batch[0][1]
+        end_idx   = batch[-1][1]
+
+        # Map global indices to per-batch 0-based indices for direct_render_clips.py
+        # The script expects 0-based indices into the full ordered clip list.
+        # Compute the absolute indices of ALL clips (rendered + unrendered).
+        try:
+            conn = initialize_database(db_path)
+            c = conn.cursor()
+            c.execute(
+                "SELECT clip_id FROM clips WHERE video_id=? ORDER BY start_time",
+                (computed_video_id,),
+            )
+            all_clip_ids = [r[0] for r in c.fetchall()]
+            conn.close()
+        except Exception:
+            all_clip_ids = []
+
+        # Find absolute indices of unrendered clips
+        unrendered_ids = [cid for cid, _ in unrendered]
+        abs_indices = [all_clip_ids.index(cid) for cid in unrendered_ids[:RENDER_BATCH_SIZE]
+                       if cid in all_clip_ids]
+
+        if abs_indices:
+            abs_start = abs_indices[0]
+            abs_end   = abs_indices[-1]
+            logger.info(
+                "generation_scheduler: rendering clips %d-%d (batch of %d)",
+                abs_start + 1, abs_end + 1, len(abs_indices),
+                extra={"stage": "generation_scheduler", "video_id": computed_video_id},
+            )
+            render_result = subprocess.run(
+                [
+                    sys.executable,
+                    os.path.join(_PROJECT_ROOT, "scripts", "direct_render_clips.py"),
+                    "--video-id", computed_video_id,
+                    "--batch", str(abs_start), str(abs_end),
+                ],
+                cwd=_PROJECT_ROOT,
+            )
+            if render_result.returncode != 0:
+                logger.error(
+                    "generation_scheduler: render script failed (exit %d)",
+                    render_result.returncode,
+                    extra={"stage": "generation_scheduler", "video_id": computed_video_id},
+                )
+                return 1
+
+        # Check if more clips remain — if so, exit cleanly so next invocation
+        # continues rendering the next batch.
+        still_unrendered = _get_unrendered_clips(computed_video_id)
+        if still_unrendered:
+            remaining = len(still_unrendered)
+            logger.info(
+                "generation_scheduler: %d clip(s) still unrendered — "
+                "will finish on next scheduled run.",
+                remaining,
+                extra={"stage": "generation_scheduler", "video_id": computed_video_id},
+            )
+            return 0
+    else:
+        logger.info(
+            "generation_scheduler: all clips already rendered for %s",
+            computed_video_id,
+            extra={"stage": "generation_scheduler", "video_id": computed_video_id},
+        )
+
+    # ── All clips rendered — mark video processed and export metadata ──────
+    if _all_clips_rendered(computed_video_id):
+        _mark_processed(basename, raw_dir)
+        logger.info(
+            "generation_scheduler: all clips rendered — %s marked as processed",
+            basename,
             extra={"stage": "generation_scheduler", "video_id": ""},
         )
+
+        export_path = _export_pending_ai_metadata(config)
+        if export_path:
+            logger.info(
+                "generation_scheduler: exported pending AI metadata → %s",
+                export_path,
+                extra={"stage": "generation_scheduler", "video_id": ""},
+            )
+        else:
+            logger.info(
+                "generation_scheduler: no clips to export metadata for",
+                extra={"stage": "generation_scheduler", "video_id": ""},
+            )
 
     logger.info("generation_scheduler: done", extra={"stage": "generation_scheduler", "video_id": ""})
     return 0
