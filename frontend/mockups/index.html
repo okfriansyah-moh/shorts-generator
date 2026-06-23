@@ -1,0 +1,1518 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Shorts Factory — UI Mockup</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --font: 'Plus Jakarta Sans', system-ui, sans-serif;
+
+      /* Green + blue studio palette */
+      --bg: #dff4f8;
+      --text: #0c3d4a;
+      --text-secondary: #155e75;
+      --text-muted: #5b7c8a;
+
+      --surface: rgba(255, 255, 255, 0.58);
+      --surface-solid: #f0faf9;
+      --surface-hover: rgba(255, 255, 255, 0.82);
+      --input-bg: rgba(255, 255, 255, 0.88);
+
+      --border: rgba(2, 132, 199, 0.14);
+      --border-soft: rgba(2, 132, 199, 0.08);
+
+      --blue: #0284c7;
+      --green: #059669;
+      --teal: #0d9488;
+      --sky: #38bdf8;
+
+      --accent: #0284c7;
+      --accent-hover: #0369a1;
+      --gradient-brand: linear-gradient(135deg, #059669 0%, #0d9488 45%, #0284c7 100%);
+
+      --shadow-panel: 0 1px 2px rgba(12, 61, 74, 0.04), 0 12px 40px rgba(2, 132, 199, 0.1);
+      --shadow-soft: 0 4px 20px rgba(2, 132, 199, 0.08);
+      --radius: 16px;
+      --radius-sm: 10px;
+      --transition: 0.18s ease;
+      --sidebar-width: 232px;
+      --sidebar-collapsed: 72px;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; }
+
+    html, body { height: 100%; overflow: hidden; }
+
+    body {
+      margin: 0;
+      font-family: var(--font);
+      font-size: 14px;
+      line-height: 1.55;
+      color: var(--text);
+      background: var(--bg);
+      -webkit-font-smoothing: antialiased;
+    }
+
+    h1, h2, h3 { margin: 0; letter-spacing: -0.025em; }
+    h2 { font-size: 1.45rem; font-weight: 700; }
+    h3 { font-size: 0.9375rem; font-weight: 600; }
+    p { margin: 0; }
+
+    body::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      z-index: 0;
+      pointer-events: none;
+      background:
+        radial-gradient(ellipse 70% 55% at 0% 0%, rgba(56, 189, 248, 0.32), transparent 55%),
+        radial-gradient(ellipse 55% 50% at 100% 5%, rgba(5, 150, 105, 0.28), transparent 50%),
+        radial-gradient(ellipse 65% 50% at 50% 100%, rgba(13, 148, 136, 0.22), transparent 55%),
+        radial-gradient(ellipse 40% 35% at 80% 70%, rgba(2, 132, 199, 0.18), transparent 50%),
+        var(--bg);
+    }
+
+    .shell { position: relative; z-index: 1; display: flex; height: 100vh; overflow: hidden; }
+
+    /* Sidebar */
+    .sidebar {
+      width: var(--sidebar-width);
+      flex-shrink: 0;
+      padding: 20px 14px;
+      background: rgba(255, 255, 255, 0.45);
+      backdrop-filter: blur(24px);
+      -webkit-backdrop-filter: blur(24px);
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      height: 100vh;
+      overflow-x: hidden;
+      overflow-y: auto;
+      transition: width var(--transition), padding var(--transition);
+    }
+
+    .shell.is-collapsed .sidebar {
+      width: var(--sidebar-collapsed);
+      padding: 20px 10px;
+    }
+
+    .sidebar-top {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .sidebar-collapse-btn {
+      flex-shrink: 0;
+      width: 28px;
+      height: 28px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--surface);
+      color: var(--text-secondary);
+      cursor: pointer;
+      display: grid;
+      place-items: center;
+      font-size: 0.75rem;
+      transition: background var(--transition), color var(--transition);
+    }
+    .sidebar-collapse-btn:hover { background: var(--surface-hover); color: var(--text); }
+    .shell.is-collapsed .sidebar-collapse-btn { transform: rotate(180deg); }
+
+    .brand-text { min-width: 0; transition: opacity var(--transition); }
+    .shell.is-collapsed .brand-text,
+    .shell.is-collapsed .channel-box,
+    .shell.is-collapsed .nav-section,
+    .shell.is-collapsed .nav-text,
+    .shell.is-collapsed .link-btn { display: none; }
+
+    .shell.is-collapsed .brand { justify-content: center; width: 100%; }
+    .shell.is-collapsed .sidebar-top {
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+    }
+    .shell.is-collapsed .sidebar-collapse-btn { margin: 0; }
+    .shell.is-collapsed .nav-label {
+      justify-content: center;
+      padding: 10px 8px;
+    }
+    .shell.is-collapsed .nav-label[title] { position: relative; }
+
+    .brand { display: flex; gap: 12px; align-items: center; padding: 2px 4px 6px; }
+    .brand-mark {
+      width: 34px; height: 34px; border-radius: 10px;
+      background: var(--gradient-brand);
+      box-shadow: 0 4px 14px rgba(2, 132, 199, 0.28);
+      flex-shrink: 0;
+    }
+    .brand-name {
+      font-weight: 700; font-size: 0.9375rem;
+      background: var(--gradient-brand);
+      -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-clip: text;
+    }
+    .brand-tag { font-size: 0.75rem; color: var(--text-muted); margin-top: 2px; }
+
+    .channel-box {
+      padding: 12px 14px;
+      border-radius: var(--radius-sm);
+      background: var(--surface);
+      border: 1px solid var(--border-soft);
+      box-shadow: var(--shadow-soft);
+    }
+    .channel-box label {
+      font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.07em;
+      color: var(--text-muted); display: block; margin-bottom: 8px; font-weight: 600;
+    }
+    .channel-box .link-btn {
+      margin-top: 10px; background: none; border: none;
+      color: var(--blue); cursor: pointer; font-size: 0.8125rem; font-weight: 600; padding: 0;
+      font-family: inherit;
+    }
+
+    .nav-section {
+      font-size: 0.65rem; text-transform: uppercase; letter-spacing: 0.09em;
+      color: var(--text-muted); padding: 6px 8px 2px; font-weight: 600;
+    }
+
+    .nav-label {
+      display: flex; align-items: center; gap: 10px;
+      width: 100%;
+      padding: 9px 10px; border-radius: var(--radius-sm);
+      font-size: 0.8125rem; color: var(--text-secondary);
+      cursor: pointer; transition: background var(--transition), color var(--transition);
+      border: none; background: transparent; font-family: inherit; text-align: left;
+    }
+    .nav-label:hover { background: var(--surface); color: var(--text); }
+
+    .nav-icon {
+      width: 26px; height: 26px; border-radius: 7px;
+      display: grid; place-items: center;
+      font-size: 0.62rem; font-weight: 700; flex-shrink: 0;
+      background: rgba(2, 132, 199, 0.1); color: var(--blue);
+    }
+
+    .nav-label.is-active {
+      background: var(--surface-hover);
+      color: var(--text);
+      font-weight: 600;
+      box-shadow: var(--shadow-soft);
+    }
+
+    /* Main layout — one section visible at a time */
+    .main {
+      flex: 1;
+      min-width: 0;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .view-port {
+      flex: 1;
+      min-height: 0;
+      overflow-y: auto;
+      overflow-x: hidden;
+      padding: 28px 32px 48px;
+    }
+
+    .page {
+      display: none !important;
+    }
+    .page.is-active {
+      display: block !important;
+      animation: fadeIn 0.25s ease;
+    }
+
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+
+    .stack { display: flex; flex-direction: column; gap: 20px; }
+    .row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .row-between { justify-content: space-between; }
+    .grid-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
+    .grid-3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 16px; }
+    .bento { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+    .panel-span-2 { grid-column: span 2; }
+
+    /* Combined activity panel (home) */
+    .activity-panel .panel-body { padding: 0; }
+    .activity-layout {
+      display: grid;
+      grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+    }
+    .activity-main {
+      padding: 22px 24px;
+      border-right: 1px solid var(--border-soft);
+    }
+    .activity-side { display: flex; flex-direction: column; }
+    .activity-item {
+      flex: 1;
+      padding: 18px 22px;
+      border-bottom: 1px solid var(--border-soft);
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      gap: 6px;
+    }
+    .activity-item:last-child { border-bottom: none; }
+    .activity-time {
+      font-size: 0.7rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--teal);
+    }
+    .activity-time.now { color: var(--green); }
+    .activity-link {
+      margin-top: 6px;
+      align-self: flex-start;
+      padding-left: 0;
+      padding-right: 0;
+    }
+    .small { font-size: 0.8125rem; }
+    .muted { color: var(--text-muted); }
+    .semibold { font-weight: 600; }
+    .eyebrow {
+      font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.1em;
+      color: var(--teal); font-weight: 700; margin-bottom: 8px;
+    }
+    hr { border: none; border-top: 1px solid var(--border); margin: 16px 0; }
+
+    /* Page header — no heavy card */
+    .page-header {
+      display: flex; align-items: flex-start; justify-content: space-between;
+      gap: 20px; flex-wrap: wrap; padding-bottom: 4px;
+    }
+    .page-header p { font-size: 0.9rem; color: var(--text-secondary); max-width: 54ch; margin-top: 8px; line-height: 1.5; }
+
+    /* Elegant minimal panel */
+    .panel {
+      border-radius: var(--radius);
+      background: var(--surface);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid var(--border-soft);
+      box-shadow: var(--shadow-panel);
+      overflow: hidden;
+      transition: box-shadow var(--transition);
+    }
+    .panel:hover { box-shadow: 0 1px 2px rgba(12, 61, 74, 0.04), 0 16px 48px rgba(2, 132, 199, 0.12); }
+    .panel-body { padding: 20px 22px; }
+    .panel-head {
+      padding: 14px 22px;
+      border-bottom: 1px solid var(--border-soft);
+      font-weight: 600; font-size: 0.875rem;
+      background: rgba(255, 255, 255, 0.35);
+    }
+
+    /* Metrics row */
+    .metrics {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+    }
+    .metric {
+      padding: 18px 20px;
+      border-radius: var(--radius);
+      background: var(--surface);
+      backdrop-filter: blur(12px);
+      border: 1px solid var(--border-soft);
+      box-shadow: var(--shadow-panel);
+    }
+    .metric-value { font-size: 1.6rem; font-weight: 700; letter-spacing: -0.03em; color: var(--text); }
+    .metric-value.small { font-size: 1.15rem; }
+    .metric-label { font-size: 0.75rem; color: var(--text-muted); margin-top: 4px; font-weight: 500; }
+    .metric-dot {
+      width: 6px; height: 6px; border-radius: 50%;
+      display: inline-block; margin-bottom: 10px;
+    }
+    .metric-dot.blue { background: var(--blue); }
+    .metric-dot.green { background: var(--green); }
+    .metric-dot.teal { background: var(--teal); }
+    .metric-dot.sky { background: var(--sky); }
+
+    /* Buttons — unified across all pages */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 10px 18px;
+      border-radius: var(--radius-sm);
+      font-weight: 600;
+      font-size: 0.875rem;
+      line-height: 1.2;
+      cursor: pointer;
+      border: 1px solid transparent;
+      text-decoration: none;
+      font-family: inherit;
+      white-space: nowrap;
+      transition: background var(--transition), border-color var(--transition),
+        box-shadow var(--transition), transform var(--transition), color var(--transition);
+    }
+    .btn:hover { transform: translateY(-1px); }
+    .btn:active { transform: translateY(0); }
+
+    .btn-primary {
+      background: linear-gradient(135deg, var(--green) 0%, var(--teal) 48%, var(--blue) 100%);
+      color: #ffffff;
+      border-color: transparent;
+      box-shadow: 0 4px 14px rgba(2, 132, 199, 0.28);
+    }
+    .btn-primary:hover {
+      box-shadow: 0 6px 20px rgba(2, 132, 199, 0.38);
+      filter: brightness(1.04);
+    }
+
+    .btn-secondary {
+      background: rgba(255, 255, 255, 0.72);
+      color: var(--blue);
+      border-color: rgba(2, 132, 199, 0.32);
+      box-shadow: var(--shadow-soft);
+    }
+    .btn-secondary:hover {
+      background: rgba(255, 255, 255, 0.92);
+      border-color: var(--blue);
+      color: var(--accent-hover);
+    }
+
+    .btn-ghost {
+      background: transparent;
+      color: var(--blue);
+      border-color: transparent;
+      box-shadow: none;
+      padding: 10px 14px;
+    }
+    .btn-ghost:hover {
+      background: rgba(2, 132, 199, 0.08);
+      color: var(--accent-hover);
+    }
+
+    .btn-lg {
+      padding: 16px 36px;
+      font-size: 1.05rem;
+      border-radius: 12px;
+      min-width: min(100%, 300px);
+    }
+
+    .page-actions {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 12px;
+    }
+    .page-actions--center {
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      text-align: center;
+      padding: 24px 0 4px;
+      gap: 14px;
+    }
+    .page-actions--end {
+      justify-content: flex-end;
+    }
+
+    /* Tags */
+    .tag {
+      display: inline-block; padding: 3px 10px; border-radius: 999px;
+      font-size: 0.7rem; font-weight: 600;
+      background: rgba(2, 132, 199, 0.1); color: var(--blue);
+    }
+    .tag-live { background: rgba(5, 150, 105, 0.14); color: var(--green); }
+    .tag-blue { background: rgba(2, 132, 199, 0.1); color: var(--blue); }
+    .tag-green { background: rgba(5, 150, 105, 0.1); color: var(--green); }
+    .tag-teal { background: rgba(13, 148, 136, 0.1); color: var(--teal); }
+    .tag-sky { background: rgba(56, 189, 248, 0.15); color: #0369a1; }
+
+    .dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+    .dot-blue { background: var(--blue); }
+    .dot-green { background: var(--green); }
+    .dot-teal { background: var(--teal); }
+    .dot-sky { background: var(--sky); }
+
+    /* Table */
+    .panel table.data { border: none; border-radius: 0; box-shadow: none; background: transparent; }
+    table.data {
+      width: 100%; border-collapse: collapse;
+      background: var(--surface);
+      border: 1px solid var(--border-soft);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow-panel);
+      overflow: hidden;
+    }
+    table.data th, table.data td {
+      padding: 13px 18px; text-align: left;
+      border-bottom: 1px solid var(--border-soft); color: var(--text);
+    }
+    table.data th {
+      background: rgba(255, 255, 255, 0.4);
+      font-size: 0.68rem; font-weight: 700;
+      color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.07em;
+    }
+    table.data tbody tr:hover { background: rgba(255, 255, 255, 0.35); }
+    table.data tr:last-child td { border-bottom: none; }
+
+    /* Upload */
+    .upload-zone {
+      padding: 36px 28px; border-radius: var(--radius-sm);
+      border: 1.5px dashed rgba(2, 132, 199, 0.28);
+      background: rgba(255, 255, 255, 0.35);
+      text-align: center;
+      transition: border-color var(--transition), background var(--transition);
+    }
+    .upload-zone:hover {
+      border-color: rgba(2, 132, 199, 0.45);
+      background: rgba(255, 255, 255, 0.5);
+    }
+    .upload-icon {
+      width: 44px; height: 44px; margin: 0 auto 12px;
+      border-radius: 12px; background: var(--gradient-brand); opacity: 0.9;
+    }
+    .upload-zone .title { font-weight: 700; margin-bottom: 6px; }
+    .upload-zone .hint { font-size: 0.8125rem; color: var(--text-muted); margin-bottom: 14px; }
+
+    /* Progress */
+    .progress-labels { display: flex; justify-content: space-between; font-size: 0.75rem; color: var(--text-muted); margin-bottom: 8px; }
+    .progress-bar { height: 5px; background: rgba(2, 132, 199, 0.12); border-radius: 99px; overflow: hidden; display: flex; }
+    .progress-done { background: var(--green); width: 43%; }
+    .progress-active { background: var(--blue); width: 14%; }
+
+    .pipeline-detail {
+      padding: 0 24px 22px;
+      border-top: 1px solid var(--border-soft);
+      background: rgba(255, 255, 255, 0.35);
+    }
+    .pipeline-detail-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 16px;
+      padding-top: 18px;
+      margin-bottom: 14px;
+    }
+    .pipeline-steps {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 0;
+    }
+    .pipeline-steps li {
+      display: grid;
+      grid-template-columns: 28px minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 12px;
+      padding: 11px 0;
+      border-bottom: 1px solid var(--border-soft);
+      font-size: 0.875rem;
+    }
+    .pipeline-steps li:last-child { border-bottom: none; }
+    .pipeline-step-marker {
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.7rem;
+      font-weight: 700;
+      background: rgba(2, 132, 199, 0.08);
+      color: var(--text-muted);
+      border: 1px solid var(--border-soft);
+    }
+    .pipeline-steps li.is-done .pipeline-step-marker {
+      background: rgba(5, 150, 105, 0.12);
+      border-color: rgba(5, 150, 105, 0.25);
+      color: var(--green);
+    }
+    .pipeline-steps li.is-active .pipeline-step-marker {
+      background: var(--gradient-brand);
+      border-color: transparent;
+      color: #fff;
+      box-shadow: 0 0 0 4px rgba(2, 132, 199, 0.12);
+    }
+    .pipeline-steps li.is-active .pipeline-step-label { font-weight: 600; color: var(--text); }
+    .pipeline-step-meta { font-size: 0.75rem; color: var(--text-muted); }
+
+    /* Callouts */
+    .callout {
+      padding: 14px 18px; border-radius: var(--radius-sm);
+      background: rgba(255, 255, 255, 0.5);
+      border: 1px solid var(--border);
+      color: var(--text-secondary); font-size: 0.875rem;
+      box-shadow: var(--shadow-soft);
+    }
+    .callout strong { color: var(--teal); }
+    .callout-success {
+      padding: 14px 18px; border-radius: var(--radius-sm);
+      background: rgba(5, 150, 105, 0.08);
+      border: 1px solid rgba(5, 150, 105, 0.2);
+      color: var(--green); font-size: 0.875rem;
+    }
+
+    /* Forms */
+    .input, .field input, .field select, select.native {
+      width: 100%; padding: 10px 12px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      background: var(--input-bg);
+      color: var(--text); font-family: inherit; font-size: 0.875rem;
+      transition: border-color var(--transition), box-shadow var(--transition);
+    }
+    .input:focus, .field input:focus, .field select:focus, select.native:focus {
+      outline: none;
+      border-color: rgba(2, 132, 199, 0.45);
+      box-shadow: 0 0 0 3px rgba(2, 132, 199, 0.12);
+    }
+    .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+    .field-hint { font-size: 0.75rem; color: var(--text-muted); }
+    .checks label {
+      display: flex; align-items: center; gap: 10px;
+      font-size: 0.875rem; color: var(--text-secondary);
+      margin-bottom: 10px; cursor: pointer;
+    }
+
+    .mono {
+      font-family: ui-monospace, 'SF Mono', monospace;
+      font-size: 0.75rem; color: var(--text-secondary); line-height: 1.7;
+    }
+
+    .steps { list-style: none; padding: 0; margin: 14px 0 0; display: flex; flex-direction: column; gap: 0; }
+    .steps li {
+      display: flex; justify-content: space-between; align-items: center; gap: 12px;
+      font-size: 0.875rem; padding: 12px 0;
+      border-bottom: 1px solid var(--border-soft);
+    }
+    .steps li:last-child { border-bottom: none; }
+
+    .channel-btn {
+      display: flex; align-items: center; gap: 12px; width: 100%; text-align: left;
+      padding: 12px 14px; border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      background: rgba(255, 255, 255, 0.55);
+      cursor: pointer; color: var(--text); font-family: inherit;
+      transition: background var(--transition);
+    }
+    .channel-btn:hover { background: var(--surface-hover); }
+
+    /* Social platforms */
+    .platform-section { margin-top: 20px; padding-top: 18px; border-top: 1px solid var(--border-soft); }
+    .platform-section-head {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 12px; margin-bottom: 14px;
+    }
+    .platform-list { display: flex; flex-direction: column; gap: 10px; }
+    .platform-row {
+      display: grid;
+      grid-template-columns: auto 1fr auto auto;
+      align-items: center;
+      gap: 12px;
+      padding: 12px 14px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border-soft);
+      background: rgba(255, 255, 255, 0.45);
+    }
+    .platform-icon {
+      width: 32px; height: 32px; border-radius: 8px;
+      display: grid; place-items: center;
+      font-size: 0.62rem; font-weight: 800; color: #fff;
+      flex-shrink: 0;
+    }
+    .platform-icon.yt { background: linear-gradient(135deg, #ff0000, #cc0000); }
+    .platform-icon.tt { background: linear-gradient(135deg, #0f172a, #25f4ee); }
+    .platform-icon.ig { background: linear-gradient(135deg, #f58529, #dd2a7b, #8134af); }
+    .platform-icon.fb { background: linear-gradient(135deg, #1877f2, #0d65d9); }
+    .platform-meta { min-width: 0; }
+    .platform-name { font-weight: 600; font-size: 0.875rem; display: block; }
+    .platform-hint { font-size: 0.75rem; color: var(--text-muted); margin-top: 2px; }
+    .platform-actions { display: flex; align-items: center; gap: 8px; }
+    .add-platform {
+      margin-top: 14px;
+      padding: 14px;
+      border-radius: var(--radius-sm);
+      border: 1.5px dashed rgba(2, 132, 199, 0.28);
+      background: rgba(255, 255, 255, 0.35);
+    }
+    .add-platform-label {
+      font-size: 0.75rem; font-weight: 600; color: var(--text-muted);
+      text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 10px;
+    }
+    .add-platform-form {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 10px;
+      align-items: center;
+    }
+    @media (max-width: 600px) {
+      .add-platform-form { grid-template-columns: 1fr; }
+      .platform-row { grid-template-columns: auto 1fr; grid-template-rows: auto auto; }
+      .platform-actions { grid-column: 1 / -1; justify-content: flex-end; }
+    }
+
+    details summary { cursor: pointer; font-weight: 600; list-style: none; }
+    details summary::-webkit-details-marker { display: none; }
+
+    .wizard-steps { display: flex; gap: 8px; flex-wrap: wrap; }
+    .wizard-steps .tag { padding: 6px 14px; }
+    .wizard-steps .tag-live { background: var(--blue); color: #fff; }
+
+    .panel-title { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+
+    /* Automation — Cowork vs crontab */
+    .auto-intro {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 12px;
+    }
+    .auto-intro-card {
+      padding: 14px 16px;
+      border-radius: var(--radius-sm);
+      border: 1px solid var(--border-soft);
+      background: rgba(255, 255, 255, 0.5);
+    }
+    .auto-intro-card h3 { font-size: 0.875rem; margin-bottom: 6px; }
+    .auto-intro-card p { font-size: 0.8125rem; color: var(--text-muted); line-height: 1.45; }
+    .auto-badge {
+      display: inline-block;
+      font-size: 0.65rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.07em;
+      padding: 3px 8px;
+      border-radius: 999px;
+      margin-bottom: 8px;
+    }
+    .auto-badge.cowork { background: rgba(124, 58, 237, 0.12); color: #6d28d9; }
+    .auto-badge.cron { background: rgba(2, 132, 199, 0.12); color: var(--blue); }
+
+    .auto-section { display: flex; flex-direction: column; gap: 14px; }
+    .auto-section-head {
+      display: flex; align-items: flex-start; justify-content: space-between;
+      gap: 12px; flex-wrap: wrap;
+    }
+    .auto-section-head h3 { font-size: 1.05rem; }
+    .auto-section-head p { font-size: 0.8125rem; color: var(--text-muted); margin-top: 6px; max-width: 48ch; }
+
+    .setup-table { width: 100%; border-collapse: collapse; font-size: 0.8125rem; }
+    .setup-table th, .setup-table td {
+      padding: 11px 12px; text-align: left;
+      border-bottom: 1px solid var(--border-soft);
+      vertical-align: middle;
+    }
+    .setup-table th {
+      font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.06em;
+      color: var(--text-muted); font-weight: 700;
+      background: rgba(255, 255, 255, 0.35);
+    }
+    .setup-table tr:last-child td { border-bottom: none; }
+    .setup-table .mono-cell { font-family: ui-monospace, monospace; font-size: 0.75rem; color: var(--text-secondary); }
+
+    .setup-form {
+      padding: 16px;
+      border-radius: var(--radius-sm);
+      border: 1px dashed rgba(2, 132, 199, 0.3);
+      background: rgba(255, 255, 255, 0.4);
+      margin-top: 12px;
+    }
+    .setup-form-title {
+      font-size: 0.75rem; font-weight: 700; text-transform: uppercase;
+      letter-spacing: 0.06em; color: var(--text-muted); margin-bottom: 12px;
+    }
+
+    .toggle-row {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 12px; padding: 10px 0;
+    }
+    .toggle-label {
+      display: inline-flex; align-items: center; gap: 8px;
+      font-size: 0.75rem; font-weight: 600; color: var(--text-secondary);
+      cursor: pointer; white-space: nowrap;
+    }
+    .switch {
+      width: 36px; height: 20px; margin: 0; flex-shrink: 0;
+      appearance: none; -webkit-appearance: none;
+      background: var(--border-strong);
+      border-radius: 999px; position: relative; cursor: pointer;
+      transition: background var(--transition);
+    }
+    .switch::after {
+      content: '';
+      position: absolute; top: 2px; left: 2px;
+      width: 16px; height: 16px; border-radius: 50%;
+      background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+      transition: transform var(--transition);
+    }
+    .switch:checked { background: var(--green); }
+    .switch:checked::after { transform: translateX(16px); }
+
+    .row-actions { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+
+    @media (max-width: 900px) {
+      .metrics { grid-template-columns: repeat(2, 1fr); }
+      .activity-layout { grid-template-columns: 1fr; }
+      .activity-main { border-right: none; border-bottom: 1px solid var(--border-soft); }
+    }
+    @media (max-width: 768px) {
+      html, body { overflow: auto; }
+      .shell { flex-direction: column; height: auto; min-height: 100vh; overflow: visible; }
+      .shell.is-collapsed .sidebar { width: 100%; }
+      .sidebar { width: 100%; height: auto; border-right: none; border-bottom: 1px solid var(--border); overflow: visible; }
+      .main { height: auto; overflow: visible; }
+      .view-port { padding: 18px; overflow: visible; }
+      .metrics { grid-template-columns: 1fr 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell" id="app-shell">
+    <aside class="sidebar">
+      <div class="sidebar-top">
+        <div class="brand">
+          <div class="brand-mark" aria-hidden="true"></div>
+          <div class="brand-text">
+            <p class="brand-name">Shorts Factory</p>
+            <p class="brand-tag">Long video → viral shorts</p>
+          </div>
+        </div>
+        <button type="button" class="sidebar-collapse-btn" id="sidebar-toggle" aria-label="Collapse sidebar" title="Collapse sidebar">‹</button>
+      </div>
+
+      <div class="channel-box">
+        <label for="channel-select">Active channel</label>
+        <select id="channel-select" class="input">
+          <option>mrkimbum12</option>
+        </select>
+        <button type="button" class="link-btn" data-view="wizard">+ Add new channel</button>
+      </div>
+
+      <p class="nav-section">Workspace</p>
+      <nav aria-label="Main">
+        <button type="button" class="nav-label is-active" data-view="home" title="Home"><span class="nav-icon">⌂</span><span class="nav-text">Home</span></button>
+        <button type="button" class="nav-label" data-view="create" title="Create Shorts"><span class="nav-icon">▶</span><span class="nav-text">Create Shorts</span></button>
+        <button type="button" class="nav-label" data-view="shorts" title="My Shorts"><span class="nav-icon">▤</span><span class="nav-text">My Shorts</span></button>
+        <button type="button" class="nav-label" data-view="videos" title="My Videos"><span class="nav-icon">▣</span><span class="nav-text">My Videos</span></button>
+        <button type="button" class="nav-label" data-view="enrich" title="AI Polish"><span class="nav-icon">✦</span><span class="nav-text">AI Polish</span></button>
+        <button type="button" class="nav-label" data-view="auto" title="Automation"><span class="nav-icon">◷</span><span class="nav-text">Automation</span></button>
+        <button type="button" class="nav-label" data-view="channels" title="My Channels"><span class="nav-icon">◎</span><span class="nav-text">My Channels</span></button>
+      </nav>
+    </aside>
+
+    <div class="main">
+      <div class="view-port" id="view-port">
+
+      <!-- HOME -->
+      <article class="page page-home stack is-active">
+        <header class="page-header">
+          <div>
+            <p class="eyebrow">Dashboard · mrkimbum12</p>
+            <h2>Good afternoon — you're on track</h2>
+            <p>11 shorts waiting to post · queue runs until Jun 30 · 4 titles need AI polish</p>
+          </div>
+          <button type="button" class="btn btn-primary" data-view="videos">Upload video</button>
+        </header>
+
+        <div class="metrics">
+          <div class="metric"><span class="metric-dot blue"></span><div class="metric-value">11</div><div class="metric-label">Ready to post</div></div>
+          <div class="metric"><span class="metric-dot green"></span><div class="metric-value">6</div><div class="metric-label">Already live</div></div>
+          <div class="metric"><span class="metric-dot teal"></span><div class="metric-value">4</div><div class="metric-label">Needs AI polish</div></div>
+          <div class="metric"><span class="metric-dot sky"></span><div class="metric-value small">1:00 PM</div><div class="metric-label">Next post today</div></div>
+        </div>
+
+        <div class="panel activity-panel">
+          <div class="panel-head">What's happening today</div>
+          <div class="activity-layout">
+            <div class="activity-main">
+              <div class="row row-between">
+                <div class="panel-title"><span class="dot dot-green"></span><span class="semibold">Creating shorts now</span></div>
+                <span class="tag tag-live">In progress</span>
+              </div>
+              <p class="small muted" style="margin-top:10px">Ultra Instinct DBZ · clip 3 of 12</p>
+              <div class="progress-labels" style="margin-top:16px"><span>Step 4 of 7</span><span>Adding voice &amp; subtitles</span></div>
+              <div class="progress-bar"><div class="progress-done"></div><div class="progress-active"></div></div>
+              <button type="button" class="btn btn-primary" id="progress-detail-toggle" aria-expanded="false" aria-controls="pipeline-detail" style="margin-top:16px">See progress</button>
+            </div>
+            <div class="activity-side">
+              <div class="activity-item">
+                <span class="activity-time now">Next · 1:00 PM</span>
+                <span class="semibold small">Dragon Sword Habisi Mini-Boss</span>
+                <span class="small muted">YouTube · Telegram alert when live</span>
+              </div>
+              <div class="activity-item">
+                <span class="activity-time">Tomorrow · 8:00 AM</span>
+                <span class="semibold small">AI polish</span>
+                <span class="small muted">Claude rewrites 4 titles, refreshes tags &amp; thumbnails</span>
+                <button type="button" class="btn btn-ghost activity-link" data-view="enrich">View polish queue →</button>
+              </div>
+              <div class="activity-item">
+                <span class="activity-time">Tonight · 8:00 PM</span>
+                <span class="semibold small">Auto-create shorts</span>
+                <span class="small muted">Cowork picks the next video and runs the pipeline overnight</span>
+                <button type="button" class="btn btn-ghost activity-link" data-view="auto">Edit automation →</button>
+              </div>
+            </div>
+          </div>
+          <div class="pipeline-detail" id="pipeline-detail" hidden>
+            <div class="pipeline-detail-head">
+              <div>
+                <p class="panel-title semibold" style="margin:0">Ultra Instinct DBZ</p>
+                <p class="small muted" style="margin:6px 0 0">Clip 3 of 12 · gameplay · GPU on</p>
+              </div>
+              <span class="tag tag-live">Running now</span>
+            </div>
+            <ol class="pipeline-steps">
+              <li class="is-done"><span class="pipeline-step-marker">✓</span><span class="pipeline-step-label">Prepare video</span><span class="pipeline-step-meta">Done 11:42 AM</span></li>
+              <li class="is-done"><span class="pipeline-step-marker">✓</span><span class="pipeline-step-label">Find best moments</span><span class="pipeline-step-meta">12 clips scored</span></li>
+              <li class="is-done"><span class="pipeline-step-marker">✓</span><span class="pipeline-step-label">Build clip segments</span><span class="pipeline-step-meta">2 of 12 finished</span></li>
+              <li class="is-active"><span class="pipeline-step-marker">4</span><span class="pipeline-step-label">Add voice &amp; subtitles</span><span class="tag tag-sky">In progress</span></li>
+              <li><span class="pipeline-step-marker">5</span><span class="pipeline-step-label">Render shorts</span><span class="pipeline-step-meta">Queued</span></li>
+              <li><span class="pipeline-step-marker">6</span><span class="pipeline-step-label">Thumbnails &amp; titles</span><span class="pipeline-step-meta">Queued</span></li>
+              <li><span class="pipeline-step-marker">7</span><span class="pipeline-step-label">Save to library</span><span class="pipeline-step-meta">Queued</span></li>
+            </ol>
+            <p class="small muted" style="margin:14px 0 0">Started 11:38 AM · about 18 minutes left for this video</p>
+          </div>
+        </div>
+      </article>
+
+      <!-- CREATE -->
+      <article class="page page-create stack" hidden>
+        <header class="page-header">
+          <div>
+            <p class="eyebrow">Pipeline</p>
+            <h2>Create Shorts</h2>
+            <p>Pick a video from <strong>My Videos</strong>, set the type, and run the pipeline — 10–15 vertical shorts per video.</p>
+          </div>
+        </header>
+        <div class="panel">
+          <div class="panel-body">
+            <h3>Step 1 — Choose a video</h3>
+            <p class="small muted" style="margin-top:8px">Long videos you uploaded live in <strong>My Videos</strong> — we process them in name order, or you pick one here.</p>
+            <label class="field" style="margin-top:14px;margin-bottom:0">
+              <span class="semibold small">Video to process</span>
+              <select class="native">
+                <option>Ultra Instinct DBZ (45 min)</option>
+                <option>Chapter 14 Boss.mp4 (32 min)</option>
+              </select>
+              <span class="field-hint">Next up: Ultra Instinct DBZ.mp4 (name order)</span>
+            </label>
+            <div class="callout" style="margin-top:16px">
+              <strong>Need a new video?</strong> Upload it in
+              <button type="button" class="btn btn-ghost" data-view="videos" style="display:inline;padding:0 4px;vertical-align:baseline">My Videos</button>
+              — it will show up in this list.
+            </div>
+          </div>
+        </div>
+        <div class="grid-2">
+          <div class="panel">
+            <div class="panel-body">
+              <h3>Step 2 — Video type</h3>
+              <select class="native" style="margin-top:12px">
+                <option value="gameplay">Gaming — gameplay with face cam</option>
+                <option value="podcast">Podcast or talk show</option>
+                <optgroup label="Sports">
+                  <option value="sports_tennis">Tennis</option>
+                  <option value="sports_football">Football</option>
+                  <option value="sports_padel">Padel</option>
+                </optgroup>
+              </select>
+              <p class="field-hint" style="margin-top:8px">Sports picks the right crop and tracking for that game.</p>
+            </div>
+          </div>
+          <div class="panel">
+            <div class="panel-body">
+              <h3>Step 3 — Speed</h3>
+              <label class="row row-between" style="margin-top:12px">
+                <span><span class="semibold small">Faster with NVIDIA GPU</span><br><span class="small muted">Optional — uses your graphics card.</span></span>
+                <input type="checkbox" />
+              </label>
+            </div>
+          </div>
+        </div>
+        <div class="page-actions page-actions--center">
+          <button type="button" class="btn btn-primary btn-lg">Start creating shorts</button>
+          <button type="button" class="btn btn-ghost" data-view="auto">Run tonight automatically instead</button>
+        </div>
+      </article>
+
+      <!-- SHORTS -->
+      <article class="page page-shorts stack" hidden>
+        <header class="page-header">
+          <div>
+            <p class="eyebrow">Library</p>
+            <h2>My Shorts</h2>
+            <p>Every short for this channel — polished titles, scheduled times, and where they posted.</p>
+          </div>
+        </header>
+        <table class="data">
+          <thead><tr><th>Title</th><th>Status</th><th>Goes live</th><th>Posted to</th><th>AI polish</th></tr></thead>
+          <tbody>
+            <tr><td>Dragon Sword Habisi Mini-Boss</td><td><span class="tag tag-sky">Waiting to post</span></td><td>Jun 20, 1:00 PM</td><td>YouTube</td><td><span class="row"><span class="dot dot-green"></span> Polished</span></td></tr>
+            <tr><td>Dikepung 4 Musuh yang Grab</td><td><span class="tag tag-sky">Waiting to post</span></td><td>Jun 22, 1:00 PM</td><td>YouTube</td><td><span class="row"><span class="dot dot-teal"></span> Needs polish</span></td></tr>
+            <tr><td>Boss Alma Fase 2</td><td><span class="tag tag-green">Already posted</span></td><td>Jun 18, 1:00 PM</td><td>YouTube</td><td><span class="row"><span class="dot dot-green"></span> Polished</span></td></tr>
+          </tbody>
+        </table>
+      </article>
+
+      <!-- VIDEOS -->
+      <article class="page page-videos stack" hidden>
+        <header class="page-header">
+          <div>
+            <p class="eyebrow">Long videos</p>
+            <h2>My Videos</h2>
+            <p>Upload full-length videos here for this channel. We turn them into shorts in name order, or you can pick one in Create Shorts.</p>
+          </div>
+        </header>
+        <div class="panel">
+          <div class="panel-body">
+            <div class="upload-zone">
+              <div class="upload-icon" aria-hidden="true"></div>
+              <p class="title">Drop your long video here</p>
+              <p class="hint">MP4, MKV, AVI · 5 min to 2 hours · saved to My Videos</p>
+              <button type="button" class="btn btn-secondary">Choose file</button>
+            </div>
+            <p class="field-hint" style="margin-top:12px;text-align:center">This is the only place to add new long videos. Then create shorts from the list below or in Create Shorts.</p>
+          </div>
+        </div>
+        <div class="grid-2">
+          <div class="panel">
+            <div class="panel-body">
+              <div class="row row-between"><span class="row"><span class="dot dot-blue"></span><span class="semibold">Waiting to be processed</span></span><span class="tag">2 videos</span></div>
+              <p class="small" style="margin-top:14px">Ultra Instinct DBZ.mp4</p>
+              <p class="small">Chapter 14 Boss.mp4</p>
+              <button type="button" class="btn btn-primary" data-view="create" style="margin-top:14px">Create shorts from next video</button>
+            </div>
+          </div>
+          <div class="panel">
+            <div class="panel-body">
+              <div class="row row-between"><span class="row"><span class="dot dot-blue"></span><span class="semibold">Latest finished batch</span></span><span class="tag tag-blue">12 shorts</span></div>
+              <p class="semibold small" style="margin-top:14px">Ultra Instinct DBZ</p>
+              <p class="small muted">12 shorts · AI titles applied this morning</p>
+            </div>
+          </div>
+        </div>
+      </article>
+
+      <!-- AI POLISH -->
+      <article class="page page-enrich stack" hidden>
+        <header class="page-header row-between">
+          <div>
+            <p class="eyebrow">Claude Cowork</p>
+            <h2>AI Polish</h2>
+            <p>Every morning Claude rewrites titles &amp; tags in Bahasa Indonesia, refreshes thumbnails, and checks your posting queue.</p>
+          </div>
+          <button type="button" class="btn btn-primary">Run polish now</button>
+        </header>
+        <div class="metrics" style="grid-template-columns:repeat(3,1fr)">
+          <div class="metric"><span class="metric-dot teal"></span><div class="metric-value">2</div><div class="metric-label">Waiting for Claude</div></div>
+          <div class="metric"><span class="metric-dot blue"></span><div class="metric-value">1</div><div class="metric-label">Ready to review</div></div>
+          <div class="metric"><span class="metric-dot green"></span><div class="metric-value">8</div><div class="metric-label">Polished today</div></div>
+        </div>
+        <div class="panel">
+          <div class="panel-body">
+            <h3>How it works (automatic every morning)</h3>
+            <ol class="steps">
+              <li><span>Export shorts that need better titles</span><span class="tag tag-green">Done 8:00 AM</span></li>
+              <li><span>Claude rewrites titles, descriptions &amp; tags</span><span class="tag tag-green">Done 8:04 AM</span></li>
+              <li><span>Apply polished text + regenerate thumbnails</span><span class="tag">Scheduled</span></li>
+              <li><span>Check queue depth — alert if running low</span><span class="tag">Scheduled</span></li>
+            </ol>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-head row row-between"><span>Polish queue</span><span class="tag tag-live">4 in queue</span></div>
+          <table class="data">
+            <thead><tr><th>Short title</th><th>Status</th><th>Next step</th></tr></thead>
+            <tbody>
+              <tr><td>Dikepung 4 Musuh yang Grab</td><td><span class="tag tag-teal">Waiting for Claude</span></td><td>Rewrite title &amp; tags</td></tr>
+              <tr><td>Tiap Hit di Combo Ini</td><td><span class="tag tag-sky">Ready to apply</span></td><td>Claude finished — review</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <details open class="panel">
+          <div class="panel-body">
+            <summary>Preview: Claude's rewrite for one short</summary>
+            <div class="panel" style="margin-top:14px">
+              <div class="panel-body">
+                <p class="semibold small muted">Before</p>
+                <p class="small muted" style="margin-top:4px">Dikepung 4 Musuh yang Grab di Stage Ini</p>
+                <hr />
+                <p class="semibold small" style="color:var(--blue)">After (Claude)</p>
+                <p class="small" style="margin-top:4px">Dikepung 4 Musuh Sekaligus — Gue Hampir Mati di Sini</p>
+                <div class="page-actions" style="margin-top:14px">
+                  <button type="button" class="btn btn-primary">Apply to all waiting</button>
+                  <button type="button" class="btn btn-secondary">Edit before applying</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </details>
+      </article>
+
+      <!-- AUTOMATION -->
+      <article class="page page-auto stack" hidden>
+        <header class="page-header">
+          <div>
+            <p class="eyebrow">Schedulers</p>
+            <h2>Automation</h2>
+            <p>Two separate schedulers — configure each below. Edit existing jobs or add new ones for more channels.</p>
+          </div>
+        </header>
+
+        <div class="auto-intro">
+          <div class="auto-intro-card">
+            <span class="auto-badge cowork">Claude Cowork</span>
+            <h3>Creates &amp; polishes shorts</h3>
+            <p>Runs in the cloud at night and morning — pipeline, viral titles, AI polish, thumbnails. Heavy CPU work.</p>
+          </div>
+          <div class="auto-intro-card">
+            <span class="auto-badge cron">Mac crontab</span>
+            <h3>Posts shorts to platforms</h3>
+            <p>Runs on your Mac — lightweight uploads to YouTube, TikTok, Instagram, Facebook on a daily schedule.</p>
+          </div>
+        </div>
+
+        <!-- Claude Cowork -->
+        <div class="auto-section">
+          <div class="panel">
+            <div class="panel-head row row-between">
+              <span class="row"><span class="auto-badge cowork">Claude Cowork</span><span class="semibold">Scheduled tasks</span></span>
+              <button type="button" class="btn btn-secondary" id="cowork-add-toggle">+ Add task</button>
+            </div>
+            <div class="panel-body" style="padding:0">
+              <table class="setup-table">
+                <thead>
+                  <tr>
+                    <th>Task name</th>
+                    <th>Channel</th>
+                    <th>Time (WIB)</th>
+                    <th>What it does</th>
+                    <th>Status</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td class="mono-cell">shorts-generator-8pm</td>
+                    <td>mrkimbum12</td>
+                    <td><input type="time" class="input" value="20:00" style="width:auto;padding:6px 8px" /></td>
+                    <td>Create shorts + viral metadata</td>
+                    <td><span class="tag tag-green">Active</span></td>
+                    <td class="row-actions">
+                      <button type="button" class="btn btn-ghost" style="padding:6px 10px">Save</button>
+                      <button type="button" class="btn btn-ghost" style="padding:6px 10px">Pause</button>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td class="mono-cell">shorts-generator-8am</td>
+                    <td>mrkimbum12</td>
+                    <td><input type="time" class="input" value="08:00" style="width:auto;padding:6px 8px" /></td>
+                    <td>AI polish + thumbnails + queue check</td>
+                    <td><span class="tag tag-green">Active</span></td>
+                    <td class="row-actions">
+                      <button type="button" class="btn btn-ghost" style="padding:6px 10px">Save</button>
+                      <button type="button" class="btn btn-ghost" style="padding:6px 10px">Pause</button>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="panel-body setup-form" id="cowork-add-form" hidden>
+              <p class="setup-form-title">New Cowork task</p>
+              <div class="grid-2">
+                <label class="field"><span class="semibold small">Channel</span>
+                  <select class="native"><option>mrkimbum12</option><option value="new">+ New channel…</option></select>
+                </label>
+                <label class="field"><span class="semibold small">Job type</span>
+                  <select class="native"><option>Create shorts (night)</option><option>AI polish (morning)</option></select>
+                </label>
+                <label class="field"><span class="semibold small">Run time (WIB)</span><input type="time" value="20:10" /></label>
+                <label class="field"><span class="semibold small">Stagger hint</span>
+                  <input type="text" class="input" value="+10 min after previous channel" disabled />
+                  <span class="field-hint">2nd channel: 8:10 PM create, 8:10 AM polish</span>
+                </label>
+              </div>
+              <label class="field"><span class="semibold small">Title language</span>
+                <select class="native"><option>Bahasa Indonesia (casual)</option><option>English</option></select>
+              </label>
+              <div class="page-actions">
+                <button type="button" class="btn btn-primary">Add Cowork task</button>
+                <button type="button" class="btn btn-secondary" id="cowork-add-cancel">Cancel</button>
+              </div>
+            </div>
+            <div class="panel-body" style="border-top:1px solid var(--border-soft)">
+              <div class="page-actions">
+                <button type="button" class="btn btn-primary">Save Cowork tasks</button>
+                <button type="button" class="btn btn-secondary">Run create job now</button>
+                <button type="button" class="btn btn-secondary">Test Cowork connection</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Mac crontab -->
+        <div class="auto-section">
+          <div class="panel">
+            <div class="panel-head row row-between">
+              <span class="row"><span class="auto-badge cron">Mac crontab</span><span class="semibold">Posting schedule</span></span>
+              <button type="button" class="btn btn-secondary" id="cron-add-toggle">+ Add schedule</button>
+            </div>
+            <div class="panel-body" style="padding:0">
+              <table class="setup-table">
+                <thead>
+                  <tr>
+                    <th>Channel</th>
+                    <th>Wave</th>
+                    <th>Time (WIB)</th>
+                    <th>Cron (UTC)</th>
+                    <th>Status</th>
+                    <th></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>mrkimbum12</td>
+                    <td>Morning</td>
+                    <td><input type="time" class="input" value="09:00" style="width:auto;padding:6px 8px" /></td>
+                    <td class="mono-cell">0 2 * * *</td>
+                    <td><span class="tag tag-green">Active</span></td>
+                    <td class="row-actions">
+                      <button type="button" class="btn btn-ghost" style="padding:6px 10px">Save</button>
+                      <button type="button" class="btn btn-ghost" style="padding:6px 10px">Pause</button>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td>mrkimbum12</td>
+                    <td>Afternoon</td>
+                    <td><input type="time" class="input" value="14:00" style="width:auto;padding:6px 8px" /></td>
+                    <td class="mono-cell">0 7 * * *</td>
+                    <td><span class="tag tag-green">Active</span></td>
+                    <td class="row-actions">
+                      <button type="button" class="btn btn-ghost" style="padding:6px 10px">Save</button>
+                      <button type="button" class="btn btn-ghost" style="padding:6px 10px">Pause</button>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td>mrkimbum12</td>
+                    <td>Evening</td>
+                    <td><input type="time" class="input" value="19:00" style="width:auto;padding:6px 8px" /></td>
+                    <td class="mono-cell">0 12 * * *</td>
+                    <td><span class="tag tag-green">Active</span></td>
+                    <td class="row-actions">
+                      <button type="button" class="btn btn-ghost" style="padding:6px 10px">Save</button>
+                      <button type="button" class="btn btn-ghost" style="padding:6px 10px">Pause</button>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+              <p class="field-hint" style="padding:12px 16px;margin:0">Extra channels: same waves, +5 minutes each (e.g. 9:05 AM WIB).</p>
+            </div>
+            <div class="panel-body setup-form" id="cron-add-form" hidden>
+              <p class="setup-form-title">New posting schedule</p>
+              <div class="grid-2">
+                <label class="field"><span class="semibold small">Channel</span>
+                  <select class="native"><option>mrkimbum12</option><option value="new">+ New channel…</option></select>
+                </label>
+                <label class="field"><span class="semibold small">Posting wave</span>
+                  <select class="native"><option>Morning</option><option>Afternoon</option><option>Evening</option><option>All 3 waves / day</option></select>
+                </label>
+                <label class="field"><span class="semibold small">Time (WIB)</span><input type="time" value="09:05" /></label>
+                <label class="field"><span class="semibold small">Stagger</span>
+                  <input type="text" class="input" value="+5 min from main channel" disabled />
+                </label>
+              </div>
+              <div class="page-actions">
+                <button type="button" class="btn btn-primary">Add to crontab</button>
+                <button type="button" class="btn btn-secondary" id="cron-add-cancel">Cancel</button>
+              </div>
+            </div>
+            <div class="panel-body" style="border-top:1px solid var(--border-soft)">
+              <p class="semibold small">Preview — what gets written to your Mac</p>
+              <div class="mono" style="margin-top:10px;padding:12px;border-radius:var(--radius-sm);background:rgba(0,0,0,0.04)">
+                <p># Upload — mrkimbum12 (times in UTC)</p>
+                <p>0 2 * * * upload_scheduler.py --account mrkimbum12</p>
+                <p>0 7 * * * upload_scheduler.py --account mrkimbum12</p>
+                <p>0 12 * * * upload_scheduler.py --account mrkimbum12</p>
+              </div>
+              <div class="page-actions" style="margin-top:14px">
+                <button type="button" class="btn btn-primary">Apply crontab to Mac</button>
+                <button type="button" class="btn btn-secondary">Post waiting shorts now</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </article>
+
+      <!-- CHANNELS -->
+      <article class="page page-channels stack" hidden>
+        <header class="page-header row-between">
+          <div>
+            <p class="eyebrow">Accounts</p>
+            <h2>My Channels</h2>
+            <p>Each channel has its own videos, AI polish, and posting schedule.</p>
+          </div>
+          <button type="button" class="btn btn-primary" data-view="wizard">+ Add channel</button>
+        </header>
+        <div class="grid-2" style="grid-template-columns:minmax(200px,260px) 1fr">
+          <div class="panel">
+            <div class="panel-head">Your channels</div>
+            <div class="panel-body">
+              <button type="button" class="channel-btn">
+                <span class="dot dot-green"></span>
+                <span><span class="semibold small">mrkimbum12</span><br><span class="muted small">Ninja Gaiden gameplay</span></span>
+              </button>
+            </div>
+          </div>
+          <div class="panel">
+            <div class="panel-body">
+              <div class="toggle-row">
+                <div>
+                  <span class="semibold">mrkimbum12</span>
+                  <p class="field-hint" style="margin-top:4px">Turn off to pause all posting &amp; automation for this channel</p>
+                </div>
+                <label class="toggle-label"><span>Channel active</span><input type="checkbox" class="switch" checked /></label>
+              </div>
+              <label class="field" style="margin-top:16px;margin-bottom:0">
+                <span class="semibold small">Description</span>
+                <input type="text" class="input" value="Ninja Gaiden gameplay" />
+              </label>
+
+              <div class="platform-section">
+                <div class="platform-section-head">
+                  <h3>Social platforms</h3>
+                  <span class="tag">2 connected</span>
+                </div>
+
+                <div class="platform-list" id="platform-list">
+                  <div class="platform-row">
+                    <span class="platform-icon yt" aria-hidden="true">YT</span>
+                    <div class="platform-meta">
+                      <span class="platform-name">YouTube</span>
+                      <span class="platform-hint">mrkimbum12@gmail.com</span>
+                    </div>
+                    <span class="tag tag-green">Connected</span>
+                    <div class="platform-actions">
+                      <label class="toggle-label"><span>Post here</span><input type="checkbox" class="switch" checked /></label>
+                      <button type="button" class="btn btn-ghost" style="padding:6px 10px">Disconnect</button>
+                    </div>
+                  </div>
+                  <div class="platform-row">
+                    <span class="platform-icon tt" aria-hidden="true">TT</span>
+                    <div class="platform-meta">
+                      <span class="platform-name">TikTok</span>
+                      <span class="platform-hint">@mrkimbum12 · connected, posting off</span>
+                    </div>
+                    <span class="tag tag-green">Connected</span>
+                    <div class="platform-actions">
+                      <label class="toggle-label"><span>Post here</span><input type="checkbox" class="switch" /></label>
+                      <button type="button" class="btn btn-ghost" style="padding:6px 10px">Disconnect</button>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="add-platform">
+                  <p class="add-platform-label">Add a platform</p>
+                  <div class="add-platform-form">
+                    <select class="input" id="platform-select">
+                      <option value="">Choose platform…</option>
+                      <option value="instagram">Instagram Reels</option>
+                      <option value="facebook">Facebook Reels</option>
+                      <option value="youtube" disabled>YouTube — already added</option>
+                      <option value="tiktok" disabled>TikTok — already added</option>
+                    </select>
+                    <button type="button" class="btn btn-primary" id="platform-connect">Connect</button>
+                  </div>
+                  <p class="field-hint" style="margin-top:10px">We’ll open the login page for that platform, then save tokens to this channel.</p>
+                </div>
+              </div>
+
+              <div class="page-actions" style="margin-top:20px">
+                <button type="button" class="btn btn-primary">Save changes</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </article>
+
+      <!-- NEW CHANNEL WIZARD -->
+      <article class="page page-wizard stack" hidden>
+        <header class="page-header">
+          <div>
+            <p class="eyebrow">Setup wizard</p>
+            <h2>Add a new channel</h2>
+            <p>We set up folders, automation, and posting for you.</p>
+          </div>
+        </header>
+        <div class="wizard-steps">
+          <span class="tag tag-live">1. Basics</span>
+          <span class="tag">2. Content</span>
+          <span class="tag">3. Automation</span>
+          <span class="tag">4. Platforms</span>
+          <span class="tag">5. Done</span>
+        </div>
+        <div class="panel">
+          <div class="panel-body">
+            <h3>Channel basics</h3>
+            <label class="field" style="margin-top:14px"><span class="semibold small">Channel handle</span><input type="text" placeholder="e.g. my-gaming-channel" /><span class="field-hint">Letters, numbers, and dashes only.</span></label>
+            <label class="field"><span class="semibold small">Short description</span><input type="text" placeholder="Daily gaming highlights" /></label>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-body">
+            <h3>Automation schedule</h3>
+            <p class="small muted" style="margin-top:8px">Claude Cowork + Mac posting, staggered if you have other channels.</p>
+            <div class="grid-2" style="margin-top:16px">
+              <label class="field"><span class="semibold small">Create shorts at night</span><input type="time" value="20:00" /></label>
+              <label class="field"><span class="semibold small">AI polish in morning</span><input type="time" value="08:00" /></label>
+            </div>
+            <label class="checks"><input type="checkbox" checked /> Post 3x per day (9 AM, 2 PM, 7 PM WIB)</label>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="panel-body">
+            <h3>Where to post</h3>
+            <label class="checks" style="margin-top:14px"><input type="checkbox" checked /> YouTube</label>
+            <label class="checks"><input type="checkbox" /> TikTok — connect later</label>
+            <label class="checks"><input type="checkbox" /> Instagram Reels</label>
+            <label class="checks"><input type="checkbox" /> Facebook Reels</label>
+          </div>
+        </div>
+        <div class="callout-success">Ready to create your channel! Upload folder, Cowork jobs, and Telegram alerts will be set up.</div>
+        <div class="page-actions page-actions--center">
+          <button type="button" class="btn btn-primary btn-lg">Create channel</button>
+          <button type="button" class="btn btn-secondary" data-view="channels">Cancel</button>
+        </div>
+      </article>
+
+      </div>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      var shell = document.getElementById('app-shell');
+      var viewPort = document.getElementById('view-port');
+      var pages = document.querySelectorAll('.page');
+      var navButtons = document.querySelectorAll('.nav-label[data-view]');
+      var viewLinks = document.querySelectorAll('[data-view]');
+      var toggleBtn = document.getElementById('sidebar-toggle');
+      var currentView = 'home';
+
+      function showView(viewId) {
+        currentView = viewId;
+        pages.forEach(function (page) {
+          var active = page.classList.contains('page-' + viewId);
+          page.classList.toggle('is-active', active);
+          if (active) page.removeAttribute('hidden');
+          else page.setAttribute('hidden', '');
+        });
+        navButtons.forEach(function (btn) {
+          var match = viewId !== 'wizard' && btn.getAttribute('data-view') === viewId;
+          btn.classList.toggle('is-active', match);
+        });
+        if (viewPort) viewPort.scrollTop = 0;
+      }
+
+      function navigate(viewId) {
+        if (!document.querySelector('.page-' + viewId)) return;
+        showView(viewId);
+      }
+
+      viewLinks.forEach(function (el) {
+        el.addEventListener('click', function () {
+          navigate(el.getAttribute('data-view'));
+        });
+      });
+
+      if (toggleBtn) {
+        toggleBtn.addEventListener('click', function () {
+          var collapsed = shell.classList.toggle('is-collapsed');
+          toggleBtn.setAttribute('aria-label', collapsed ? 'Expand sidebar' : 'Collapse sidebar');
+          toggleBtn.setAttribute('title', collapsed ? 'Expand sidebar' : 'Collapse sidebar');
+        });
+      }
+
+      showView('home');
+
+      var progressToggle = document.getElementById('progress-detail-toggle');
+      var progressDetail = document.getElementById('pipeline-detail');
+      if (progressToggle && progressDetail) {
+        progressToggle.addEventListener('click', function () {
+          var open = progressDetail.hidden;
+          progressDetail.hidden = !open;
+          progressToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+          progressToggle.textContent = open ? 'Hide progress' : 'See progress';
+        });
+      }
+
+      /* Automation: toggle add forms */
+      function bindFormToggle(toggleId, formId, cancelId) {
+        var toggle = document.getElementById(toggleId);
+        var form = document.getElementById(formId);
+        var cancel = document.getElementById(cancelId);
+        if (!toggle || !form) return;
+        toggle.addEventListener('click', function () {
+          var open = !form.hidden;
+          form.hidden = open;
+          toggle.textContent = open ? '+ Add ' + (toggleId.indexOf('cowork') >= 0 ? 'task' : 'schedule') : '− Hide form';
+        });
+        if (cancel) cancel.addEventListener('click', function () {
+          form.hidden = true;
+          toggle.textContent = '+ Add ' + (toggleId.indexOf('cowork') >= 0 ? 'task' : 'schedule');
+        });
+      }
+      bindFormToggle('cowork-add-toggle', 'cowork-add-form', 'cowork-add-cancel');
+      bindFormToggle('cron-add-toggle', 'cron-add-form', 'cron-add-cancel');
+
+      /* Mock: add platform on My Channels */
+      var platformConnect = document.getElementById('platform-connect');
+      var platformSelect = document.getElementById('platform-select');
+      var platformList = document.getElementById('platform-list');
+      var platformTemplates = {
+        instagram: {
+          icon: 'ig', label: 'IG', name: 'Instagram Reels',
+          hint: 'Connect your business account', tag: 'tag-teal', tagText: 'Not connected yet'
+        },
+        facebook: {
+          icon: 'fb', label: 'FB', name: 'Facebook Reels',
+          hint: 'Connect your Facebook page', tag: 'tag-teal', tagText: 'Not connected yet'
+        }
+      };
+
+      if (platformConnect && platformSelect && platformList) {
+        platformConnect.addEventListener('click', function () {
+          var key = platformSelect.value;
+          if (!key || !platformTemplates[key]) return;
+          if (platformList.querySelector('[data-platform="' + key + '"]')) return;
+
+          var p = platformTemplates[key];
+          var row = document.createElement('div');
+          row.className = 'platform-row';
+          row.setAttribute('data-platform', key);
+          row.innerHTML =
+            '<span class="platform-icon ' + p.icon + '" aria-hidden="true">' + p.label + '</span>' +
+            '<div class="platform-meta"><span class="platform-name">' + p.name + '</span>' +
+            '<span class="platform-hint">' + p.hint + '</span></div>' +
+            '<span class="tag ' + p.tag + '">' + p.tagText + '</span>' +
+            '<div class="platform-actions">' +
+            '<label class="toggle-label"><span>Post here</span><input type="checkbox" class="switch" /></label>' +
+            '<button type="button" class="btn btn-primary" style="padding:6px 12px">Finish setup</button>' +
+            '</div>';
+          platformList.appendChild(row);
+
+          var opt = platformSelect.querySelector('option[value="' + key + '"]');
+          if (opt) { opt.disabled = true; opt.textContent = p.name + ' — added'; }
+          platformSelect.value = '';
+        });
+      }
+    })();
+  </script>
+</body>
+</html>
