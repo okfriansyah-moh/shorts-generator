@@ -402,7 +402,7 @@ Three upload waves per day. Each wave stagers accounts 5 minutes apart so API ra
 **Current crontab (mrkimbum12, all times UTC):**
 
 ```cron
-SF=/Users/mekari/Developer/personal-project/shorts-generator
+SF=~/shorts-generator
 PY=/opt/homebrew/bin/python3
 LOG=$SF/output/upload_cron.log
 
