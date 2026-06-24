@@ -62,7 +62,20 @@ def _resolve_path(path: str, output_dir: str) -> str:
       2. legacy unscoped: output/<path>                (clips generated before account scoping)
       3. project-root:    <project_root>/<path>        (absolute paths stored without prefix)
     """
-    if not path or os.path.isabs(path):
+    if not path:
+        return path
+    if os.path.isabs(path):
+        if os.path.exists(path):
+            return path
+        # Absolute path from a remote session (e.g. Cowork) — strip up to the project root dir name
+        # and re-anchor under the local project root.
+        marker = os.path.basename(_PROJECT_ROOT)
+        idx = path.find(f"/{marker}/")
+        if idx != -1:
+            relative = path[idx + len(marker) + 2:]
+            recovered = os.path.join(_PROJECT_ROOT, relative)
+            if os.path.exists(recovered):
+                return recovered
         return path
     # 1. Account-scoped (e.g. output/mrkimbum12/3e2e7.../clips/shorts-N/final.mp4)
     resolved = os.path.join(output_dir, path)

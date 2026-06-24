@@ -53,28 +53,28 @@ modules/compositor/compose.py
 
 ### Files
 
-| File | Change |
-|------|--------|
-| `modules/compositor/sports_utils.py` | **NEW** — universal crop filter builders + shared FFmpeg executor + `process_sports()` dispatcher |
-| `modules/compositor/sports_tennis.py` | **NEW** — thin wrapper: `_SPORT="tennis"`, `_DEFAULT_LAYOUT="sports_center_crop"` |
-| `modules/compositor/sports_football.py` | **NEW** — thin wrapper: `_SPORT="football"`, `_DEFAULT_LAYOUT="sports_action_crop"` |
-| `modules/compositor/sports_padel.py` | **NEW** — thin wrapper: `_SPORT="padel"`, `_DEFAULT_LAYOUT="sports_center_crop"` |
-| `modules/strategies/sports_strategy.py` | **NEW** — hybrid tracking cascade → `SportsFramePlan` |
-| `contracts/strategies.py` | **MODIFIED** — added `SportsFramePlan` frozen dataclass alongside `PodcastFramePlan` |
-| `core/orchestrator.py` | **MODIFIED** — added `video_type.startswith("sports_")` branch in `run_compositor()` |
-| `modules/compositor/compose.py` | **MODIFIED** — dispatch branches for `sports_tennis`, `sports_football`, `sports_padel` |
-| `run_pipeline.py` | **MODIFIED** — `_OVERLAY_REGISTRY` with 2-layer merge per sport; `--video-type` choices; `--sports-layout` flag |
-| `config/config.yaml` | **MODIFIED** — `sports_*` shared sections + `sports_tennis_*`, `sports_football_*`, `sports_padel_*` overrides |
+| File                                    | Change                                                                                                          |
+| --------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| `modules/compositor/sports_utils.py`    | **NEW** — universal crop filter builders + shared FFmpeg executor + `process_sports()` dispatcher               |
+| `modules/compositor/sports_tennis.py`   | **NEW** — thin wrapper: `_SPORT="tennis"`, `_DEFAULT_LAYOUT="sports_center_crop"`                               |
+| `modules/compositor/sports_football.py` | **NEW** — thin wrapper: `_SPORT="football"`, `_DEFAULT_LAYOUT="sports_action_crop"`                             |
+| `modules/compositor/sports_padel.py`    | **NEW** — thin wrapper: `_SPORT="padel"`, `_DEFAULT_LAYOUT="sports_center_crop"`                                |
+| `modules/strategies/sports_strategy.py` | **NEW** — hybrid tracking cascade → `SportsFramePlan`                                                           |
+| `contracts/strategies.py`               | **MODIFIED** — added `SportsFramePlan` frozen dataclass alongside `PodcastFramePlan`                            |
+| `core/orchestrator.py`                  | **MODIFIED** — added `video_type.startswith("sports_")` branch in `run_compositor()`                            |
+| `modules/compositor/compose.py`         | **MODIFIED** — dispatch branches for `sports_tennis`, `sports_football`, `sports_padel`                         |
+| `run_pipeline.py`                       | **MODIFIED** — `_OVERLAY_REGISTRY` with 2-layer merge per sport; `--video-type` choices; `--sports-layout` flag |
+| `config/config.yaml`                    | **MODIFIED** — `sports_*` shared sections + `sports_tennis_*`, `sports_football_*`, `sports_padel_*` overrides  |
 
 ---
 
 ### Layouts
 
-| Layout | Description | Default for |
-|--------|-------------|-------------|
-| `sports_center_crop` | Center column crop to 9:16 | tennis, padel |
-| `sports_letterbox` | Fit full frame, pad with black bars | any (manual override) |
-| `sports_action_crop` | Plan-based crop targeting action anchor | football |
+| Layout               | Description                             | Default for           |
+| -------------------- | --------------------------------------- | --------------------- |
+| `sports_center_crop` | Center column crop to 9:16              | tennis, padel         |
+| `sports_letterbox`   | Fit full frame, pad with black bars     | any (manual override) |
+| `sports_action_crop` | Plan-based crop targeting action anchor | football              |
 
 Layout resolution order: `--sports-layout` CLI → `compositor.override_layout` config → sport `_DEFAULT_LAYOUT`. If `sports_action_crop` is requested but strategy produced no plan, falls back to `sports_center_crop` with a warning.
 
@@ -84,18 +84,18 @@ Layout resolution order: `--sports-layout` CLI → `compositor.override_layout` 
 
 Two-layer deep-merge per sport — later layer wins at every leaf:
 
-| Layer | Source | Wins over |
-|-------|--------|-----------|
-| Layer 1 | `sports_*` shared sections | global defaults |
-| Layer 2 | `sports_<subtype>_*` sections | layer 1 |
+| Layer   | Source                        | Wins over       |
+| ------- | ----------------------------- | --------------- |
+| Layer 1 | `sports_*` shared sections    | global defaults |
+| Layer 2 | `sports_<subtype>_*` sections | layer 1         |
 
 Per-sport tuning:
 
-| Sport | `min_scene_duration` | `scene_activity` weight | `audio_energy` weight | Default layout |
-|-------|---------------------|------------------------|----------------------|----------------|
-| Tennis | 4.0s | 3 | 3 | `sports_center_crop` |
-| Football | 2.0s | 5 | 5 | `sports_action_crop` |
-| Padel | 3.0s | 4 | 3 | `sports_center_crop` |
+| Sport    | `min_scene_duration` | `scene_activity` weight | `audio_energy` weight | Default layout       |
+| -------- | -------------------- | ----------------------- | --------------------- | -------------------- |
+| Tennis   | 4.0s                 | 3                       | 3                     | `sports_center_crop` |
+| Football | 2.0s                 | 5                       | 5                     | `sports_action_crop` |
+| Padel    | 3.0s                 | 4                       | 3                     | `sports_center_crop` |
 
 ---
 
@@ -155,8 +155,8 @@ Six independent fixes applied during live operations of the `mrkimbum12` account
 
 **Fix:** Added `_resolve_path()` helper to `scripts/upload_scheduler.py` that resolves relative DB paths to absolute at upload time.
 
-| File | Change |
-|------|--------|
+| File                          | Change                                                                                                                                                                  |
+| ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `scripts/upload_scheduler.py` | Added `_resolve_path()` — prepends `output/` for relative paths, falls back to project root. Applied to `video_path` and `thumbnail_path` in `_row_to_storage_record()` |
 
 ```python
@@ -177,8 +177,8 @@ def _resolve_path(path: str) -> str:
 
 **Fix:** Sort by filename alphabetically ascending (`os.path.basename().lower()`), matching the user's intent of "process in name order".
 
-| File | Change |
-|------|--------|
+| File                              | Change                                                                                                        |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------- |
 | `scripts/generation_scheduler.py` | `_next_raw_video()`: `min(..., key=os.path.getmtime)` → `min(..., key=lambda p: os.path.basename(p).lower())` |
 
 ---
@@ -189,8 +189,8 @@ def _resolve_path(path: str) -> str:
 
 **Fix:** Lowered minimum duration to 5 minutes (300s) to accommodate shorter gameplay sessions.
 
-| File | Change |
-|------|--------|
+| File                 | Change                                          |
+| -------------------- | ----------------------------------------------- |
 | `config/config.yaml` | `ingestion.min_duration_seconds`: `600` → `300` |
 
 ---
@@ -199,13 +199,13 @@ def _resolve_path(path: str) -> str:
 
 Full rename across all artifacts to match the real YouTube channel handle.
 
-| Artifact | Change |
-|----------|--------|
-| `config/accounts/ninja-gaiden-main/` | Renamed to `config/accounts/mrkimbum12/` |
-| `config/accounts/mrkimbum12/account.yaml` | `name:` field updated to `"mrkimbum12"` |
-| `raw/ninja-gaiden-main/` | Renamed to `raw/mrkimbum12/` |
-| `output/ninja-gaiden-main/` | Renamed to `output/mrkimbum12/` |
-| `output/shorts_factory.db` | `UPDATE clips SET account_name='mrkimbum12'` — 17 rows |
+| Artifact                                  | Change                                                 |
+| ----------------------------------------- | ------------------------------------------------------ |
+| `config/accounts/ninja-gaiden-main/`      | Renamed to `config/accounts/mrkimbum12/`               |
+| `config/accounts/mrkimbum12/account.yaml` | `name:` field updated to `"mrkimbum12"`                |
+| `raw/ninja-gaiden-main/`                  | Renamed to `raw/mrkimbum12/`                           |
+| `output/ninja-gaiden-main/`               | Renamed to `output/mrkimbum12/`                        |
+| `output/shorts_factory.db`                | `UPDATE clips SET account_name='mrkimbum12'` — 17 rows |
 
 ---
 
@@ -215,28 +215,29 @@ Full rename across all artifacts to match the real YouTube channel handle.
 
 **Fix:** Added `_deep_merge()` utility and a generic merge loop to `core/account_loader.py`. Any key in `account.yaml` that is not an account-meta key (`name`, `description`, `enabled`, `min_score`, `platforms`) is now deep-merged on top of the global config at runtime. No pipeline module changes required.
 
-| File | Change |
-|------|--------|
-| `core/account_loader.py` | Added `_deep_merge(base, override)` utility function. Added `_ACCOUNT_META_KEYS` frozenset. Added generic deep-merge loop after platform-specific handling. Updated module docstring. |
-| `config/accounts/mrkimbum12/account.yaml` | Expanded with full per-account sections: `video_type`, `metadata` (full), `scheduler`, `channel`, `telegram.chat_id`, `compositor`, `thumbnail`, `tts`, `scoring`, `clip_builder` |
-| `config/config.yaml` | Updated comments to reflect global-default-only role. `channel` and `telegram.chat_id` are now per-account. `scheduler` kept as global fallback. |
+| File                                      | Change                                                                                                                                                                                |
+| ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `core/account_loader.py`                  | Added `_deep_merge(base, override)` utility function. Added `_ACCOUNT_META_KEYS` frozenset. Added generic deep-merge loop after platform-specific handling. Updated module docstring. |
+| `config/accounts/mrkimbum12/account.yaml` | Expanded with full per-account sections: `video_type`, `metadata` (full), `scheduler`, `channel`, `telegram.chat_id`, `compositor`, `thumbnail`, `tts`, `scoring`, `clip_builder`     |
+| `config/config.yaml`                      | Updated comments to reflect global-default-only role. `channel` and `telegram.chat_id` are now per-account. `scheduler` kept as global fallback.                                      |
 
 **Per-account overrideable sections** (deep-merged, override wins at every leaf):
 
-| Section | Per-account use case |
-|---------|---------------------|
-| `video_type` | gameplay vs podcast per channel |
-| `metadata` | language, title/description length constraints |
-| `scheduler` | posts_per_day, publish_time_utc per channel |
-| `channel` | name, hashtags, static_tags |
-| `telegram` | chat_id per channel (shared bot token in global) |
-| `compositor` | layout, face_region |
-| `thumbnail` | saturation/contrast/font per channel brand |
-| `tts` | voice per channel |
-| `scoring` | weights tuned per content type |
-| `clip_builder` | clip count/duration per channel strategy |
+| Section        | Per-account use case                             |
+| -------------- | ------------------------------------------------ |
+| `video_type`   | gameplay vs podcast per channel                  |
+| `metadata`     | language, title/description length constraints   |
+| `scheduler`    | posts_per_day, publish_time_utc per channel      |
+| `channel`      | name, hashtags, static_tags                      |
+| `telegram`     | chat_id per channel (shared bot token in global) |
+| `compositor`   | layout, face_region                              |
+| `thumbnail`    | saturation/contrast/font per channel brand       |
+| `tts`          | voice per channel                                |
+| `scoring`      | weights tuned per content type                   |
+| `clip_builder` | clip count/duration per channel strategy         |
 
 **New account setup** (zero code changes required):
+
 ```
 config/accounts/<new-account>/
     account.yaml       # only override what differs from global defaults
@@ -251,8 +252,8 @@ config/accounts/<new-account>/
 
 **Fix:** Added `_to_wib()` helper and `_WIB = timezone(timedelta(hours=7))` constant. Both `scheduled_at` and `published_at` fields in `build_publish_message()` now display as `YYYY-MM-DD HH:MM WIB`.
 
-| File | Change |
-|------|--------|
+| File                           | Change                                                                                                                         |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
 | `modules/notifier/telegram.py` | Added `_WIB` timezone constant. Added `_to_wib(iso_utc)` helper. Applied to both timestamp lines in `build_publish_message()`. |
 
 ---
@@ -263,21 +264,21 @@ config/accounts/<new-account>/
 
 **Additional:** All clips were rescheduled to start from `2026-06-20T06:00:00Z` (13:00 WIB) — one per day through June 30.
 
-| File | Change |
-|------|--------|
-| `config/config.yaml` | `scheduler.publish_time_utc`: `"10:00"` → `"06:00"` (= 13:00 WIB) |
-| `config/accounts/mrkimbum12/account.yaml` | `scheduler.publish_time_utc: "06:00"`, `preferred_hours: [2, 7, 12]` |
-| `output/shorts_factory.db` | 11 scheduled clips rescheduled to `2026-06-20..2026-06-30` at `06:00Z` |
+| File                                      | Change                                                                 |
+| ----------------------------------------- | ---------------------------------------------------------------------- |
+| `config/config.yaml`                      | `scheduler.publish_time_utc`: `"10:00"` → `"06:00"` (= 13:00 WIB)      |
+| `config/accounts/mrkimbum12/account.yaml` | `scheduler.publish_time_utc: "06:00"`, `preferred_hours: [2, 7, 12]`   |
+| `output/shorts_factory.db`                | 11 scheduled clips rescheduled to `2026-06-20..2026-06-30` at `06:00Z` |
 
 ---
 
 ### 8. Secrets & Repository Hygiene
 
-| File | Change |
-|------|--------|
-| `.gitignore` | Added `config/accounts/**/*_credentials.json`, `config/**/*_credentials.json`, `config/config.yaml`, `.env` |
-| `.env.example` | Created — documents all env vars: `SF_TELEGRAM_BOT_TOKEN`, `SF_TELEGRAM_CHAT_ID`, `ANTHROPIC_API_KEY`, `SF_*` config overrides |
-| `config/config.yaml` | `telegram.bot_token` added as hardcoded fallback (config.yaml is now gitignored) |
+| File                 | Change                                                                                                                         |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `.gitignore`         | Added `config/accounts/**/*_credentials.json`, `config/**/*_credentials.json`, `config/config.yaml`, `.env`                    |
+| `.env.example`       | Created — documents all env vars: `SF_TELEGRAM_BOT_TOKEN`, `SF_TELEGRAM_CHAT_ID`, `ANTHROPIC_API_KEY`, `SF_*` config overrides |
+| `config/config.yaml` | `telegram.bot_token` added as hardcoded fallback (config.yaml is now gitignored)                                               |
 
 ---
 
@@ -293,27 +294,28 @@ config/accounts/<new-account>/
 ```
 
 Single-account active crontab:
+
 ```
-0 9,13,18 * * * cd /Users/mekari/Developer/personal-project/shorts-generator && /opt/homebrew/bin/python3 scripts/upload_scheduler.py >> output/upload_cron.log 2>&1
+0 9,13,18 * * * cd ~/shorts-generator && /opt/homebrew/bin/python3 scripts/upload_scheduler.py >> output/upload_cron.log 2>&1
 ```
 
 ---
 
 ### Current Queue State (as of 2026-06-20)
 
-| # | Clip | Scheduled (WIB) | Status |
-|---|------|-----------------|--------|
-| 1 | Dragon Sword Habisi Mini-Boss | Jun 20, 13:00 | scheduled |
-| 2 | Lagi Wall Run, Tiba-tiba Headless | Jun 21, 13:00 | scheduled |
-| 3 | Dikepung 4 Musuh yang Grab | Jun 22, 13:00 | scheduled |
-| 4 | Ryu Tangkap Shuriken | Jun 23, 13:00 | scheduled |
-| 5 | Tiap Hit di Combo Ini Damage Maksimal | Jun 24, 13:00 | scheduled |
-| 6 | Serangan Mendadak Spider Clan | Jun 25, 13:00 | scheduled |
-| 7 | Dark Dragon Blade Habisin Seluruh Ruangan | Jun 26, 13:00 | scheduled |
-| 8 | Stage Air Ninja Gaiden Sigma | Jun 27, 13:00 | scheduled |
-| 9 | Boss Alma Fase 2 | Jun 28, 13:00 | scheduled |
-| 10 | Windmill Shuriken Habisin 3 Musuh | Jun 29, 13:00 | scheduled |
-| 11 | Room Paling Susah di Chapter 14 | Jun 30, 13:00 | scheduled |
+| #   | Clip                                      | Scheduled (WIB) | Status    |
+| --- | ----------------------------------------- | --------------- | --------- |
+| 1   | Dragon Sword Habisi Mini-Boss             | Jun 20, 13:00   | scheduled |
+| 2   | Lagi Wall Run, Tiba-tiba Headless         | Jun 21, 13:00   | scheduled |
+| 3   | Dikepung 4 Musuh yang Grab                | Jun 22, 13:00   | scheduled |
+| 4   | Ryu Tangkap Shuriken                      | Jun 23, 13:00   | scheduled |
+| 5   | Tiap Hit di Combo Ini Damage Maksimal     | Jun 24, 13:00   | scheduled |
+| 6   | Serangan Mendadak Spider Clan             | Jun 25, 13:00   | scheduled |
+| 7   | Dark Dragon Blade Habisin Seluruh Ruangan | Jun 26, 13:00   | scheduled |
+| 8   | Stage Air Ninja Gaiden Sigma              | Jun 27, 13:00   | scheduled |
+| 9   | Boss Alma Fase 2                          | Jun 28, 13:00   | scheduled |
+| 10  | Windmill Shuriken Habisin 3 Musuh         | Jun 29, 13:00   | scheduled |
+| 11  | Room Paling Susah di Chapter 14           | Jun 30, 13:00   | scheduled |
 
 Queue runs out **June 30** — new source video needed before then.
 
@@ -341,29 +343,32 @@ Concurrency: `ThreadPoolExecutor(max_workers=4)` — all enabled platforms uploa
 
 ### Files
 
-| File | Purpose |
-|------|---------|
-| `modules/publisher/multi_platform.py` | Fan-out orchestrator — `publish_to_all_platforms()`, `PlatformResults` dataclass |
-| `modules/publisher/youtube_client.py` | YouTube Data API v3 — OAuth2, video upload, thumbnail upload, privacy control |
-| `modules/publisher/tiktok_client.py` | TikTok Content Posting API — OAuth2 token refresh, file-based upload, publish status polling |
-| `modules/publisher/meta_client.py` | Meta Graph API — Instagram Reels + Facebook Reels, temp HTTP server for video URL serving |
-| `modules/publisher/visibility.py` | Delayed unlisted → public transition after configurable delay |
+| File                                  | Purpose                                                                                      |
+| ------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `modules/publisher/multi_platform.py` | Fan-out orchestrator — `publish_to_all_platforms()`, `PlatformResults` dataclass             |
+| `modules/publisher/youtube_client.py` | YouTube Data API v3 — OAuth2, video upload, thumbnail upload, privacy control                |
+| `modules/publisher/tiktok_client.py`  | TikTok Content Posting API — OAuth2 token refresh, file-based upload, publish status polling |
+| `modules/publisher/meta_client.py`    | Meta Graph API — Instagram Reels + Facebook Reels, temp HTTP server for video URL serving    |
+| `modules/publisher/visibility.py`     | Delayed unlisted → public transition after configurable delay                                |
 
 ### Per-Platform Details
 
 **YouTube**
+
 - OAuth2 credentials from `config/accounts/<name>/youtube_credentials.json`
 - Uploads as `unlisted`, transitions to `public` after `public_delay_minutes` (default 30)
 - Thumbnail uploaded separately via `thumbnails.set` API after video confirmation
 - Pre-authenticated client passed from `upload_scheduler` to avoid double-auth
 
 **TikTok**
+
 - OAuth2 refresh token flow — access token refreshed on each run, written back to credentials file
 - File-based upload (not URL-based): video streamed directly via multipart POST
 - Publish status polled after upload (TikTok processes async): up to 12 attempts × 5s
 - Credentials: `client_key`, `client_secret`, `refresh_token` in `tiktok_credentials.json`
 
 **Instagram Reels + Facebook Reels (Meta)**
+
 - Shared credentials file `meta_credentials.json` (`access_token`, `instagram_user_id`, `facebook_page_id`)
 - Instagram requires a **publicly reachable video URL** — Meta's API fetches the video from a URL, it cannot receive a direct file upload
 - Solution: `_TempFileServer` spins up a local HTTP server on `serve_port` (default 8080), serves the video file at `http://<public_ip>:<port>/<filename>`, tears down after upload
@@ -401,15 +406,15 @@ platforms:
     public_delay_minutes: 30
 
   tiktok:
-    enabled: false                          # flip to true + add credentials to activate
+    enabled: false # flip to true + add credentials to activate
     credentials: "tiktok_credentials.json"
     privacy_level: "PUBLIC_TO_EVERYONE"
 
   instagram:
-    enabled: false                          # requires public IP + port forward
+    enabled: false # requires public IP + port forward
     credentials: "meta_credentials.json"
     serve_port: 8080
-    public_ip: ""                           # blank = auto-detect via api.ipify.org
+    public_ip: "" # blank = auto-detect via api.ipify.org
 
   facebook:
     enabled: false
@@ -418,21 +423,21 @@ platforms:
 
 ### Failure Isolation
 
-| Scenario | Behaviour |
-|----------|-----------|
-| One platform auth fails | That platform skipped, others proceed |
+| Scenario                  | Behaviour                                                   |
+| ------------------------- | ----------------------------------------------------------- |
+| One platform auth fails   | That platform skipped, others proceed                       |
 | One platform upload fails | Error stored in `PlatformResults.errors`, others unaffected |
-| ALL platforms fail | Clip status set to `failed`, error logged |
-| At least one succeeds | Clip status set to `published`, all IDs persisted to DB |
-| Telegram notification | Sent on any success — shows all platform IDs |
+| ALL platforms fail        | Clip status set to `failed`, error logged                   |
+| At least one succeeds     | Clip status set to `published`, all IDs persisted to DB     |
+| Telegram notification     | Sent on any success — shows all platform IDs                |
 
 ### Credentials Setup per Platform
 
-| Platform | File | Required fields |
-|----------|------|-----------------|
-| YouTube | `youtube_credentials.json` | `client_id`, `client_secret`, `refresh_token`, `token_uri` |
-| TikTok | `tiktok_credentials.json` | `client_key`, `client_secret`, `refresh_token` |
-| Instagram + Facebook | `meta_credentials.json` | `access_token`, `instagram_user_id`, `facebook_page_id` |
+| Platform             | File                       | Required fields                                            |
+| -------------------- | -------------------------- | ---------------------------------------------------------- |
+| YouTube              | `youtube_credentials.json` | `client_id`, `client_secret`, `refresh_token`, `token_uri` |
+| TikTok               | `tiktok_credentials.json`  | `client_key`, `client_secret`, `refresh_token`             |
+| Instagram + Facebook | `meta_credentials.json`    | `access_token`, `instagram_user_id`, `facebook_page_id`    |
 
 All credential files live under `config/accounts/<account-name>/` and are gitignored by the account-level `.gitignore`.
 
