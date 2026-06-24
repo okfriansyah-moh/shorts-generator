@@ -321,8 +321,8 @@ def cmd_export(adapter: DatabaseAdapter, config: dict | None = None) -> int:
     of what is hardcoded in the SKILL.md.  Claude MUST use these guidelines
     instead of any default English instructions when this field is present.
     """
-    # Check both queued and scheduled clips
-    rows = adapter.get_clips_by_status(["queued", "scheduled"])
+    # Pick up clips produced by generation_scheduler (status="generated")
+    rows = adapter.get_clips_by_status(["generated"])
 
     # Resolve per-video state file
     video_dir = _video_dir_for_rows(rows)
@@ -440,7 +440,7 @@ def cmd_apply(adapter: DatabaseAdapter, config: dict, enriched_path: str) -> int
 
 def cmd_status(adapter: DatabaseAdapter) -> int:
     """Print a summary of clip statuses."""
-    for status in ["queued", "scheduled", "published", "failed"]:
+    for status in ["generated", "scheduled", "published", "failed"]:
         count = len(adapter.get_clips_by_status([status]))
         print(f"{status:12}: {count}")
     return 0
@@ -451,8 +451,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Shorts Factory — AI Enricher", add_help=False)
     parser.add_argument("--account", default=None,
                         help="Account name (folder under config/accounts/). Auto-discovered when only one exists.")
-    parser.add_argument("command", nargs="?", default="--status",
-                        choices=["--status", "--export", "--apply"])
+    parser.add_argument("command", nargs="?", default="--status")
     parser.add_argument("apply_path", nargs="?", default=None,
                         help="Path to enriched_batch.json (required for --apply)")
     # Parse known args so legacy positional usage still works
