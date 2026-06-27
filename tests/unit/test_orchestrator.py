@@ -20,31 +20,32 @@ from core.orchestrator import (
 class TestPipelineStages:
     """Tests for pipeline stage constants."""
 
-    def test_exactly_16_stages(self):
-        """Pipeline has exactly 16 stages."""
-        assert len(PIPELINE_STAGES) == 16
+    def test_exactly_19_stages(self):
+        """Pipeline has exactly 19 stages."""
+        assert len(PIPELINE_STAGES) == 19
 
     def test_stage_order(self):
         """Stages are in the canonical order."""
         assert PIPELINE_STAGES[0] == "ingestion"
         assert PIPELINE_STAGES[1] == "scene_splitter"
-        assert PIPELINE_STAGES[4] == "scoring"
-        assert PIPELINE_STAGES[10] == "renderer"
-        assert PIPELINE_STAGES[15] == "publisher"
+        assert PIPELINE_STAGES[4] == "audio_analysis"
+        assert PIPELINE_STAGES[7] == "scoring"
+        assert PIPELINE_STAGES[13] == "renderer"
+        assert PIPELINE_STAGES[18] == "publisher"
 
     def test_video_clip_batch_partition(self):
-        """Video + clip + batch stages cover all 16 stages exactly."""
+        """Video + clip + batch stages cover all 19 stages exactly."""
         all_stages = VIDEO_LEVEL_STAGES + CLIP_LEVEL_STAGES + BATCH_LEVEL_STAGES
         assert all_stages == PIPELINE_STAGES
 
     def test_video_level_stages(self):
-        """First 6 stages are video-level."""
-        assert len(VIDEO_LEVEL_STAGES) == 6
+        """First 9 stages are video-level."""
+        assert len(VIDEO_LEVEL_STAGES) == 9
         assert VIDEO_LEVEL_STAGES[0] == "ingestion"
         assert VIDEO_LEVEL_STAGES[-1] == "clip_builder"
 
     def test_clip_level_stages(self):
-        """Stages 6-13 are clip-level."""
+        """Stages 9-16 are clip-level."""
         assert len(CLIP_LEVEL_STAGES) == 8
         assert CLIP_LEVEL_STAGES[0] == "hook_generator"
         assert CLIP_LEVEL_STAGES[-1] == "storage"
@@ -60,7 +61,7 @@ class TestGetStageIndex:
 
     def test_valid_stage(self):
         assert get_stage_index("ingestion") == 0
-        assert get_stage_index("publisher") == 15
+        assert get_stage_index("publisher") == 18
 
     def test_invalid_stage(self):
         with pytest.raises(ValueError, match="Unknown pipeline stage"):
@@ -79,8 +80,8 @@ class TestGetResumeStageIndex:
         assert get_resume_stage_index("ingestion") == 1
 
     def test_resume_after_scoring(self):
-        """After scoring, resume at clip_builder (index 5)."""
-        assert get_resume_stage_index("scoring") == 5
+        """After scoring, resume at clip_builder."""
+        assert get_resume_stage_index("scoring") == get_stage_index("clip_builder")
 
 
 class TestStateConstants:

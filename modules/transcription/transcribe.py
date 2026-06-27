@@ -101,8 +101,63 @@ def transcribe(
     return transcript
 
 
+def transcribe_chunk(
+    ingestion_result: "IngestionResult",
+    config: dict[str, Any],
+    start_seconds: float,
+    duration_seconds: float,
+    *,
+    offset_ms: int = 0,
+) -> Transcript:
+    """Transcribe a bounded chunk of the source video.
+
+    Returns a normal Transcript DTO whose timestamps are shifted into the
+    global timeline by ``offset_ms``.
+    """
+    transcription_cfg = config.get("transcription", {})
+    model_size: str = transcription_cfg.get("model_size", _DEFAULT_MODEL_SIZE)
+    language: str = transcription_cfg.get("language", _DEFAULT_LANGUAGE)
+    beam_size: int = int(transcription_cfg.get("beam_size", _DEFAULT_BEAM_SIZE))
+
+    video_id = ingestion_result.video_id
+    video_path = ingestion_result.path
+    gpu_cfg = config.get("gpu", {})
+    gpu_enabled = bool(gpu_cfg.get("enabled", False))
+    device = gpu_cfg.get("transcription_device", "cuda") if gpu_enabled else "cpu"
+    compute_type = "int8" if device == "cpu" else gpu_cfg.get("transcription_compute_type", "float16")
+
+    wav_path = _extract_audio_to_wav(
+        video_path,
+        video_id,
+        config,
+        start_seconds=start_seconds,
+        duration_seconds=duration_seconds,
+    )
+    try:
+        transcript = _run_faster_whisper(
+            wav_path,
+            video_id,
+            model_size,
+            language,
+            beam_size,
+            device=device,
+            compute_type=compute_type,
+            config=config,
+        )
+    finally:
+        _cleanup_temp_file(wav_path)
+    if offset_ms == 0:
+        return transcript
+    return _offset_transcript(transcript, offset_ms)
+
+
 def _extract_audio_to_wav(
-    video_path: str, video_id: str, config: dict[str, Any]
+    video_path: str,
+    video_id: str,
+    config: dict[str, Any],
+    *,
+    start_seconds: float | None = None,
+    duration_seconds: float | None = None,
 ) -> str:
     """Extract audio from video to a temporary WAV file using FFmpeg.
 
@@ -128,6 +183,10 @@ def _extract_audio_to_wav(
     cmd = [
         "ffmpeg",
         "-y",
+    ]
+    if start_seconds is not None:
+        cmd.extend(["-ss", f"{start_seconds:.3f}"])
+    cmd.extend([
         "-i", video_path,
         "-vn",
         "-acodec", "pcm_s16le",
@@ -135,7 +194,9 @@ def _extract_audio_to_wav(
         "-ac", "1",
         "-loglevel", "error",
         wav_path,
-    ]
+    ])
+    if duration_seconds is not None:
+        cmd[cmd.index("-vn"):cmd.index("-vn")] = ["-t", f"{duration_seconds:.3f}"]
     timeout = config.get("pipeline", {}).get("ffmpeg_timeout", 300)
 
     try:
@@ -325,3 +386,33 @@ def _cleanup_temp_file(path: str) -> None:
             "Failed to clean up temporary file",
             extra={"stage": "transcription", "path": path, "error": str(exc)},
         )
+
+
+def _offset_transcript(transcript: Transcript, offset_ms: int) -> Transcript:
+    """Shift a transcript DTO into the global source timeline."""
+    shifted_segments: list[TranscriptSegment] = []
+    for segment in transcript.segments:
+        shifted_words = tuple(
+            Word(
+                text=word.text,
+                start_time=word.start_time + offset_ms,
+                end_time=word.end_time + offset_ms,
+                confidence=word.confidence,
+            )
+            for word in segment.words
+        )
+        shifted_segments.append(
+            TranscriptSegment(
+                text=segment.text,
+                start_time=segment.start_time + offset_ms,
+                end_time=segment.end_time + offset_ms,
+                words=shifted_words,
+                confidence=segment.confidence,
+            )
+        )
+    return Transcript(
+        video_id=transcript.video_id,
+        segments=tuple(shifted_segments),
+        total_words=transcript.total_words,
+        language=transcript.language,
+    )

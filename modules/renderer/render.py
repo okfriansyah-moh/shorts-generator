@@ -114,6 +114,18 @@ def _get_video_info(file_path: str) -> tuple[int, int, str, int]:
     raise RuntimeError("No video stream found in output")
 
 
+def _resolve_max_file_size_bytes(renderer_config: dict) -> int | None:
+    """Resolve renderer.max_file_size_mb into bytes.
+
+    A value <= 0 disables the rendered file size cap.
+    """
+    max_size_mb = renderer_config.get("max_file_size_mb", 250)
+    max_size_mb = float(max_size_mb)
+    if max_size_mb <= 0:
+        return None
+    return int(max_size_mb * 1024 * 1024)
+
+
 def _build_render_command(
     composite: CompositeStream,
     tts_result: TTSResult | None,
@@ -236,7 +248,7 @@ def _validate_output(
     file_path: str,
     min_duration: float = 30.0,
     max_duration: float = 60.0,
-    max_file_size: int = 100 * 1024 * 1024,
+    max_file_size: int | None = 100 * 1024 * 1024,
 ) -> tuple[float, tuple[int, int], str, int, int]:
     """Validate rendered output meets specifications.
 
@@ -261,7 +273,7 @@ def _validate_output(
     if abs(float(fps) - 30.0) > 0.5:
         raise RuntimeError(f"Frame rate {fps} != 30fps")
 
-    if file_size > max_file_size:
+    if max_file_size is not None and file_size > max_file_size:
         raise RuntimeError(
             f"File size {file_size} bytes exceeds max {max_file_size} bytes"
         )
@@ -295,7 +307,7 @@ def process(
     output_path = os.path.join(clip_dir, "final.mp4")
 
     renderer_config = config.get("renderer", {})
-    max_size = renderer_config.get("max_file_size_mb", 100) * 1024 * 1024
+    max_size = _resolve_max_file_size_bytes(renderer_config)
 
     # Idempotent: skip if already rendered
     if os.path.exists(output_path):
@@ -359,11 +371,11 @@ def process(
 
     # Validate output
     duration, resolution, codec, fps, file_size = _validate_output(
-        tmp_path, max_file_size=max_size,
+        tmp_path, max_file_size=None,
     )
 
     # Re-encode if file too large
-    if file_size > max_size:
+    if max_size is not None and file_size > max_size:
         logger.warning(
             "Output exceeds max size, re-encoding with CRF 24",
             extra={

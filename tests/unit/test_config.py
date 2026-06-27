@@ -83,6 +83,16 @@ class TestEnvOverrides:
         finally:
             del os.environ["SF_FFMPEG_TIMEOUT"]
 
+    def test_override_renderer_max_file_size(self, sample_config):
+        """SF_RENDERER_MAX_FILE_SIZE_MB overrides renderer.max_file_size_mb."""
+        os.environ["SF_RENDERER_MAX_FILE_SIZE_MB"] = "250"
+        try:
+            result = _apply_env_overrides(sample_config)
+            assert result["renderer"]["max_file_size_mb"] == 250
+            assert isinstance(result["renderer"]["max_file_size_mb"], int)
+        finally:
+            del os.environ["SF_RENDERER_MAX_FILE_SIZE_MB"]
+
     def test_no_override_when_unset(self, sample_config):
         """Config unchanged when no SF_ env vars are set."""
         original_output = sample_config["paths"]["output_dir"]

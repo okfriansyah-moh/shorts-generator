@@ -23,7 +23,7 @@ pipeline:
 
 ingestion:
   min_duration_seconds: 300
-  max_duration_seconds: 7200
+  max_duration_seconds: 0
   supported_formats: ["mp4", "mkv", "avi", "mov", "webm"]
 
 # Podcast-specific ingestion overrides (merged on top when video_type=podcast)
@@ -51,6 +51,8 @@ transcription:
   language: "en"
   beam_size: 5
   model_cache_dir: "models/whisper"
+  chunk_duration_seconds: 300
+  chunk_overlap_seconds: 2
 
 face_detection:
   sample_fps: 2
@@ -252,7 +254,7 @@ renderer:
   crf: 20
   preset: "ultrafast"
   fps: 30
-  max_file_size_mb: 100
+  max_file_size_mb: 250 # set <= 0 to disable the rendered clip size cap
   audio_source: "original" # "original" (default) or "mixed" (original + TTS narration)
   audio_mix_gameplay: 0.7
   audio_mix_narration: 0.3
@@ -288,6 +290,7 @@ ai_metadata:
   temperature: 0.7
 
 scheduler:
+  generation_lock_ttl_seconds: 900
   # Global defaults — override per-account in account.yaml.
   max_daily_uploads: 3
   min_gap_hours: 4

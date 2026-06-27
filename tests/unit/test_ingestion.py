@@ -196,6 +196,19 @@ class TestIngest:
             with pytest.raises(IngestionError, match="duration"):
                 ingest(str(f), _minimal_config())
 
+    def test_unlimited_max_duration_allows_long_video(self, tmp_path):
+        f = tmp_path / "video.mp4"
+        f.write_bytes(b"\x00" * 10)
+        mock_result = MagicMock()
+        mock_result.returncode = 0
+        mock_result.stdout = _make_ffprobe_output(duration=50_000.0)
+        mock_result.stderr = ""
+        config = _minimal_config()
+        config["ingestion"]["max_duration_seconds"] = 0
+        with patch("subprocess.run", return_value=mock_result):
+            result = ingest(str(f), config)
+        assert result.duration_seconds == 50_000.0
+
     def test_no_audio_raises(self, tmp_path):
         f = tmp_path / "video.mp4"
         f.write_bytes(b"\x00" * 10)
