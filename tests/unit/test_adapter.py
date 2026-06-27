@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from contracts.face import FaceDetectionResult, SceneFaceData
+from contracts.scoring import ScoredScene, ScoredSceneList
+from contracts.transcript import Transcript, TranscriptSegment, Word
 from contracts.scene import SceneSegment
 from database.adapter import DatabaseAdapter
 
@@ -380,3 +383,94 @@ class TestPipelineRunOperations:
         adapter = DatabaseAdapter(test_db)
         assert adapter.get_active_run("nonexistent") is None
         assert adapter.get_last_completed_stage("nonexistent") is None
+
+
+class TestSignalCacheOperations:
+    def _insert_video_and_scenes(self, adapter: DatabaseAdapter) -> None:
+        adapter.insert_video(
+            video_id="vid1", file_path="/tmp/v.mp4",
+            duration_seconds=3600.0, width=1920, height=1080,
+            fps=30.0, has_audio=True, file_size_bytes=100,
+        )
+        adapter.insert_scenes(
+            [
+                SceneSegment("vid1_0_5000", "vid1", 0, 5000, 5.0),
+                SceneSegment("vid1_5000_10000", "vid1", 5000, 10000, 5.0),
+            ]
+        )
+
+    def test_stage_state_round_trip(self, test_db):
+        adapter = DatabaseAdapter(test_db)
+        self._insert_video_and_scenes(adapter)
+        adapter.upsert_stage_state(
+            "vid1", "transcription", "completed", "v1", "hash1",
+            units_done=2, units_total=2, checkpoint_token="1",
+            payload_json='{"language":"en"}',
+        )
+        row = adapter.get_stage_state("vid1", "transcription")
+        assert row is not None
+        assert row["status"] == "completed"
+        assert row["units_done"] == 2
+
+    def test_transcript_round_trip(self, test_db):
+        adapter = DatabaseAdapter(test_db)
+        self._insert_video_and_scenes(adapter)
+        segments = (
+            TranscriptSegment(
+                text="hello world",
+                start_time=0,
+                end_time=1000,
+                words=(
+                    Word("hello", 0, 400, 0.9),
+                    Word("world", 500, 1000, 0.9),
+                ),
+                confidence=0.9,
+            ),
+        )
+        adapter.upsert_transcript_chunk("vid1", 0, segments)
+        transcript = adapter.get_transcript("vid1")
+        assert transcript is not None
+        assert transcript.total_words == 2
+        assert transcript.segments[0].text == "hello world"
+
+    def test_face_cache_round_trip(self, test_db):
+        adapter = DatabaseAdapter(test_db)
+        self._insert_video_and_scenes(adapter)
+        scene_data = SceneFaceData(
+            scene_id="vid1_0_5000",
+            face_visible_ratio=0.5,
+            bounding_boxes=(),
+            average_bbox=None,
+            sample_count=10,
+        )
+        adapter.upsert_face_scene("vid1_0_5000", "vid1", scene_data)
+        result = adapter.get_face_detection_result("vid1")
+        assert isinstance(result, FaceDetectionResult)
+        assert result is not None
+        assert result.scene_data[0].scene_id == "vid1_0_5000"
+
+    def test_scored_scene_round_trip(self, test_db):
+        adapter = DatabaseAdapter(test_db)
+        self._insert_video_and_scenes(adapter)
+        scored = ScoredSceneList(
+            video_id="vid1",
+            scenes=(
+                ScoredScene("vid1_0_5000", "vid1", 0, 5000, 5.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 1),
+                ScoredScene("vid1_5000_10000", "vid1", 5000, 10000, 5.0, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 2),
+            ),
+            min_score=0.7,
+            max_score=0.8,
+            avg_score=0.75,
+        )
+        adapter.persist_scored_scenes(scored, {"vid1_0_5000": "a", "vid1_5000_10000": "b"})
+        restored = adapter.get_scored_scene_list("vid1")
+        assert restored is not None
+        assert len(restored.scenes) == 2
+        assert restored.scenes[0].composite_score >= restored.scenes[1].composite_score
+
+    def test_scheduler_lock_acquire_and_release(self, test_db):
+        adapter = DatabaseAdapter(test_db)
+        assert adapter.acquire_scheduler_lock("generation:acct", "owner-1", 900) is True
+        assert adapter.acquire_scheduler_lock("generation:acct", "owner-2", 900) is False
+        adapter.release_scheduler_lock("generation:acct", "owner-1")
+        assert adapter.acquire_scheduler_lock("generation:acct", "owner-2", 900) is True

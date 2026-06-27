@@ -33,6 +33,8 @@ def process(
     audio_data: Optional[AudioEnergyData],
     config: dict,
     file_path: Optional[str] = None,
+    activity_scores: dict[str, float] | None = None,
+    quality_scores: dict[str, float] | None = None,
 ) -> ScoredSceneList:
     """Score all scenes and return a ranked ScoredSceneList.
 
@@ -62,17 +64,22 @@ def process(
         }
 
     # Scene activity requires the actual video file; normalise video-wide.
-    raw_activities: dict[str, float] = {}
-    raw_qualities: dict[str, float] = {}
-    if file_path is not None:
-        raw_activities = compute_scene_activities(scene_list, file_path, config)
-        raw_qualities = compute_scene_qualities(scene_list, file_path, config)
-    activity_scores = _normalize_values(
-        raw_activities, [s.scene_id for s in scene_list.scenes]
-    )
-    quality_scores = _normalize_values(
-        raw_qualities, [s.scene_id for s in scene_list.scenes]
-    )
+    resolved_activity_scores = activity_scores
+    resolved_quality_scores = quality_scores
+    if resolved_activity_scores is None:
+        raw_activities: dict[str, float] = {}
+        if file_path is not None:
+            raw_activities = compute_scene_activities(scene_list, file_path, config)
+        resolved_activity_scores = _normalize_values(
+            raw_activities, [s.scene_id for s in scene_list.scenes]
+        )
+    if resolved_quality_scores is None:
+        raw_qualities: dict[str, float] = {}
+        if file_path is not None:
+            raw_qualities = compute_scene_qualities(scene_list, file_path, config)
+        resolved_quality_scores = _normalize_values(
+            raw_qualities, [s.scene_id for s in scene_list.scenes]
+        )
 
     # Compute all five factor scores and a raw weighted composite per scene.
     scored: list[ScoredScene] = []
@@ -80,11 +87,11 @@ def process(
         kw = score_keyword(scene.start_time, scene.end_time, transcript, keywords)
         ae = audio_by_scene.get(scene.scene_id, 0.0)
         fp = face_by_scene[scene.scene_id].face_visible_ratio if scene.scene_id in face_by_scene else 0.0
-        sa = activity_scores.get(scene.scene_id, 0.0)
+        sa = resolved_activity_scores.get(scene.scene_id, 0.0)
         sd = _sentence_density_score(
             scene.start_time, scene.end_time, scene.duration, transcript
         )
-        iq = quality_scores.get(scene.scene_id, 0.0)
+        iq = resolved_quality_scores.get(scene.scene_id, 0.0)
         composite = _weighted_composite(kw, ae, fp, sa, sd, iq, weights)
         scored.append(
             ScoredScene(

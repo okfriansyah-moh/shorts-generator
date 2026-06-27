@@ -241,7 +241,7 @@ class YouTubeClient:
         Uses the resumable upload protocol so large files are handled
         reliably. Steps:
           1. Initiate a resumable session → get upload URI.
-          2. Upload the file in a single PUT (files are ≤100 MB per config).
+          2. Upload the file in a single PUT (file size is governed by renderer config).
 
         Returns:
             UploadResult from the YouTube API response.

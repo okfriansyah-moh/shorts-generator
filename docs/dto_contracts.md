@@ -653,7 +653,7 @@ For `"gameplay_only_zoom"`:
 | `clip_id`          | `str`              | Reference to parent clip   | 16 hex chars                                   |
 | `video_path`       | `str`              | Path to final rendered MP4 | Relative path. Must point to a valid MP4 file. |
 | `duration_seconds` | `float`            | Actual rendered duration   | `30.0 ≤ duration_seconds ≤ 60.0`               |
-| `file_size_bytes`  | `int`              | Output file size           | `> 0`, `≤ 104857600` (100MB)                   |
+| `file_size_bytes`  | `int`              | Output file size           | `> 0`; max is governed by `renderer.max_file_size_mb` |
 | `resolution`       | `tuple[int, int]`  | Output resolution          | Must be `(1080, 1920)`                         |
 | `codec`            | `str`              | Video codec used           | `"h264"` (H.264 High Profile)                  |
 | `audio_codec`      | `str`              | Audio codec used           | `"aac"`                                        |
@@ -664,7 +664,7 @@ For `"gameplay_only_zoom"`:
 
 - `resolution` is always `(1080, 1920)`
 - `duration_seconds` is always in [30.0, 60.0]
-- `file_size_bytes` never exceeds 100MB (re-encoded if necessary)
+- `file_size_bytes` respects `renderer.max_file_size_mb` when that limit is enabled
 - `codec` is always `"h264"`
 - `fps` is always `30.0`
 - `video_path` points to an existing, complete MP4 file (atomic write via `.tmp` rename)
@@ -881,7 +881,7 @@ After each stage, the orchestrator performs postcondition validation on the outp
 | TTS            | `audio_path` exists, `duration_seconds > 0`                                             |
 | Subtitle       | `subtitle_path` exists                                                                  |
 | Compositor     | `resolution` is (1080, 1920), `video_path` exists                                       |
-| Renderer       | `resolution` is (1080, 1920), `duration_seconds` in [30, 60], `file_size_bytes ≤ 100MB` |
+| Renderer       | `resolution` is (1080, 1920), `duration_seconds` in [30, 60], `file_size_bytes` respects configured cap |
 | Thumbnail      | `resolution` is (1280, 720), `image_path` exists, `text_overlay` ≤ 3 words              |
 | Metadata       | `title` 40–60 chars, `tags` 10–15 items                                                 |
 | Storage        | All `file_paths` keys present, all files exist                                          |

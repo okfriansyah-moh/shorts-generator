@@ -217,32 +217,16 @@ def main() -> int:
         extra={"stage": "scheduled_run", "video_id": "", "video_path": video_path},
     )
     result = subprocess.run(
-        [sys.executable, os.path.join(_PROJECT_ROOT, "run_pipeline.py"), video_path],
+        [sys.executable, os.path.join(_PROJECT_ROOT, "scripts", "generation_scheduler.py")],
         cwd=_PROJECT_ROOT,
     )
-    if result.returncode == 0:
-        _mark_processed(os.path.basename(video_path))
-        logger.info(
-            "scheduled_run: pipeline succeeded — %s marked as processed",
-            os.path.basename(video_path),
-            extra={"stage": "scheduled_run", "video_id": ""},
-        )
-        # Export clip data so the Cowork Claude agent can enhance metadata
-        export_path = _export_pending_ai_metadata(config)
-        if export_path:
-            logger.info(
-                "scheduled_run: clip data exported for AI metadata enhancement → %s",
-                export_path,
-                extra={"stage": "scheduled_run", "video_id": ""},
-            )
-    else:
+    if result.returncode != 0:
         logger.error(
-            "scheduled_run: pipeline failed for %s (exit %d)",
+            "scheduled_run: generation scheduler failed for %s (exit %d)",
             os.path.basename(video_path),
             result.returncode,
             extra={"stage": "scheduled_run", "video_id": "", "exit_code": result.returncode},
         )
-
     return result.returncode
 
 

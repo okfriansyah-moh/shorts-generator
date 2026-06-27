@@ -205,7 +205,12 @@ def _validate_duration(duration: float, config: dict[str, Any], abs_path: str) -
     min_dur = config["ingestion"]["min_duration_seconds"]
     max_dur = config["ingestion"]["max_duration_seconds"]
 
-    if duration < min_dur or duration > max_dur:
+    if duration < min_dur:
+        raise IngestionError(
+            f"Video duration {duration:.1f}s is outside the allowed range "
+            f"[{min_dur}s, {max_dur}s] for: {abs_path}"
+        )
+    if max_dur > 0 and duration > max_dur:
         raise IngestionError(
             f"Video duration {duration:.1f}s is outside the allowed range "
             f"[{min_dur}s, {max_dur}s] for: {abs_path}"

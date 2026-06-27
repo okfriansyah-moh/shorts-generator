@@ -30,6 +30,7 @@ import logging
 import os
 import subprocess
 import sys
+import uuid
 
 _PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _PROJECT_ROOT not in sys.path:
@@ -215,6 +216,11 @@ def _export_pending_ai_metadata(config: dict) -> str | None:
     return export_path
 
 
+def _db_path(config: dict) -> str:
+    path = config.get("paths", {}).get("database", "output/shorts_factory.db")
+    return path if os.path.isabs(path) else os.path.join(_PROJECT_ROOT, path)
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -255,180 +261,188 @@ def main() -> int:
         extra={"stage": "generation_scheduler", "video_id": ""},
     )
 
-    # ── Resolve account-scoped raw dir ─────────────────────────────────────
-    raw_dir = config["paths"].get("raw_dir", os.path.join("raw", account_name))
-    if not os.path.isabs(raw_dir):
-        raw_dir = os.path.join(_PROJECT_ROOT, raw_dir)
-
-    # ── Find next video ────────────────────────────────────────────────────
-    video_path = _next_raw_video(raw_dir)
-    if video_path is None:
+    lock_owner = str(uuid.uuid4())
+    db_path = _db_path(config)
+    lock_ttl = int(config.get("scheduler", {}).get("generation_lock_ttl_seconds", 900))
+    lock_conn = initialize_database(db_path)
+    lock_adapter = DatabaseAdapter(lock_conn)
+    lock_name = f"generation:{account_name}"
+    if not lock_adapter.acquire_scheduler_lock(lock_name, lock_owner, lock_ttl):
         logger.info(
-            "generation_scheduler: no unprocessed videos in %s — nothing to do",
-            raw_dir,
+            "generation_scheduler: another generation run already holds %s",
+            lock_name,
             extra={"stage": "generation_scheduler", "video_id": ""},
         )
+        lock_conn.close()
         return 0
 
-    basename = os.path.basename(video_path)
+    try:
+        # ── Resolve account-scoped raw dir ─────────────────────────────────────
+        raw_dir = config["paths"].get("raw_dir", os.path.join("raw", account_name))
+        if not os.path.isabs(raw_dir):
+            raw_dir = os.path.join(_PROJECT_ROOT, raw_dir)
 
-    # ── Dedup: content-hash check against DB (catches renamed files) ───────
-    is_dup, video_id = _is_duplicate_source(video_path, config)
-    if is_dup:
-        logger.warning(
-            "generation_scheduler: DUPLICATE SOURCE detected — %s has the same "
-            "content as an already-processed video (video_id=%s). "
-            "Marking as processed and skipping.",
-            basename, video_id,
-            extra={"stage": "generation_scheduler", "video_id": video_id},
-        )
-        _mark_processed(basename, raw_dir)
-        return 0
-
-    logger.info(
-        "generation_scheduler: running pipeline on %s (video_id=%s)",
-        basename, video_id or "pending",
-        extra={"stage": "generation_scheduler", "video_id": "", "video": basename},
-    )
-
-    # ── Check if clips already built but not yet rendered (resume render) ──
-    #
-    # The Cowork sandbox has a ~45 s per-call limit.  The full pipeline
-    # (audio analysis ~9 s + scoring ~20 s + 7 clips × 8 s FFmpeg ≈ 85 s)
-    # exceeds that budget.  The strategy:
-    #
-    #   Call 1  – run pipeline with a 33 s subprocess timeout so clip_builder
-    #             completes and clips land in the DB, then render the first
-    #             batch of clips (up to RENDER_BATCH_SIZE).
-    #   Call 2+ – skip straight to rendering the next unrendered batch.
-    #   Final   – once all clips have video_path, export metadata and mark done.
-    #
-    RENDER_BATCH_SIZE = 4   # clips per scheduler call (~32 s of FFmpeg)
-    PIPELINE_TIMEOUT  = 33  # seconds — enough for clip_builder; kills compositor
-
-    db_path = config.get("paths", {}).get("database", "output/shorts_factory.db")
-    if not os.path.isabs(db_path):
-        db_path = os.path.join(_PROJECT_ROOT, db_path)
-
-    def _get_unrendered_clips(vid_id: str) -> list[tuple]:
-        """Return (clip_id, clip_index) pairs for clips that have no video_path yet."""
-        try:
-            conn = initialize_database(db_path)
-            c = conn.cursor()
-            c.execute(
-                "SELECT clip_id FROM clips WHERE video_id=? AND (video_path IS NULL OR video_path='') "
-                "ORDER BY start_time",
-                (vid_id,),
-            )
-            rows = [(r[0], i) for i, r in enumerate(c.fetchall())]
-            conn.close()
-            return rows
-        except Exception as exc:
-            logger.warning("generation_scheduler: DB query failed — %s", exc,
-                           extra={"stage": "generation_scheduler", "video_id": vid_id})
-            return []
-
-    def _all_clips_rendered(vid_id: str) -> bool:
-        try:
-            conn = initialize_database(db_path)
-            c = conn.cursor()
-            c.execute(
-                "SELECT COUNT(*) FROM clips WHERE video_id=? AND (video_path IS NULL OR video_path='')",
-                (vid_id,),
-            )
-            count = c.fetchone()[0]
-            c.execute("SELECT COUNT(*) FROM clips WHERE video_id=?", (vid_id,))
-            total = c.fetchone()[0]
-            conn.close()
-            return total > 0 and count == 0
-        except Exception:
-            return False
-
-    # Compute the video_id so we can query clips before / after pipeline run
-    computed_video_id = video_id  # may be "" if _is_duplicate_source returned no match
-    if not computed_video_id:
-        computed_video_id = _compute_video_id(video_path)
-
-    unrendered_before = _get_unrendered_clips(computed_video_id)
-    clips_exist = len(unrendered_before) > 0 or _all_clips_rendered(computed_video_id)
-
-    # ── Run pipeline (with timeout so clip_builder can complete) ───────────
-    if not clips_exist:
-        logger.info(
-            "generation_scheduler: running pipeline on %s (video_id=%s, timeout=%ds)",
-            basename, computed_video_id or "pending", PIPELINE_TIMEOUT,
-            extra={"stage": "generation_scheduler", "video_id": ""},
-        )
-        try:
-            result = subprocess.run(
-                [
-                    sys.executable,
-                    os.path.join(_PROJECT_ROOT, "run_pipeline.py"),
-                    "--account", account_name,
-                    video_path,
-                ],
-                cwd=_PROJECT_ROOT,
-                timeout=PIPELINE_TIMEOUT,
-            )
-            pipeline_exit = result.returncode
-        except subprocess.TimeoutExpired:
-            logger.warning(
-                "generation_scheduler: pipeline subprocess hit %ds timeout — "
-                "clip_builder should have finished; proceeding to render phase.",
-                PIPELINE_TIMEOUT,
+        # ── Find next video ────────────────────────────────────────────────────
+        video_path = _next_raw_video(raw_dir)
+        if video_path is None:
+            logger.info(
+                "generation_scheduler: no unprocessed videos in %s — nothing to do",
+                raw_dir,
                 extra={"stage": "generation_scheduler", "video_id": ""},
             )
-            pipeline_exit = 0  # treat as partial success; clips may be in DB
-        except Exception as exc:
-            logger.error("generation_scheduler: pipeline error — %s", exc,
-                         extra={"stage": "generation_scheduler", "video_id": ""})
-            return 1
+            return 0
 
-        if pipeline_exit not in (0, None):
-            logger.error(
-                "generation_scheduler: pipeline failed for %s (exit %d)",
-                basename, pipeline_exit,
-                extra={"stage": "generation_scheduler", "video_id": "", "exit_code": pipeline_exit},
+        basename = os.path.basename(video_path)
+
+        # ── Dedup: content-hash check against DB (catches renamed files) ───────
+        is_dup, video_id = _is_duplicate_source(video_path, config)
+        if is_dup:
+            logger.warning(
+                "generation_scheduler: DUPLICATE SOURCE detected — %s has the same "
+                "content as an already-processed video (video_id=%s). "
+                "Marking as processed and skipping.",
+                basename, video_id,
+                extra={"stage": "generation_scheduler", "video_id": video_id},
             )
-            return 1
-    else:
+            _mark_processed(basename, raw_dir)
+            return 0
+
         logger.info(
-            "generation_scheduler: clips already in DB for %s — skipping pipeline, resuming render",
-            computed_video_id,
-            extra={"stage": "generation_scheduler", "video_id": computed_video_id},
+            "generation_scheduler: running pipeline on %s (video_id=%s)",
+            basename, video_id or "pending",
+            extra={"stage": "generation_scheduler", "video_id": "", "video": basename},
         )
 
-    # ── Render unrendered clips (batched to fit within sandbox time limit) ─
-    unrendered = _get_unrendered_clips(computed_video_id)
+        RENDER_BATCH_SIZE = 4
 
-    if unrendered:
-        batch = unrendered[:RENDER_BATCH_SIZE]
-        start_idx = batch[0][1]
-        end_idx   = batch[-1][1]
+        def _get_unrendered_clips(vid_id: str) -> list[tuple]:
+            """Return (clip_id, clip_index) pairs for clips that have no video_path yet."""
+            try:
+                conn = initialize_database(db_path)
+                c = conn.cursor()
+                c.execute(
+                    "SELECT clip_id FROM clips WHERE video_id=? AND (video_path IS NULL OR video_path='') "
+                    "ORDER BY start_time",
+                    (vid_id,),
+                )
+                rows = [(r[0], i) for i, r in enumerate(c.fetchall())]
+                conn.close()
+                return rows
+            except Exception as exc:
+                logger.warning(
+                    "generation_scheduler: DB query failed — %s",
+                    exc,
+                    extra={"stage": "generation_scheduler", "video_id": vid_id},
+                )
+                return []
 
-        # Map global indices to per-batch 0-based indices for direct_render_clips.py
-        # The script expects 0-based indices into the full ordered clip list.
-        # Compute the absolute indices of ALL clips (rendered + unrendered).
-        try:
-            conn = initialize_database(db_path)
-            c = conn.cursor()
-            c.execute(
-                "SELECT clip_id FROM clips WHERE video_id=? ORDER BY start_time",
-                (computed_video_id,),
+        def _all_clips_rendered(vid_id: str) -> bool:
+            try:
+                conn = initialize_database(db_path)
+                c = conn.cursor()
+                c.execute(
+                    "SELECT COUNT(*) FROM clips WHERE video_id=? AND (video_path IS NULL OR video_path='')",
+                    (vid_id,),
+                )
+                count = c.fetchone()[0]
+                c.execute("SELECT COUNT(*) FROM clips WHERE video_id=?", (vid_id,))
+                total = c.fetchone()[0]
+                conn.close()
+                return total > 0 and count == 0
+            except Exception:
+                return False
+
+        computed_video_id = video_id or _compute_video_id(video_path)
+        unrendered_before = _get_unrendered_clips(computed_video_id)
+        clips_exist = len(unrendered_before) > 0 or _all_clips_rendered(computed_video_id)
+
+        if not clips_exist:
+            logger.info(
+                "generation_scheduler: running pipeline synchronously on %s (video_id=%s)",
+                basename, computed_video_id or "pending",
+                extra={"stage": "generation_scheduler", "video_id": ""},
             )
-            all_clip_ids = [r[0] for r in c.fetchall()]
-            conn.close()
-        except Exception:
-            all_clip_ids = []
+            try:
+                result = subprocess.run(
+                    [
+                        sys.executable,
+                        os.path.join(_PROJECT_ROOT, "run_pipeline.py"),
+                        "--account", account_name,
+                        video_path,
+                    ],
+                    cwd=_PROJECT_ROOT,
+                )
+                pipeline_exit = result.returncode
+            except Exception as exc:
+                logger.error(
+                    "generation_scheduler: pipeline error — %s",
+                    exc,
+                    extra={"stage": "generation_scheduler", "video_id": ""},
+                )
+                return 1
 
-        # Find absolute indices of unrendered clips
-        unrendered_ids = [cid for cid, _ in unrendered]
-        abs_indices = [all_clip_ids.index(cid) for cid in unrendered_ids[:RENDER_BATCH_SIZE]
-                       if cid in all_clip_ids]
+            if pipeline_exit not in (0, None):
+                logger.error(
+                    "generation_scheduler: pipeline failed for %s (exit %d)",
+                    basename, pipeline_exit,
+                    extra={"stage": "generation_scheduler", "video_id": "", "exit_code": pipeline_exit},
+                )
+                return 1
 
-        if abs_indices:
+            clips_exist = bool(_get_unrendered_clips(computed_video_id)) or _all_clips_rendered(computed_video_id)
+            if not clips_exist:
+                logger.error(
+                    "generation_scheduler: pipeline completed but produced no clips for %s",
+                    computed_video_id,
+                    extra={"stage": "generation_scheduler", "video_id": computed_video_id},
+                )
+                return 1
+        else:
+            logger.info(
+                "generation_scheduler: clips already in DB for %s — skipping pipeline, resuming render",
+                computed_video_id,
+                extra={"stage": "generation_scheduler", "video_id": computed_video_id},
+            )
+
+        while True:
+            lock_adapter.heartbeat_scheduler_lock(lock_name, lock_owner)
+            unrendered = _get_unrendered_clips(computed_video_id)
+            if not unrendered:
+                logger.info(
+                    "generation_scheduler: all clips already rendered for %s",
+                    computed_video_id,
+                    extra={"stage": "generation_scheduler", "video_id": computed_video_id},
+                )
+                break
+
+            batch = unrendered[:RENDER_BATCH_SIZE]
+            try:
+                conn = initialize_database(db_path)
+                c = conn.cursor()
+                c.execute(
+                    "SELECT clip_id FROM clips WHERE video_id=? ORDER BY start_time",
+                    (computed_video_id,),
+                )
+                all_clip_ids = [r[0] for r in c.fetchall()]
+                conn.close()
+            except Exception:
+                all_clip_ids = []
+
+            abs_indices = [
+                all_clip_ids.index(clip_id)
+                for clip_id, _ in batch
+                if clip_id in all_clip_ids
+            ]
+            if not abs_indices:
+                logger.error(
+                    "generation_scheduler: could not map render batch indices for %s",
+                    computed_video_id,
+                    extra={"stage": "generation_scheduler", "video_id": computed_video_id},
+                )
+                return 1
+
             abs_start = abs_indices[0]
-            abs_end   = abs_indices[-1]
+            abs_end = abs_indices[-1]
             logger.info(
                 "generation_scheduler: rendering clips %d-%d (batch of %d)",
                 abs_start + 1, abs_end + 1, len(abs_indices),
@@ -451,49 +465,34 @@ def main() -> int:
                 )
                 return 1
 
-        # Check if more clips remain — if so, exit cleanly so next invocation
-        # continues rendering the next batch.
-        still_unrendered = _get_unrendered_clips(computed_video_id)
-        if still_unrendered:
-            remaining = len(still_unrendered)
+        if _all_clips_rendered(computed_video_id):
+            _mark_processed(basename, raw_dir)
             logger.info(
-                "generation_scheduler: %d clip(s) still unrendered — "
-                "will finish on next scheduled run.",
-                remaining,
-                extra={"stage": "generation_scheduler", "video_id": computed_video_id},
-            )
-            return 0
-    else:
-        logger.info(
-            "generation_scheduler: all clips already rendered for %s",
-            computed_video_id,
-            extra={"stage": "generation_scheduler", "video_id": computed_video_id},
-        )
-
-    # ── All clips rendered — mark video processed and export metadata ──────
-    if _all_clips_rendered(computed_video_id):
-        _mark_processed(basename, raw_dir)
-        logger.info(
-            "generation_scheduler: all clips rendered — %s marked as processed",
-            basename,
-            extra={"stage": "generation_scheduler", "video_id": ""},
-        )
-
-        export_path = _export_pending_ai_metadata(config)
-        if export_path:
-            logger.info(
-                "generation_scheduler: exported pending AI metadata → %s",
-                export_path,
-                extra={"stage": "generation_scheduler", "video_id": ""},
-            )
-        else:
-            logger.info(
-                "generation_scheduler: no clips to export metadata for",
+                "generation_scheduler: all clips rendered — %s marked as processed",
+                basename,
                 extra={"stage": "generation_scheduler", "video_id": ""},
             )
 
-    logger.info("generation_scheduler: done", extra={"stage": "generation_scheduler", "video_id": ""})
-    return 0
+            export_path = _export_pending_ai_metadata(config)
+            if export_path:
+                logger.info(
+                    "generation_scheduler: exported pending AI metadata → %s",
+                    export_path,
+                    extra={"stage": "generation_scheduler", "video_id": ""},
+                )
+            else:
+                logger.info(
+                    "generation_scheduler: no clips to export metadata for",
+                    extra={"stage": "generation_scheduler", "video_id": ""},
+                )
+
+        logger.info("generation_scheduler: done", extra={"stage": "generation_scheduler", "video_id": ""})
+        return 0
+    finally:
+        try:
+            lock_adapter.release_scheduler_lock(lock_name, lock_owner)
+        finally:
+            lock_conn.close()
 
 
 if __name__ == "__main__":

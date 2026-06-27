@@ -13,6 +13,8 @@ never access the database directly.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import os
 import time
@@ -43,12 +45,15 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# 16 stages in strict sequential order — never reorder, skip, or parallelize
+# 19 stages in strict sequential order — never reorder, skip, or parallelize
 PIPELINE_STAGES: tuple[str, ...] = (
     "ingestion",
     "scene_splitter",
     "transcription",
     "face_detection",
+    "audio_analysis",
+    "scene_activity",
+    "image_quality",
     "scoring",
     "clip_builder",
     "hook_generator",
@@ -63,10 +68,10 @@ PIPELINE_STAGES: tuple[str, ...] = (
     "publisher",
 )
 
-# Stages 0-5 run once per video, 6-13 per clip, 14-15 per batch
-VIDEO_LEVEL_STAGES: tuple[str, ...] = PIPELINE_STAGES[:6]
-CLIP_LEVEL_STAGES: tuple[str, ...] = PIPELINE_STAGES[6:14]
-BATCH_LEVEL_STAGES: tuple[str, ...] = PIPELINE_STAGES[14:]
+# Stages 0-8 run once per video, 9-16 per clip, 17-18 per batch
+VIDEO_LEVEL_STAGES: tuple[str, ...] = PIPELINE_STAGES[:9]
+CLIP_LEVEL_STAGES: tuple[str, ...] = PIPELINE_STAGES[9:17]
+BATCH_LEVEL_STAGES: tuple[str, ...] = PIPELINE_STAGES[17:]
 
 # Valid pipeline run states
 PIPELINE_STATES: tuple[str, ...] = (
@@ -86,6 +91,16 @@ CLIP_STATES: tuple[str, ...] = (
     "published",
     "failed",
 )
+
+STAGE_CACHE_VERSIONS: dict[str, str] = {
+    "scene_splitter": "v1",
+    "transcription": "v1",
+    "face_detection": "v1",
+    "audio_analysis": "v1",
+    "scene_activity": "v1",
+    "image_quality": "v1",
+    "scoring": "v1",
+}
 
 
 @dataclass(frozen=True)
@@ -167,6 +182,264 @@ class Orchestrator:
         self._run_id: str = str(uuid.uuid4())
         retry_cfg = config.get("retry", {})
         self._max_stage_attempts: int = int(retry_cfg.get("per_stage_max", 2))
+
+    def _stage_cache_version(self, stage_name: str) -> str:
+        return STAGE_CACHE_VERSIONS.get(stage_name, "v1")
+
+    def _stage_config_hash(self, stage_name: str) -> str:
+        relevant: dict[str, Any] = {}
+        if stage_name == "scene_splitter":
+            relevant = {"scene_splitter": self._config.get("scene_splitter", {})}
+        elif stage_name == "transcription":
+            relevant = {
+                "transcription": self._config.get("transcription", {}),
+                "gpu": self._config.get("gpu", {}),
+                "pipeline_ffmpeg_timeout": self._config.get("pipeline", {}).get("ffmpeg_timeout"),
+            }
+        elif stage_name == "face_detection":
+            relevant = {"face_detection": self._config.get("face_detection", {})}
+        elif stage_name == "audio_analysis":
+            relevant = {"pipeline_ffmpeg_timeout": self._config.get("pipeline", {}).get("ffmpeg_timeout")}
+        elif stage_name in ("scene_activity", "image_quality", "scoring"):
+            relevant = {"scoring": self._config.get("scoring", {})}
+        payload = json.dumps(relevant, sort_keys=True, default=str)
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+    def _stage_state_matches(self, video_id: str, stage_name: str) -> bool:
+        state = self._adapter.get_stage_state(video_id, stage_name)
+        return bool(
+            state
+            and state.get("status") == "completed"
+            and state.get("cache_version") == self._stage_cache_version(stage_name)
+            and state.get("config_hash") == self._stage_config_hash(stage_name)
+        )
+
+    def _invalidate_stage_cache_from(self, video_id: str, stage_name: str) -> None:
+        start_idx = get_stage_index(stage_name)
+        stages = [
+            s for s in PIPELINE_STAGES[start_idx:]
+            if s in STAGE_CACHE_VERSIONS
+        ]
+        if stages:
+            self._adapter.invalidate_stage_states(video_id, stages)
+
+    def _mark_stage_started(
+        self,
+        video_id: str,
+        stage_name: str,
+        *,
+        units_done: int = 0,
+        units_total: int = 0,
+        checkpoint_token: str | None = None,
+        payload: dict[str, Any] | None = None,
+    ) -> None:
+        self._adapter.upsert_stage_state(
+            video_id=video_id,
+            stage_name=stage_name,
+            status="running",
+            cache_version=self._stage_cache_version(stage_name),
+            config_hash=self._stage_config_hash(stage_name),
+            units_done=units_done,
+            units_total=units_total,
+            checkpoint_token=checkpoint_token,
+            payload_json=None if payload is None else json.dumps(payload, sort_keys=True),
+        )
+
+    def _mark_stage_completed(
+        self,
+        video_id: str,
+        stage_name: str,
+        *,
+        units_done: int = 0,
+        units_total: int = 0,
+        checkpoint_token: str | None = None,
+        payload: dict[str, Any] | None = None,
+    ) -> None:
+        self._adapter.upsert_stage_state(
+            video_id=video_id,
+            stage_name=stage_name,
+            status="completed",
+            cache_version=self._stage_cache_version(stage_name),
+            config_hash=self._stage_config_hash(stage_name),
+            units_done=units_done,
+            units_total=units_total,
+            checkpoint_token=checkpoint_token,
+            payload_json=None if payload is None else json.dumps(payload, sort_keys=True),
+        )
+
+    def _hydrate_legacy_stage_states(
+        self,
+        video_id: str,
+        scene_list: "SceneList | None" = None,
+    ) -> None:
+        """Backfill stage cache rows from legacy persisted artifacts."""
+        states = self._adapter.list_stage_states(video_id)
+        scene_rows = self._adapter.get_scene_rows(video_id)
+        scene_count = len(scene_rows)
+        if scene_list is None and scene_rows:
+            from contracts.scene import SceneList
+
+            scene_list = SceneList(
+                video_id=video_id,
+                scenes=tuple(self._adapter.get_scenes_for_video(video_id)),
+                total_duration=round(sum(float(row["duration"]) for row in scene_rows), 6),
+            )
+
+        if scene_count and "scene_splitter" not in states:
+            self._mark_stage_completed(video_id, "scene_splitter", units_done=scene_count, units_total=scene_count)
+        if self._adapter.get_transcript(video_id) is not None and "transcription" not in states:
+            transcript = self._adapter.get_transcript(video_id)
+            total_segments = len(transcript.segments) if transcript is not None else 0
+            self._mark_stage_completed(video_id, "transcription", units_done=total_segments, units_total=total_segments)
+        cached_face = self._adapter.get_face_detection_result(video_id)
+        if cached_face is not None and "face_detection" not in states and scene_count:
+            self._mark_stage_completed(video_id, "face_detection", units_done=len(cached_face.scene_data), units_total=scene_count)
+        if scene_count and "audio_analysis" not in states:
+            raw_audio = self._adapter.get_scene_metric_map(video_id, "audio_rms_raw")
+            if len([v for v in raw_audio.values() if v is not None]) == scene_count:
+                self._mark_stage_completed(video_id, "audio_analysis", units_done=scene_count, units_total=scene_count)
+        if scene_count and "scene_activity" not in states:
+            raw_activity = self._adapter.get_scene_metric_map(video_id, "scene_activity_raw")
+            if len([v for v in raw_activity.values() if v is not None]) == scene_count:
+                self._mark_stage_completed(video_id, "scene_activity", units_done=scene_count, units_total=scene_count)
+        if scene_count and "image_quality" not in states:
+            raw_quality = self._adapter.get_scene_metric_map(video_id, "image_quality_raw")
+            if len([v for v in raw_quality.values() if v is not None]) == scene_count:
+                self._mark_stage_completed(video_id, "image_quality", units_done=scene_count, units_total=scene_count)
+        if self._adapter.get_scored_scene_list(video_id) is not None and "scoring" not in states and scene_count:
+            self._mark_stage_completed(video_id, "scoring", units_done=scene_count, units_total=scene_count)
+
+    def _restore_cached_transcript(self, video_id: str) -> "Transcript | None":
+        transcript = self._adapter.get_transcript(video_id)
+        state = self._adapter.get_stage_state(video_id, "transcription")
+        payload: dict[str, Any] = {}
+        if state and state.get("payload_json"):
+            try:
+                payload = json.loads(state["payload_json"])
+            except Exception:
+                payload = {}
+        if transcript is None:
+            if state and state.get("status") == "completed":
+                from contracts.transcript import Transcript
+
+                return Transcript(
+                    video_id=video_id,
+                    segments=(),
+                    total_words=0,
+                    language=str(payload.get("language", self._config.get("transcription", {}).get("language", "en"))),
+                )
+            return None
+        if payload.get("language") and transcript.language != payload["language"]:
+            from contracts.transcript import Transcript
+            return Transcript(
+                video_id=transcript.video_id,
+                segments=transcript.segments,
+                total_words=transcript.total_words,
+                language=str(payload["language"]),
+            )
+        return transcript
+
+    def _restore_cached_face_result(self, video_id: str) -> "FaceDetectionResult | None":
+        result = self._adapter.get_face_detection_result(video_id)
+        if result is None:
+            return None
+        from contracts.face import FaceDetectionResult
+        from modules.face_detection.detect import _compute_video_level_bbox, _vote_pip_region
+
+        estimated = _vote_pip_region(result.scene_data)
+        if estimated is None:
+            estimated = _compute_video_level_bbox(result.scene_data)
+        return FaceDetectionResult(
+            video_id=result.video_id,
+            scene_data=result.scene_data,
+            average_visibility=result.average_visibility,
+            faceless_scene_count=result.faceless_scene_count,
+            estimated_pip_bbox=estimated,
+        )
+
+    def _restore_cached_audio(self, video_id: str) -> "AudioEnergyData | None":
+        from contracts.audio import AudioEnergyData, SceneAudioEnergy
+
+        rows = self._adapter.get_scene_rows(video_id)
+        if not rows:
+            return None
+        energies = [
+            row for row in rows
+            if row.get("audio_rms_raw") is not None and row.get("audio_energy_score") is not None
+        ]
+        if len(energies) != len(rows):
+            return None
+        scene_energies = tuple(
+            SceneAudioEnergy(
+                scene_id=row["scene_id"],
+                rms_energy=float(row["audio_rms_raw"]),
+                normalized_energy=float(row["audio_energy_score"]),
+            )
+            for row in energies
+        )
+        rms_values = [energy.rms_energy for energy in scene_energies]
+        return AudioEnergyData(
+            video_id=video_id,
+            scene_energies=scene_energies,
+            video_min_rms=min(rms_values),
+            video_max_rms=max(rms_values),
+            video_mean_rms=sum(rms_values) / len(rms_values),
+        )
+
+    def _restore_cached_metric_scores(self, video_id: str, raw_column: str, normalized_column: str) -> dict[str, float] | None:
+        rows = self._adapter.get_scene_rows(video_id)
+        if not rows:
+            return None
+        if any(row.get(raw_column) is None or row.get(normalized_column) is None for row in rows):
+            return None
+        return {
+            row["scene_id"]: float(row[normalized_column] or 0.0)
+            for row in rows
+        }
+
+    def _build_transcript_text_by_scene(
+        self,
+        scene_list: "SceneList",
+        transcript: "Transcript",
+    ) -> dict[str, str]:
+        text_by_scene: dict[str, str] = {}
+        for scene in scene_list.scenes:
+            parts: list[str] = []
+            for segment in transcript.segments:
+                if segment.end_time <= scene.start_time or segment.start_time >= scene.end_time:
+                    continue
+                segment_text = segment.text.strip()
+                if segment_text:
+                    parts.append(segment_text)
+            text_by_scene[scene.scene_id] = " ".join(parts).strip()
+        return text_by_scene
+
+    def _normalise_scene_metric(
+        self,
+        video_id: str,
+        raw_column: str,
+        normalized_column: str,
+    ) -> dict[str, float]:
+        rows = self._adapter.get_scene_rows(video_id)
+        raw_pairs = [
+            (row["scene_id"], float(row[raw_column]))
+            for row in rows
+            if row.get(raw_column) is not None
+        ]
+        if not raw_pairs:
+            return {}
+        values = [value for _, value in raw_pairs]
+        vmin = min(values)
+        vmax = max(values)
+        span = vmax - vmin
+        normalized = {
+            scene_id: ((value - vmin) / span if span > 0.0 else 0.0)
+            for scene_id, value in raw_pairs
+        }
+        self._adapter.bulk_update_scene_metrics(
+            [(scene_id, {normalized_column: score}) for scene_id, score in normalized.items()]
+        )
+        return normalized
 
     # ------------------------------------------------------------------
     # Retry helper
@@ -334,9 +607,86 @@ class Orchestrator:
         Returns:
             Transcript DTO.
         """
-        from modules.transcription.transcribe import transcribe
+        from modules.transcription.transcribe import transcribe_chunk
 
-        return transcribe(ingestion_result, self._config)
+        video_id = ingestion_result.video_id
+        if self._stage_state_matches(video_id, "transcription"):
+            cached = self._restore_cached_transcript(video_id)
+            if cached is not None:
+                return cached
+
+        self._invalidate_stage_cache_from(video_id, "transcription")
+        chunk_duration = float(
+            self._config.get("transcription", {}).get("chunk_duration_seconds", 300)
+        )
+        overlap = float(
+            self._config.get("transcription", {}).get("chunk_overlap_seconds", 2)
+        )
+        detected_language = str(
+            self._config.get("transcription", {}).get("language", "en")
+        )
+        total_duration = ingestion_result.duration_seconds
+        total_chunks = max(1, int((total_duration + chunk_duration - 1e-9) // chunk_duration))
+        cached_chunks = self._adapter.get_transcript_chunk_indexes(video_id)
+        self._mark_stage_started(
+            video_id,
+            "transcription",
+            units_done=len(cached_chunks),
+            units_total=total_chunks,
+        )
+
+        for chunk_index in range(total_chunks):
+            if chunk_index in cached_chunks:
+                continue
+            logical_start = chunk_index * chunk_duration
+            logical_end = min(total_duration, logical_start + chunk_duration)
+            extract_start = max(0.0, logical_start - overlap)
+            extract_end = min(total_duration, logical_end + overlap)
+            chunk = transcribe_chunk(
+                ingestion_result,
+                self._config,
+                start_seconds=extract_start,
+                duration_seconds=max(0.001, extract_end - extract_start),
+                offset_ms=round(extract_start * 1000),
+            )
+            detected_language = chunk.language or detected_language
+            interior_start_ms = round(logical_start * 1000)
+            interior_end_ms = round(logical_end * 1000)
+            filtered_segments = _filter_transcript_to_interior(
+                chunk,
+                interior_start_ms,
+                interior_end_ms,
+            )
+            self._adapter.upsert_transcript_chunk(video_id, chunk_index, filtered_segments)
+            cached_chunks.add(chunk_index)
+            self._mark_stage_started(
+                video_id,
+                "transcription",
+                units_done=len(cached_chunks),
+                units_total=total_chunks,
+                checkpoint_token=str(chunk_index),
+                payload={"language": detected_language},
+            )
+
+        self._mark_stage_completed(
+            video_id,
+            "transcription",
+            units_done=total_chunks,
+            units_total=total_chunks,
+            checkpoint_token=str(total_chunks - 1),
+            payload={"language": detected_language},
+        )
+        transcript = self._restore_cached_transcript(video_id)
+        if transcript is None:
+            from contracts.transcript import Transcript
+
+            transcript = Transcript(
+                video_id=video_id,
+                segments=(),
+                total_words=0,
+                language=detected_language,
+            )
+        return transcript
 
     # ------------------------------------------------------------------
     # Stage: face_detection
@@ -360,9 +710,52 @@ class Orchestrator:
         Returns:
             FaceDetectionResult DTO.
         """
+        from contracts.scene import SceneList
         from modules.face_detection.detect import detect_faces
 
-        return detect_faces(ingestion_result, scene_list, self._config)
+        video_id = ingestion_result.video_id
+        if self._stage_state_matches(video_id, "face_detection"):
+            cached = self._restore_cached_face_result(video_id)
+            if cached is not None and len(cached.scene_data) == len(scene_list.scenes):
+                return cached
+
+        self._invalidate_stage_cache_from(video_id, "face_detection")
+        cached_scene_ids = self._adapter.get_cached_face_scene_ids(video_id)
+        self._mark_stage_started(
+            video_id,
+            "face_detection",
+            units_done=len(cached_scene_ids),
+            units_total=len(scene_list.scenes),
+        )
+        for scene in scene_list.scenes:
+            if scene.scene_id in cached_scene_ids:
+                continue
+            subset = SceneList(
+                video_id=scene_list.video_id,
+                scenes=(scene,),
+                total_duration=scene.duration,
+            )
+            partial = detect_faces(ingestion_result, subset, self._config)
+            self._adapter.upsert_face_scene(scene.scene_id, video_id, partial.scene_data[0])
+            cached_scene_ids.add(scene.scene_id)
+            self._mark_stage_started(
+                video_id,
+                "face_detection",
+                units_done=len(cached_scene_ids),
+                units_total=len(scene_list.scenes),
+                checkpoint_token=scene.scene_id,
+            )
+
+        result = self._restore_cached_face_result(video_id)
+        if result is None:
+            raise RuntimeError(f"Failed to reconstruct face detection cache for {video_id}")
+        self._mark_stage_completed(
+            video_id,
+            "face_detection",
+            units_done=len(scene_list.scenes),
+            units_total=len(scene_list.scenes),
+        )
+        return result
 
     # ------------------------------------------------------------------
     # Stage: audio_analysis
@@ -385,9 +778,150 @@ class Orchestrator:
         Returns:
             AudioEnergyData DTO.
         """
-        from modules.audio_analysis.analyze import analyze_audio
+        from modules.audio_analysis.analyze import _extract_scene_rms
 
-        return analyze_audio(ingestion_result, scene_list, self._config)
+        video_id = ingestion_result.video_id
+        cached = self._restore_cached_audio(video_id)
+        if self._stage_state_matches(video_id, "audio_analysis") and cached is not None:
+            return cached
+
+        self._invalidate_stage_cache_from(video_id, "audio_analysis")
+        missing_scene_ids = set(self._adapter.get_scene_ids_missing_metric(video_id, "audio_rms_raw"))
+        done = len(scene_list.scenes) - len(missing_scene_ids)
+        self._mark_stage_started(
+            video_id,
+            "audio_analysis",
+            units_done=done,
+            units_total=len(scene_list.scenes),
+        )
+        scene_by_id = {scene.scene_id: scene for scene in scene_list.scenes}
+        for scene_id in [scene.scene_id for scene in scene_list.scenes if scene.scene_id in missing_scene_ids]:
+            scene = scene_by_id[scene_id]
+            rms = _extract_scene_rms(scene, ingestion_result.path, video_id, self._config)
+            self._adapter.update_scene_metric(scene.scene_id, "audio_rms_raw", rms)
+            done += 1
+            self._mark_stage_started(
+                video_id,
+                "audio_analysis",
+                units_done=done,
+                units_total=len(scene_list.scenes),
+                checkpoint_token=scene.scene_id,
+            )
+        self._normalise_scene_metric(video_id, "audio_rms_raw", "audio_energy_score")
+        cached = self._restore_cached_audio(video_id)
+        if cached is None:
+            raise RuntimeError(f"Failed to reconstruct audio cache for {video_id}")
+        self._mark_stage_completed(
+            video_id,
+            "audio_analysis",
+            units_done=len(scene_list.scenes),
+            units_total=len(scene_list.scenes),
+        )
+        return cached
+
+    # ------------------------------------------------------------------
+    # Stage: scene_activity
+    # ------------------------------------------------------------------
+
+    def run_scene_activity(
+        self,
+        ingestion_result: "IngestionResult",
+        scene_list: "SceneList",
+    ) -> dict[str, float]:
+        """Execute the scene activity stage."""
+        from contracts.scene import SceneList
+        from modules.scoring.activity import compute_scene_activities
+
+        video_id = ingestion_result.video_id
+        cached_scores = self._restore_cached_metric_scores(
+            video_id, "scene_activity_raw", "scene_activity_score"
+        )
+        if self._stage_state_matches(video_id, "scene_activity") and cached_scores is not None:
+            return cached_scores
+
+        self._invalidate_stage_cache_from(video_id, "scene_activity")
+        missing = set(self._adapter.get_scene_ids_missing_metric(video_id, "scene_activity_raw"))
+        done = len(scene_list.scenes) - len(missing)
+        self._mark_stage_started(
+            video_id,
+            "scene_activity",
+            units_done=done,
+            units_total=len(scene_list.scenes),
+        )
+        for scene in scene_list.scenes:
+            if scene.scene_id not in missing:
+                continue
+            subset = SceneList(video_id=video_id, scenes=(scene,), total_duration=scene.duration)
+            raw_map = compute_scene_activities(subset, ingestion_result.path, self._config)
+            self._adapter.update_scene_metric(scene.scene_id, "scene_activity_raw", raw_map.get(scene.scene_id, 0.0))
+            done += 1
+            self._mark_stage_started(
+                video_id,
+                "scene_activity",
+                units_done=done,
+                units_total=len(scene_list.scenes),
+                checkpoint_token=scene.scene_id,
+            )
+        scores = self._normalise_scene_metric(video_id, "scene_activity_raw", "scene_activity_score")
+        self._mark_stage_completed(
+            video_id,
+            "scene_activity",
+            units_done=len(scene_list.scenes),
+            units_total=len(scene_list.scenes),
+        )
+        return scores
+
+    # ------------------------------------------------------------------
+    # Stage: image_quality
+    # ------------------------------------------------------------------
+
+    def run_image_quality(
+        self,
+        ingestion_result: "IngestionResult",
+        scene_list: "SceneList",
+    ) -> dict[str, float]:
+        """Execute the image quality stage."""
+        from contracts.scene import SceneList
+        from modules.scoring.quality import compute_scene_qualities
+
+        video_id = ingestion_result.video_id
+        cached_scores = self._restore_cached_metric_scores(
+            video_id, "image_quality_raw", "image_quality_score"
+        )
+        if self._stage_state_matches(video_id, "image_quality") and cached_scores is not None:
+            return cached_scores
+
+        self._invalidate_stage_cache_from(video_id, "image_quality")
+        missing = set(self._adapter.get_scene_ids_missing_metric(video_id, "image_quality_raw"))
+        done = len(scene_list.scenes) - len(missing)
+        self._mark_stage_started(
+            video_id,
+            "image_quality",
+            units_done=done,
+            units_total=len(scene_list.scenes),
+        )
+        for scene in scene_list.scenes:
+            if scene.scene_id not in missing:
+                continue
+            subset = SceneList(video_id=video_id, scenes=(scene,), total_duration=scene.duration)
+            raw_map = compute_scene_qualities(subset, ingestion_result.path, self._config)
+            self._adapter.update_scene_metric(scene.scene_id, "image_quality_raw", raw_map.get(scene.scene_id, 0.0))
+            done += 1
+            self._mark_stage_started(
+                video_id,
+                "image_quality",
+                units_done=done,
+                units_total=len(scene_list.scenes),
+                checkpoint_token=scene.scene_id,
+            )
+        scores = self._normalise_scene_metric(video_id, "image_quality_raw", "image_quality_score")
+        self._mark_stage_completed(
+            video_id,
+            "image_quality",
+            units_done=len(scene_list.scenes),
+            units_total=len(scene_list.scenes),
+        )
+        return scores
 
     # ------------------------------------------------------------------
     # Stage: scoring
@@ -399,18 +933,40 @@ class Orchestrator:
         transcript: "Transcript",
         face_result: "FaceDetectionResult",
         audio_data: "AudioEnergyData | None",
+        activity_scores: dict[str, float] | None = None,
+        quality_scores: dict[str, float] | None = None,
     ) -> "ScoredSceneList":
         """Execute the scoring stage."""
         from modules.scoring.score import process as score_process
 
-        return score_process(
+        video_id = scene_list.video_id
+        if self._stage_state_matches(video_id, "scoring"):
+            cached = self._adapter.get_scored_scene_list(video_id)
+            if cached is not None:
+                return cached
+
+        self._invalidate_stage_cache_from(video_id, "scoring")
+        scored = score_process(
             scene_list,
             transcript,
             face_result,
             audio_data,
             self._config,
-            file_path=self._video_path,
+            file_path=None,
+            activity_scores=activity_scores,
+            quality_scores=quality_scores,
         )
+        self._adapter.persist_scored_scenes(
+            scored,
+            transcript_text_by_scene=self._build_transcript_text_by_scene(scene_list, transcript),
+        )
+        self._mark_stage_completed(
+            video_id,
+            "scoring",
+            units_done=len(scored.scenes),
+            units_total=len(scene_list.scenes),
+        )
+        return scored
 
     # ------------------------------------------------------------------
     # Stage: clip_builder
@@ -730,9 +1286,7 @@ class Orchestrator:
         Returns:
             PipelineResult bundling all stage outputs, or None on fatal error.
         """
-        import json as _json
-
-        config_snapshot = _json.dumps(
+        config_snapshot = json.dumps(
             {k: v for k, v in self._config.items() if k != "channel"},
             default=str,
         )
@@ -805,6 +1359,13 @@ class Orchestrator:
                 self._adapter.update_checkpoint(self._run_id, "scene_splitter")
             else:
                 scene_list = self.run_scene_splitter(ingestion_result)
+            self._mark_stage_completed(
+                video_id,
+                "scene_splitter",
+                units_done=len(scene_list.scenes),
+                units_total=len(scene_list.scenes),
+            )
+            self._hydrate_legacy_stage_states(video_id, scene_list)
 
             # ── Stage 2: transcription ──────────────────────────────────
             if resume_idx <= get_stage_index("transcription"):
@@ -826,26 +1387,49 @@ class Orchestrator:
             else:
                 face_result = self.run_face_detection(ingestion_result, scene_list)
 
-            # audio_analysis feeds scoring — runs within the face_detection
-            # checkpoint window (not a formal pipeline stage in PIPELINE_STAGES)
-            audio_data = self._run_stage_with_retry(
-                "audio_analysis", self.run_audio_analysis,
-                ingestion_result, scene_list,
-            )
+            # ── Stage 4: audio_analysis ────────────────────────────────
+            if resume_idx <= get_stage_index("audio_analysis"):
+                audio_data = self._run_stage_with_retry(
+                    "audio_analysis", self.run_audio_analysis,
+                    ingestion_result, scene_list,
+                )
+                self._adapter.update_checkpoint(self._run_id, "audio_analysis")
+            else:
+                audio_data = self.run_audio_analysis(ingestion_result, scene_list)
 
-            # ── Stage 4: scoring ────────────────────────────────────────
+            # ── Stage 5: scene_activity ────────────────────────────────
+            if resume_idx <= get_stage_index("scene_activity"):
+                activity_scores = self._run_stage_with_retry(
+                    "scene_activity", self.run_scene_activity,
+                    ingestion_result, scene_list,
+                )
+                self._adapter.update_checkpoint(self._run_id, "scene_activity")
+            else:
+                activity_scores = self.run_scene_activity(ingestion_result, scene_list)
+
+            # ── Stage 6: image_quality ─────────────────────────────────
+            if resume_idx <= get_stage_index("image_quality"):
+                quality_scores = self._run_stage_with_retry(
+                    "image_quality", self.run_image_quality,
+                    ingestion_result, scene_list,
+                )
+                self._adapter.update_checkpoint(self._run_id, "image_quality")
+            else:
+                quality_scores = self.run_image_quality(ingestion_result, scene_list)
+
+            # ── Stage 7: scoring ───────────────────────────────────────
             if resume_idx <= get_stage_index("scoring"):
                 scored_scenes = self._run_stage_with_retry(
                     "scoring", self.run_scoring,
-                    scene_list, transcript, face_result, audio_data,
+                    scene_list, transcript, face_result, audio_data, activity_scores, quality_scores,
                 )
                 self._adapter.update_checkpoint(self._run_id, "scoring")
             else:
                 scored_scenes = self.run_scoring(
-                    scene_list, transcript, face_result, audio_data,
+                    scene_list, transcript, face_result, audio_data, activity_scores, quality_scores,
                 )
 
-            # ── Stage 5: clip_builder ───────────────────────────────────
+            # ── Stage 8: clip_builder ──────────────────────────────────
             if resume_idx <= get_stage_index("clip_builder"):
                 clip_list = self._run_stage_with_retry(
                     "clip_builder", self.run_clip_builder, scored_scenes,
@@ -1051,6 +1635,43 @@ def _empty_tts_result(clip_id: str) -> "TTSResult":
         word_timings=(),
         engine_used="none",
     )
+
+
+def _filter_transcript_to_interior(
+    transcript: "Transcript",
+    start_ms: int,
+    end_ms: int,
+) -> tuple["TranscriptSegment", ...]:
+    """Keep only transcript content whose midpoint lies in the target window."""
+    from contracts.transcript import TranscriptSegment, Word
+
+    kept_segments: list[TranscriptSegment] = []
+    for segment in transcript.segments:
+        midpoint = (segment.start_time + segment.end_time) // 2
+        if midpoint < start_ms or midpoint >= end_ms:
+            continue
+        words = tuple(
+            Word(
+                text=word.text,
+                start_time=word.start_time,
+                end_time=word.end_time,
+                confidence=word.confidence,
+            )
+            for word in segment.words
+            if start_ms <= ((word.start_time + word.end_time) // 2) < end_ms
+        )
+        if not words and not segment.text.strip():
+            continue
+        kept_segments.append(
+            TranscriptSegment(
+                text=" ".join(word.text for word in words).strip() or segment.text.strip(),
+                start_time=max(segment.start_time, start_ms),
+                end_time=min(segment.end_time, end_ms),
+                words=words,
+                confidence=segment.confidence,
+            )
+        )
+    return tuple(kept_segments)
 
 
 def _reconfigure_logging_for_run(config: dict[str, Any], video_dir_name: str) -> None:

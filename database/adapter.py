@@ -13,11 +13,15 @@ Type conversion note:
 
 from __future__ import annotations
 
+import json
 import logging
 import sqlite3
 from typing import Any
 
+from contracts.face import FaceBBox, FaceDetectionResult, SceneFaceData
 from contracts.scene import SceneSegment
+from contracts.scoring import ScoredScene, ScoredSceneList
+from contracts.transcript import Transcript, TranscriptSegment, Word
 
 logger = logging.getLogger(__name__)
 
@@ -154,6 +158,592 @@ class DatabaseAdapter:
             )
             for row in rows
         ]
+
+    def get_scene_rows(self, video_id: str) -> list[dict[str, Any]]:
+        """Return raw scene rows for a video, ordered by start_time."""
+        rows = self._conn.execute(
+            "SELECT * FROM scenes WHERE video_id = ? ORDER BY start_time ASC",
+            (video_id,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+    def update_scene_metric(self, scene_id: str, column: str, value: float | str | None) -> None:
+        """Update a single whitelisted scene column."""
+        allowed = {
+            "audio_rms_raw",
+            "audio_energy_score",
+            "scene_activity_raw",
+            "scene_activity_score",
+            "image_quality_raw",
+            "image_quality_score",
+            "keyword_score",
+            "face_presence_score",
+            "sentence_density_score",
+            "composite_score",
+            "face_visible_ratio",
+            "transcript_text",
+        }
+        if column not in allowed:
+            raise ValueError(f"Unsupported scene metric column: {column}")
+        self._conn.execute(
+            f"UPDATE scenes SET {column} = ? WHERE scene_id = ?",
+            (value, scene_id),
+        )
+        self._conn.commit()
+
+    def bulk_update_scene_metrics(
+        self,
+        updates: list[tuple[str, dict[str, float | str | None]]],
+    ) -> None:
+        """Bulk update multiple scene columns for multiple scenes."""
+        if not updates:
+            return
+        allowed = {
+            "audio_rms_raw",
+            "audio_energy_score",
+            "scene_activity_raw",
+            "scene_activity_score",
+            "image_quality_raw",
+            "image_quality_score",
+            "keyword_score",
+            "face_presence_score",
+            "sentence_density_score",
+            "composite_score",
+            "face_visible_ratio",
+            "transcript_text",
+        }
+        try:
+            self._conn.execute("BEGIN")
+            for scene_id, columns in updates:
+                invalid = set(columns) - allowed
+                if invalid:
+                    raise ValueError(f"Unsupported scene metric columns: {sorted(invalid)}")
+                set_clause = ", ".join(f"{name} = ?" for name in columns)
+                params = [columns[name] for name in columns] + [scene_id]
+                self._conn.execute(
+                    f"UPDATE scenes SET {set_clause} WHERE scene_id = ?",
+                    params,
+                )
+            self._conn.execute("COMMIT")
+        except Exception:
+            self._conn.execute("ROLLBACK")
+            raise
+
+    def get_scene_metric_map(self, video_id: str, column: str) -> dict[str, Any]:
+        """Return a mapping of scene_id -> metric value for a whitelisted column."""
+        allowed = {
+            "audio_rms_raw",
+            "audio_energy_score",
+            "scene_activity_raw",
+            "scene_activity_score",
+            "image_quality_raw",
+            "image_quality_score",
+            "keyword_score",
+            "face_presence_score",
+            "sentence_density_score",
+            "composite_score",
+            "face_visible_ratio",
+            "transcript_text",
+        }
+        if column not in allowed:
+            raise ValueError(f"Unsupported scene metric column: {column}")
+        rows = self._conn.execute(
+            f"SELECT scene_id, {column} AS metric FROM scenes WHERE video_id = ?",
+            (video_id,),
+        ).fetchall()
+        return {row["scene_id"]: row["metric"] for row in rows}
+
+    def get_scene_ids_missing_metric(self, video_id: str, column: str) -> list[str]:
+        """Return scene_ids whose given metric column is NULL."""
+        allowed = {
+            "audio_rms_raw",
+            "audio_energy_score",
+            "scene_activity_raw",
+            "scene_activity_score",
+            "image_quality_raw",
+            "image_quality_score",
+            "keyword_score",
+            "face_presence_score",
+            "sentence_density_score",
+            "composite_score",
+            "face_visible_ratio",
+            "transcript_text",
+        }
+        if column not in allowed:
+            raise ValueError(f"Unsupported scene metric column: {column}")
+        rows = self._conn.execute(
+            f"""SELECT scene_id FROM scenes
+                WHERE video_id = ? AND {column} IS NULL
+                ORDER BY start_time ASC""",
+            (video_id,),
+        ).fetchall()
+        return [row["scene_id"] for row in rows]
+
+    def upsert_stage_state(
+        self,
+        video_id: str,
+        stage_name: str,
+        status: str,
+        cache_version: str,
+        config_hash: str,
+        units_done: int = 0,
+        units_total: int = 0,
+        checkpoint_token: str | None = None,
+        payload_json: str | None = None,
+        error_message: str | None = None,
+    ) -> None:
+        """Insert or update persisted stage cache state."""
+        completed_at = "CURRENT_TIMESTAMP" if status == "completed" else "NULL"
+        self._conn.execute(
+            f"""INSERT INTO video_stage_state
+                (video_id, stage_name, status, cache_version, config_hash,
+                 units_done, units_total, checkpoint_token, payload_json,
+                 completed_at, error_message)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, {completed_at}, ?)
+                ON CONFLICT(video_id, stage_name) DO UPDATE SET
+                  status = excluded.status,
+                  cache_version = excluded.cache_version,
+                  config_hash = excluded.config_hash,
+                  units_done = excluded.units_done,
+                  units_total = excluded.units_total,
+                  checkpoint_token = excluded.checkpoint_token,
+                  payload_json = excluded.payload_json,
+                  updated_at = CURRENT_TIMESTAMP,
+                  completed_at = CASE
+                      WHEN excluded.status = 'completed' THEN CURRENT_TIMESTAMP
+                      ELSE NULL
+                  END,
+                  error_message = excluded.error_message""",
+            (
+                video_id,
+                stage_name,
+                status,
+                cache_version,
+                config_hash,
+                units_done,
+                units_total,
+                checkpoint_token,
+                payload_json,
+                error_message,
+            ),
+        )
+        self._conn.commit()
+
+    def get_stage_state(self, video_id: str, stage_name: str) -> dict[str, Any] | None:
+        """Return persisted state for a specific stage."""
+        row = self._conn.execute(
+            """SELECT * FROM video_stage_state
+               WHERE video_id = ? AND stage_name = ?""",
+            (video_id, stage_name),
+        ).fetchone()
+        return dict(row) if row else None
+
+    def list_stage_states(self, video_id: str) -> dict[str, dict[str, Any]]:
+        """Return all persisted stage states keyed by stage_name."""
+        rows = self._conn.execute(
+            """SELECT * FROM video_stage_state
+               WHERE video_id = ?""",
+            (video_id,),
+        ).fetchall()
+        return {row["stage_name"]: dict(row) for row in rows}
+
+    def invalidate_stage_states(self, video_id: str, stages: list[str] | None = None) -> None:
+        """Delete persisted stage states for a video."""
+        if stages:
+            placeholders = ",".join("?" * len(stages))
+            self._conn.execute(
+                f"""DELETE FROM video_stage_state
+                    WHERE video_id = ? AND stage_name IN ({placeholders})""",
+                (video_id, *stages),
+            )
+        else:
+            self._conn.execute(
+                "DELETE FROM video_stage_state WHERE video_id = ?",
+                (video_id,),
+            )
+        self._conn.commit()
+
+    def upsert_transcript_chunk(
+        self,
+        video_id: str,
+        chunk_index: int,
+        segments: tuple[TranscriptSegment, ...] | list[TranscriptSegment],
+    ) -> None:
+        """Replace a transcript chunk transactionally."""
+        try:
+            self._conn.execute("BEGIN")
+            existing = self._conn.execute(
+                """SELECT segment_index FROM transcript_segments
+                   WHERE video_id = ? AND chunk_index = ?""",
+                (video_id, chunk_index),
+            ).fetchall()
+            for row in existing:
+                self._conn.execute(
+                    """DELETE FROM transcript_words
+                       WHERE video_id = ? AND segment_index = ?""",
+                    (video_id, row["segment_index"]),
+                )
+            self._conn.execute(
+                """DELETE FROM transcript_segments
+                   WHERE video_id = ? AND chunk_index = ?""",
+                (video_id, chunk_index),
+            )
+            for local_segment_index, segment in enumerate(segments):
+                segment_index = chunk_index * 1_000_000 + local_segment_index
+                self._conn.execute(
+                    """INSERT INTO transcript_segments
+                       (video_id, segment_index, chunk_index, start_time_ms,
+                        end_time_ms, text, confidence)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        video_id,
+                        segment_index,
+                        chunk_index,
+                        segment.start_time,
+                        segment.end_time,
+                        segment.text,
+                        segment.confidence,
+                    ),
+                )
+                for local_word_index, word in enumerate(segment.words):
+                    self._conn.execute(
+                        """INSERT INTO transcript_words
+                           (video_id, segment_index, word_index, start_time_ms,
+                            end_time_ms, text, confidence)
+                           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                        (
+                            video_id,
+                            segment_index,
+                            local_word_index,
+                            word.start_time,
+                            word.end_time,
+                            word.text,
+                            word.confidence,
+                        ),
+                    )
+            self._conn.execute("COMMIT")
+        except Exception:
+            self._conn.execute("ROLLBACK")
+            raise
+
+    def get_transcript_chunk_indexes(self, video_id: str) -> set[int]:
+        """Return chunk indexes already cached for a video transcript."""
+        rows = self._conn.execute(
+            "SELECT DISTINCT chunk_index FROM transcript_segments WHERE video_id = ?",
+            (video_id,),
+        ).fetchall()
+        return {int(row["chunk_index"]) for row in rows}
+
+    def get_transcript(self, video_id: str) -> Transcript | None:
+        """Reconstruct a transcript DTO from persisted rows."""
+        segment_rows = self._conn.execute(
+            """SELECT * FROM transcript_segments
+               WHERE video_id = ?
+               ORDER BY start_time_ms ASC, segment_index ASC""",
+            (video_id,),
+        ).fetchall()
+        if not segment_rows:
+            return None
+
+        word_rows = self._conn.execute(
+            """SELECT * FROM transcript_words
+               WHERE video_id = ?
+               ORDER BY segment_index ASC, word_index ASC""",
+            (video_id,),
+        ).fetchall()
+        words_by_segment: dict[int, list[Word]] = {}
+        for row in word_rows:
+            words_by_segment.setdefault(int(row["segment_index"]), []).append(
+                Word(
+                    text=row["text"],
+                    start_time=int(row["start_time_ms"]),
+                    end_time=int(row["end_time_ms"]),
+                    confidence=float(row["confidence"]),
+                )
+            )
+
+        segments: list[TranscriptSegment] = []
+        total_words = 0
+        for row in segment_rows:
+            segment_index = int(row["segment_index"])
+            words = tuple(words_by_segment.get(segment_index, []))
+            total_words += len(words)
+            segments.append(
+                TranscriptSegment(
+                    text=row["text"],
+                    start_time=int(row["start_time_ms"]),
+                    end_time=int(row["end_time_ms"]),
+                    words=words,
+                    confidence=float(row["confidence"]),
+                )
+            )
+        return Transcript(
+            video_id=video_id,
+            segments=tuple(segments),
+            total_words=total_words,
+            language="en",
+        )
+
+    def upsert_face_scene(
+        self,
+        scene_id: str,
+        video_id: str,
+        scene_data: SceneFaceData,
+    ) -> None:
+        """Persist face summary and boxes for a single scene transactionally."""
+        avg = scene_data.average_bbox
+        try:
+            self._conn.execute("BEGIN")
+            self._conn.execute(
+                """INSERT INTO scene_face_data
+                   (scene_id, video_id, face_visible_ratio, sample_count,
+                    avg_x, avg_y, avg_width, avg_height, avg_confidence, avg_timestamp_ms)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(scene_id) DO UPDATE SET
+                     video_id = excluded.video_id,
+                     face_visible_ratio = excluded.face_visible_ratio,
+                     sample_count = excluded.sample_count,
+                     avg_x = excluded.avg_x,
+                     avg_y = excluded.avg_y,
+                     avg_width = excluded.avg_width,
+                     avg_height = excluded.avg_height,
+                     avg_confidence = excluded.avg_confidence,
+                     avg_timestamp_ms = excluded.avg_timestamp_ms""",
+                (
+                    scene_id,
+                    video_id,
+                    scene_data.face_visible_ratio,
+                    scene_data.sample_count,
+                    None if avg is None else avg.x,
+                    None if avg is None else avg.y,
+                    None if avg is None else avg.width,
+                    None if avg is None else avg.height,
+                    None if avg is None else avg.confidence,
+                    None if avg is None else avg.timestamp_ms,
+                ),
+            )
+            self._conn.execute(
+                "DELETE FROM scene_face_boxes WHERE scene_id = ?",
+                (scene_id,),
+            )
+            for idx, box in enumerate(scene_data.bounding_boxes):
+                self._conn.execute(
+                    """INSERT INTO scene_face_boxes
+                       (scene_id, box_index, timestamp_ms, x, y, width, height, confidence)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        scene_id,
+                        idx,
+                        box.timestamp_ms,
+                        box.x,
+                        box.y,
+                        box.width,
+                        box.height,
+                        box.confidence,
+                    ),
+                )
+            self._conn.execute(
+                "UPDATE scenes SET face_visible_ratio = ? WHERE scene_id = ?",
+                (scene_data.face_visible_ratio, scene_id),
+            )
+            self._conn.execute("COMMIT")
+        except Exception:
+            self._conn.execute("ROLLBACK")
+            raise
+
+    def get_cached_face_scene_ids(self, video_id: str) -> set[str]:
+        """Return scene_ids that already have persisted face summaries."""
+        rows = self._conn.execute(
+            "SELECT scene_id FROM scene_face_data WHERE video_id = ?",
+            (video_id,),
+        ).fetchall()
+        return {row["scene_id"] for row in rows}
+
+    def get_face_detection_result(self, video_id: str) -> FaceDetectionResult | None:
+        """Reconstruct FaceDetectionResult from persisted tables."""
+        summary_rows = self._conn.execute(
+            """SELECT * FROM scene_face_data
+               WHERE video_id = ?
+               ORDER BY rowid ASC""",
+            (video_id,),
+        ).fetchall()
+        if not summary_rows:
+            return None
+        box_rows = self._conn.execute(
+            """SELECT * FROM scene_face_boxes
+               WHERE scene_id IN (
+                   SELECT scene_id FROM scene_face_data WHERE video_id = ?
+               )
+               ORDER BY scene_id ASC, box_index ASC""",
+            (video_id,),
+        ).fetchall()
+        boxes_by_scene: dict[str, list[FaceBBox]] = {}
+        for row in box_rows:
+            boxes_by_scene.setdefault(row["scene_id"], []).append(
+                FaceBBox(
+                    x=float(row["x"]),
+                    y=float(row["y"]),
+                    width=float(row["width"]),
+                    height=float(row["height"]),
+                    confidence=float(row["confidence"]),
+                    timestamp_ms=int(row["timestamp_ms"]),
+                )
+            )
+        scene_data: list[SceneFaceData] = []
+        for row in summary_rows:
+            avg_bbox = None
+            if row["avg_x"] is not None:
+                avg_bbox = FaceBBox(
+                    x=float(row["avg_x"]),
+                    y=float(row["avg_y"]),
+                    width=float(row["avg_width"]),
+                    height=float(row["avg_height"]),
+                    confidence=float(row["avg_confidence"]),
+                    timestamp_ms=int(row["avg_timestamp_ms"] or 0),
+                )
+            scene_data.append(
+                SceneFaceData(
+                    scene_id=row["scene_id"],
+                    face_visible_ratio=float(row["face_visible_ratio"]),
+                    bounding_boxes=tuple(boxes_by_scene.get(row["scene_id"], [])),
+                    average_bbox=avg_bbox,
+                    sample_count=int(row["sample_count"]),
+                )
+            )
+        average_visibility = (
+            sum(s.face_visible_ratio for s in scene_data) / len(scene_data)
+            if scene_data else 0.0
+        )
+        faceless = sum(1 for s in scene_data if s.face_visible_ratio == 0.0)
+        return FaceDetectionResult(
+            video_id=video_id,
+            scene_data=tuple(scene_data),
+            average_visibility=average_visibility,
+            faceless_scene_count=faceless,
+        )
+
+    def persist_scored_scenes(
+        self,
+        scored_scene_list: ScoredSceneList,
+        transcript_text_by_scene: dict[str, str] | None = None,
+    ) -> None:
+        """Persist scored scene metrics and transcript text into scenes."""
+        transcript_text_by_scene = transcript_text_by_scene or {}
+        try:
+            self._conn.execute("BEGIN")
+            for scene in scored_scene_list.scenes:
+                self._conn.execute(
+                    """UPDATE scenes
+                       SET keyword_score = ?,
+                           audio_energy_score = ?,
+                           face_presence_score = ?,
+                           scene_activity_score = ?,
+                           sentence_density_score = ?,
+                           image_quality_score = ?,
+                           composite_score = ?,
+                           transcript_text = ?
+                       WHERE scene_id = ?""",
+                    (
+                        scene.keyword_score,
+                        scene.audio_energy_score,
+                        scene.face_presence_score,
+                        scene.scene_activity_score,
+                        scene.sentence_density_score,
+                        scene.image_quality_score,
+                        scene.composite_score,
+                        transcript_text_by_scene.get(scene.scene_id, ""),
+                        scene.scene_id,
+                    ),
+                )
+            self._conn.execute("COMMIT")
+        except Exception:
+            self._conn.execute("ROLLBACK")
+            raise
+
+    def get_scored_scene_list(self, video_id: str) -> ScoredSceneList | None:
+        """Reconstruct persisted scored scenes for a video."""
+        rows = self._conn.execute(
+            """SELECT * FROM scenes
+               WHERE video_id = ? AND composite_score IS NOT NULL
+               ORDER BY composite_score DESC, start_time ASC""",
+            (video_id,),
+        ).fetchall()
+        if not rows:
+            return None
+        scenes: list[ScoredScene] = []
+        for rank, row in enumerate(rows, start=1):
+            scenes.append(
+                ScoredScene(
+                    scene_id=row["scene_id"],
+                    video_id=row["video_id"],
+                    start_time=round(float(row["start_time"]) * 1000),
+                    end_time=round(float(row["end_time"]) * 1000),
+                    duration=float(row["duration"]),
+                    keyword_score=float(row["keyword_score"] or 0.0),
+                    audio_energy_score=float(row["audio_energy_score"] or 0.0),
+                    face_presence_score=float(row["face_presence_score"] or 0.0),
+                    scene_activity_score=float(row["scene_activity_score"] or 0.0),
+                    sentence_density_score=float(row["sentence_density_score"] or 0.0),
+                    image_quality_score=float(row["image_quality_score"] or 0.0),
+                    composite_score=float(row["composite_score"] or 0.0),
+                    rank=rank,
+                )
+            )
+        composites = [scene.composite_score for scene in scenes]
+        return ScoredSceneList(
+            video_id=video_id,
+            scenes=tuple(scenes),
+            min_score=min(composites),
+            max_score=max(composites),
+            avg_score=sum(composites) / len(composites),
+        )
+
+    def acquire_scheduler_lock(self, lock_name: str, owner_id: str, stale_after_seconds: int) -> bool:
+        """Acquire a coarse scheduler lock with stale-owner takeover."""
+        row = self._conn.execute(
+            "SELECT owner_id FROM scheduler_locks WHERE lock_name = ?",
+            (lock_name,),
+        ).fetchone()
+        if row is None:
+            self._conn.execute(
+                """INSERT INTO scheduler_locks (lock_name, owner_id)
+                   VALUES (?, ?)""",
+                (lock_name, owner_id),
+            )
+            self._conn.commit()
+            return True
+
+        cursor = self._conn.execute(
+            """UPDATE scheduler_locks
+               SET owner_id = ?, acquired_at = CURRENT_TIMESTAMP, heartbeat_at = CURRENT_TIMESTAMP
+               WHERE lock_name = ?
+                 AND (
+                   owner_id = ?
+                   OR heartbeat_at <= datetime('now', ?)
+                 )""",
+            (owner_id, lock_name, owner_id, f"-{int(stale_after_seconds)} seconds"),
+        )
+        self._conn.commit()
+        return cursor.rowcount > 0
+
+    def heartbeat_scheduler_lock(self, lock_name: str, owner_id: str) -> bool:
+        """Update heartbeat for a held scheduler lock."""
+        cursor = self._conn.execute(
+            """UPDATE scheduler_locks
+               SET heartbeat_at = CURRENT_TIMESTAMP
+               WHERE lock_name = ? AND owner_id = ?""",
+            (lock_name, owner_id),
+        )
+        self._conn.commit()
+        return cursor.rowcount > 0
+
+    def release_scheduler_lock(self, lock_name: str, owner_id: str) -> None:
+        """Release a scheduler lock owned by the given owner."""
+        self._conn.execute(
+            "DELETE FROM scheduler_locks WHERE lock_name = ? AND owner_id = ?",
+            (lock_name, owner_id),
+        )
+        self._conn.commit()
 
     # ------------------------------------------------------------------
     # Clip operations

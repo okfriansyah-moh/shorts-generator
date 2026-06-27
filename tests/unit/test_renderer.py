@@ -250,6 +250,28 @@ class TestValidateOutput:
             with pytest.raises(RuntimeError, match="Resolution"):
                 _validate_output("/tmp/out.mp4")
 
+    def test_allows_large_file_when_limit_disabled(self) -> None:
+        probe_data = _mock_probe_data(duration=45.0)
+
+        def mock_run(cmd, **kwargs):
+            result = MagicMock()
+            result.returncode = 0
+            result.stdout = json.dumps(probe_data)
+            result.stderr = ""
+            return result
+
+        with patch("subprocess.run", side_effect=mock_run), \
+             patch("os.path.getsize", return_value=150_000_000):
+            duration, res, codec, fps, size = _validate_output(
+                "/tmp/out.mp4", max_file_size=None,
+            )
+
+        assert duration == 45.0
+        assert res == (1080, 1920)
+        assert codec == "h264"
+        assert fps == 30
+        assert size == 150_000_000
+
 
 # ---------------------------------------------------------------------------
 # Tests: Full render process
@@ -321,6 +343,55 @@ class TestRenderProcess:
         assert isinstance(result, RenderedClip)
         assert result.has_narration is False
         assert result.has_subtitles is False
+
+    def test_allows_large_output_when_limit_disabled(self, tmp_path) -> None:
+        clip_dir = tmp_path / "clips" / "shorts-1"
+        clip_dir.mkdir(parents=True)
+        composite_path = str(clip_dir / "composite.mp4")
+        composite = _make_composite(composite_path=composite_path)
+        config = _make_config()
+        config["renderer"]["max_file_size_mb"] = 0
+
+        def fake_run_ffmpeg(args, timeout=300):
+            with open(args[-1], "wb") as f:
+                f.write(b"\x00" * 100)
+
+        with patch("modules.renderer.render._run_ffmpeg", side_effect=fake_run_ffmpeg), \
+             patch("modules.renderer.render._get_duration", return_value=45.0), \
+             patch("modules.renderer.render._get_video_info", return_value=(1080, 1920, "h264", 30)), \
+             patch("modules.renderer.render._get_file_size", return_value=150_000_000):
+            result = process(composite, None, None, config, str(tmp_path))
+
+        assert result.file_size_bytes == 150_000_000
+        assert result.output_path.endswith("final.mp4")
+
+    def test_reencodes_when_output_exceeds_configured_limit(self, tmp_path) -> None:
+        clip_dir = tmp_path / "clips" / "shorts-1"
+        clip_dir.mkdir(parents=True)
+        composite_path = str(clip_dir / "composite.mp4")
+        composite = _make_composite(composite_path=composite_path)
+        config = _make_config()
+
+        ffmpeg_outputs: list[str] = []
+
+        def fake_run_ffmpeg(args, timeout=300):
+            ffmpeg_outputs.append(args[-1])
+            with open(args[-1], "wb") as f:
+                f.write(b"\x00" * 100)
+
+        with patch("modules.renderer.render._run_ffmpeg", side_effect=fake_run_ffmpeg), \
+             patch("modules.renderer.render._get_duration", return_value=45.0), \
+             patch("modules.renderer.render._get_video_info", return_value=(1080, 1920, "h264", 30)), \
+             patch(
+                 "modules.renderer.render._get_file_size",
+                 side_effect=[150_000_000, 90_000_000, 90_000_000],
+             ):
+            result = process(composite, None, None, config, str(tmp_path))
+
+        assert len(ffmpeg_outputs) == 2
+        assert ffmpeg_outputs[0].endswith("final.tmp.mp4")
+        assert ffmpeg_outputs[1].endswith("final.re.tmp.mp4")
+        assert result.file_size_bytes == 90_000_000
 
 
 # ---------------------------------------------------------------------------

@@ -237,7 +237,13 @@ def update_db(clip_id: str, video_path: str, thumb_path: str) -> None:
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     c.execute(
-        "UPDATE clips SET video_path=?, thumbnail_path=? WHERE clip_id=?",
+        """UPDATE clips
+           SET video_path=?,
+               thumbnail_path=?,
+               status=CASE WHEN status='failed' THEN 'generated' ELSE status END,
+               error_message=CASE WHEN status='failed' THEN NULL ELSE error_message END,
+               updated_at=CURRENT_TIMESTAMP
+           WHERE clip_id=?""",
         (video_path, thumb_path, clip_id),
     )
     conn.commit()
