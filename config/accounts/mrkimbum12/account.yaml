@@ -61,6 +61,10 @@ thumbnail:
   max_text_words: 3
   font_size: 72
 
+# ── Renderer ───────────────────────────────────────────────────────────────
+renderer:
+  max_file_size_mb: 250  # >100 MB is acceptable for this channel; keep a hard cap at 250 MB
+
 # ── TTS voice ──────────────────────────────────────────────────────────────
 tts:
   voice: "en-US-AriaNeural"

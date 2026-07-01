@@ -89,6 +89,67 @@ def _resolve_path(path: str, output_dir: str) -> str:
     return os.path.join(_PROJECT_ROOT, path)
 
 
+def _path_candidates(path: str, output_dir: str) -> list[str]:
+    """Return candidate absolute paths in account, legacy, and project scopes."""
+    if not path:
+        return []
+    if os.path.isabs(path):
+        return [_resolve_path(path, output_dir)]
+    return [
+        os.path.join(output_dir, path),
+        os.path.join(os.path.dirname(output_dir), path),
+        os.path.join(_PROJECT_ROOT, path),
+    ]
+
+
+def _resolve_video_path(path: str, output_dir: str) -> str:
+    """Resolve a video path, preferring stable publish-ready filenames."""
+    candidates = _path_candidates(path, output_dir)
+    if not candidates:
+        return ""
+
+    for candidate in list(candidates):
+        clip_dir = os.path.dirname(candidate)
+        if clip_dir:
+            candidates.extend([
+                os.path.join(clip_dir, "final.mp4"),
+                os.path.join(clip_dir, "clip.mp4"),
+            ])
+
+    seen: set[str] = set()
+    for candidate in candidates:
+        if not candidate or candidate in seen:
+            continue
+        seen.add(candidate)
+        basename = os.path.basename(candidate)
+        if ".tmp." in basename:
+            continue
+        if os.path.isfile(candidate):
+            return candidate
+
+    return candidates[0]
+
+
+def _resolve_thumbnail_path(path: str, output_dir: str, video_path: str) -> str:
+    """Resolve a thumbnail path, preferring the clip-local thumbnail."""
+    candidates = _path_candidates(path, output_dir)
+    if not candidates:
+        candidates = [_resolve_path(path, output_dir)]
+    clip_dir = os.path.dirname(video_path) if video_path else os.path.dirname(candidates[0])
+    if clip_dir:
+        candidates.append(os.path.join(clip_dir, "thumbnail.jpg"))
+
+    seen: set[str] = set()
+    for candidate in candidates:
+        if not candidate or candidate in seen:
+            continue
+        seen.add(candidate)
+        if os.path.isfile(candidate):
+            return candidate
+
+    return candidates[0]
+
+
 def _row_to_storage_record(row: dict, output_dir: str) -> StorageRecord:
     tags_raw = row.get("tags", "")
     if isinstance(tags_raw, str) and tags_raw:
@@ -101,14 +162,21 @@ def _row_to_storage_record(row: dict, output_dir: str) -> StorageRecord:
     else:
         tags = ()
 
+    video_path = _resolve_video_path(row.get("video_path", "") or "", output_dir)
+    thumbnail_path = _resolve_thumbnail_path(
+        row.get("thumbnail_path", "") or "",
+        output_dir,
+        video_path,
+    )
+
     return StorageRecord(
         clip_id=row["clip_id"],
         video_id=row["video_id"],
         status=row.get("status", "scheduled"),
         composite_score=float(row.get("composite_score", 0.0) or 0.0),
         file_paths={
-            "video":      _resolve_path(row.get("video_path", "") or "", output_dir),
-            "thumbnail":  _resolve_path(row.get("thumbnail_path", "") or "", output_dir),
+            "video":      video_path,
+            "thumbnail":  thumbnail_path,
             "metadata":   "",
             "subtitles":  "",
             "narration":  "",
@@ -164,7 +232,7 @@ def _check_duplicate_upload(record: StorageRecord, adapter: DatabaseAdapter) -> 
 def _next_due_record(adapter: DatabaseAdapter, account_name: str, output_dir: str) -> StorageRecord | None:
     """Return the oldest scheduled clip whose scheduled_at <= now, or None."""
     now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    rows = adapter.get_clips_by_status(["scheduled"], account_name=account_name)
+    rows = _schedulable_rows(adapter, account_name)
     due = [
         r for r in rows
         if r.get("scheduled_at") and r["scheduled_at"] <= now_iso
@@ -176,7 +244,81 @@ def _next_due_record(adapter: DatabaseAdapter, account_name: str, output_dir: st
 
 
 def _remaining_scheduled_count(adapter: DatabaseAdapter, account_name: str) -> int:
-    return len(adapter.get_clips_by_status(["scheduled"], account_name=account_name))
+    return len(_schedulable_rows(adapter, account_name))
+
+
+def _scheduled_rows(adapter: DatabaseAdapter, account_name: str) -> list[dict]:
+    return adapter.get_clips_by_status(["scheduled"], account_name=account_name)
+
+
+def _schedulable_rows(adapter: DatabaseAdapter, account_name: str) -> list[dict]:
+    return [r for r in _scheduled_rows(adapter, account_name) if r.get("scheduled_at")]
+
+
+def _invalid_scheduled_rows(adapter: DatabaseAdapter, account_name: str) -> list[dict]:
+    return [r for r in _scheduled_rows(adapter, account_name) if not r.get("scheduled_at")]
+
+
+def _upload_validation_error(record: StorageRecord) -> str | None:
+    """Return a human-readable error when a scheduled clip is not uploadable."""
+    video_path = record.file_paths.get("video", "") or ""
+    if not video_path:
+        return "No video_path stored for scheduled clip"
+
+    basename = os.path.basename(video_path)
+    if ".tmp." in basename:
+        return f"Clip render incomplete: temporary video artifact cannot be uploaded: {video_path}"
+
+    if os.path.isfile(video_path):
+        return None
+
+    clip_dir = os.path.dirname(video_path)
+    if os.path.isdir(clip_dir):
+        tmp_candidates = sorted(
+            name for name in os.listdir(clip_dir)
+            if name.endswith(".tmp.mp4")
+        )
+        if tmp_candidates:
+            return (
+                "Clip render incomplete: no finalized video found; "
+                f"temporary artefacts present in {clip_dir}: {', '.join(tmp_candidates)}"
+            )
+
+    return f"Video file not found: {video_path}"
+
+
+def _prune_invalid_scheduled_rows(
+    adapter: DatabaseAdapter,
+    account_name: str,
+    output_dir: str,
+) -> int:
+    """Mark scheduled rows as failed when no stable uploadable artefact exists."""
+    pruned = 0
+    for row in _scheduled_rows(adapter, account_name):
+        if not row.get("scheduled_at"):
+            continue
+        record = _row_to_storage_record(row, output_dir)
+        error = _upload_validation_error(record)
+        if error is None:
+            continue
+        updated = adapter.update_clip_status(
+            clip_id=record.clip_id,
+            new_status="failed",
+            valid_from=("scheduled",),
+            error_message=error,
+        )
+        if updated:
+            pruned += 1
+            logger.warning(
+                "upload_scheduler: marking scheduled clip %s failed — %s",
+                record.clip_id,
+                error,
+                extra={
+                    "stage": "upload_scheduler",
+                    "clip_id": record.clip_id,
+                },
+            )
+    return pruned
 
 
 def _delete_clip_artefacts(record: StorageRecord, config: dict) -> None:
@@ -335,6 +477,26 @@ def main() -> int:
     output_dir = config.get("paths", {}).get("output_dir", "output")
     if not os.path.isabs(output_dir):
         output_dir = os.path.join(_PROJECT_ROOT, output_dir)
+
+    invalid_rows = _invalid_scheduled_rows(adapter, account_name)
+    if invalid_rows:
+        logger.warning(
+            "upload_scheduler: ignoring %d scheduled clip(s) with missing scheduled_at",
+            len(invalid_rows),
+            extra={
+                "stage": "upload_scheduler",
+                "account_name": account_name,
+                "clip_ids": [row["clip_id"] for row in invalid_rows],
+            },
+        )
+
+    pruned_rows = _prune_invalid_scheduled_rows(adapter, account_name, output_dir)
+    if pruned_rows:
+        logger.warning(
+            "upload_scheduler: pruned %d scheduled clip(s) with missing uploadable artefacts",
+            pruned_rows,
+            extra={"stage": "upload_scheduler", "pruned": pruned_rows},
+        )
 
     # ── Find next due clip ─────────────────────────────────────────────────
     record = _next_due_record(adapter, account_name, output_dir)

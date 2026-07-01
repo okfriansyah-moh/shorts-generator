@@ -241,6 +241,49 @@ def _enriched_state_file(video_dir: str | None) -> str:
     return _GLOBAL_ENRICHED_STATE_FILE
 
 
+def _account_output_dir(config: dict) -> str:
+    output_dir = config.get("paths", {}).get("output_dir", "output")
+    if not os.path.isabs(output_dir):
+        output_dir = os.path.join(_PROJECT_ROOT, output_dir)
+    return output_dir
+
+
+def _resolve_uploadable_video_path(row: dict, output_dir: str) -> str:
+    """Return a stable rendered video path, or an empty string if none exists."""
+    video_path = row.get("video_path", "") or ""
+    if not video_path:
+        return ""
+
+    candidates: list[str] = []
+    if os.path.isabs(video_path):
+        candidates.append(video_path)
+    else:
+        candidates.extend([
+            os.path.join(output_dir, video_path),
+            os.path.join(os.path.dirname(output_dir), video_path),
+            os.path.join(_PROJECT_ROOT, video_path),
+        ])
+
+    clip_dir = os.path.dirname(candidates[0]) if candidates else ""
+    if clip_dir:
+        candidates.extend([
+            os.path.join(clip_dir, "final.mp4"),
+            os.path.join(clip_dir, "clip.mp4"),
+        ])
+
+    seen: set[str] = set()
+    for candidate in candidates:
+        if not candidate or candidate in seen:
+            continue
+        seen.add(candidate)
+        if ".tmp." in os.path.basename(candidate):
+            continue
+        if os.path.isfile(candidate):
+            return candidate
+
+    return ""
+
+
 def _load_enriched_ids(state_file: str | None = None) -> set[str]:
     """Load set of clip_ids already enriched by Claude."""
     path = state_file or _GLOBAL_ENRICHED_STATE_FILE
@@ -382,11 +425,42 @@ def cmd_apply(adapter: DatabaseAdapter, config: dict, enriched_path: str) -> int
     occupied: set[str] = {
         r["scheduled_at"] for r in all_scheduled if r.get("scheduled_at")
     }
+    output_dir = _account_output_dir(config)
 
     applied = 0
+    skipped = 0
     for clip in clips:
         clip_id = clip.get("clip_id")
         if not clip_id:
+            continue
+
+        row = adapter.connection.execute(
+            "SELECT clip_id, status, video_path FROM clips WHERE clip_id = ?",
+            (clip_id,),
+        ).fetchone()
+        if row is None:
+            logger.warning(
+                "Skipping unknown clip during AI apply",
+                extra={"clip_id": clip_id, "stage": "ai_enricher"},
+            )
+            skipped += 1
+            continue
+
+        row_dict = dict(row)
+        if row_dict.get("status") == "published":
+            logger.warning(
+                "Skipping already-published clip during AI apply",
+                extra={"clip_id": clip_id, "stage": "ai_enricher"},
+            )
+            skipped += 1
+            continue
+
+        if not _resolve_uploadable_video_path(row_dict, output_dir):
+            logger.warning(
+                "Skipping clip without a stable rendered video during AI apply",
+                extra={"clip_id": clip_id, "stage": "ai_enricher"},
+            )
+            skipped += 1
             continue
 
         title = clip.get("title", "")
@@ -431,6 +505,7 @@ def cmd_apply(adapter: DatabaseAdapter, config: dict, enriched_path: str) -> int
             {
                 "status": "ok",
                 "applied": applied,
+                "skipped": skipped,
                 "message": f"{applied} clip(s) enriched and scheduled.",
             }
         )

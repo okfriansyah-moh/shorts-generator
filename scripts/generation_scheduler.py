@@ -156,7 +156,7 @@ def _export_pending_ai_metadata(config: dict) -> str | None:
             db_path = os.path.join(_PROJECT_ROOT, db_path)
         conn = initialize_database(db_path)
         adapter = DatabaseAdapter(conn)
-        rows = adapter.get_clips_by_status(["generated", "scheduled"])
+        rows = adapter.get_clips_by_status(["queued"])
         conn.close()
     except Exception as exc:
         logger.warning(f"[generation_scheduler] Could not export clip data: {exc}")

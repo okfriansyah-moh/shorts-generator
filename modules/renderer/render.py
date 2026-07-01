@@ -248,7 +248,7 @@ def _validate_output(
     file_path: str,
     min_duration: float = 30.0,
     max_duration: float = 60.0,
-    max_file_size: int | None = 100 * 1024 * 1024,
+    max_file_size: int | None = None,
 ) -> tuple[float, tuple[int, int], str, int, int]:
     """Validate rendered output meets specifications.
 

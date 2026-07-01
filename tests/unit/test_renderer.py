@@ -272,6 +272,21 @@ class TestValidateOutput:
         assert fps == 30
         assert size == 150_000_000
 
+    def test_rejects_large_file_when_explicit_limit_is_set(self) -> None:
+        probe_data = _mock_probe_data(duration=45.0)
+
+        def mock_run(cmd, **kwargs):
+            result = MagicMock()
+            result.returncode = 0
+            result.stdout = json.dumps(probe_data)
+            result.stderr = ""
+            return result
+
+        with patch("subprocess.run", side_effect=mock_run), \
+             patch("os.path.getsize", return_value=150_000_000):
+            with pytest.raises(RuntimeError, match="File size"):
+                _validate_output("/tmp/out.mp4", max_file_size=100 * 1024 * 1024)
+
 
 # ---------------------------------------------------------------------------
 # Tests: Full render process
